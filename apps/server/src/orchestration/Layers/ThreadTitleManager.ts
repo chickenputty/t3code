@@ -1,4 +1,10 @@
-import { CommandId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  type MessageId,
+  type OrchestrationAutorenameProjectThreadsResult,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -9,21 +15,59 @@ import {
   type ThreadTitleManagerShape,
 } from "../Services/ThreadTitleManager.ts";
 
-type SkippedReason = "no-user-messages" | "unchanged";
+type SkippedReason = "no-user-messages" | "unchanged" | "up-to-date";
+type UserMessageContext = {
+  readonly id: MessageId;
+  readonly text: string;
+};
+type AutorenameCache = {
+  readonly lastUserMessageId: string;
+};
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
 function normalizeUserMessages(
   messages: ReadonlyArray<{
+    readonly id: MessageId;
     readonly role: "user" | "assistant" | "system";
     readonly text: string;
   }>,
-): string[] {
+): UserMessageContext[] {
   return messages
     .filter((message) => message.role === "user")
-    .map((message) => message.text.replace(/\s+/g, " ").trim())
-    .filter((message) => message.length > 0);
+    .map((message) => ({
+      id: message.id,
+      text: message.text.replace(/\s+/g, " ").trim(),
+    }))
+    .filter((message) => message.text.length > 0);
+}
+
+function readAutorenameCache(
+  activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+  }>,
+): AutorenameCache | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (activity?.kind !== "thread.autorename.completed") {
+      continue;
+    }
+    if (
+      typeof activity.payload !== "object" ||
+      activity.payload === null ||
+      !("lastUserMessageId" in activity.payload) ||
+      typeof activity.payload.lastUserMessageId !== "string"
+    ) {
+      continue;
+    }
+    return {
+      lastUserMessageId: activity.payload.lastUserMessageId,
+    };
+  }
+
+  return null;
 }
 
 const make = Effect.gen(function* () {
@@ -61,6 +105,17 @@ const make = Effect.gen(function* () {
           skipped.push({ threadId: thread.id, reason: "no-user-messages" });
           continue;
         }
+        const latestUserMessage = userMessages.at(-1);
+        if (!latestUserMessage) {
+          skipped.push({ threadId: thread.id, reason: "no-user-messages" });
+          continue;
+        }
+
+        const autorenameCache = readAutorenameCache(thread.activities);
+        if (autorenameCache?.lastUserMessageId === latestUserMessage.id) {
+          skipped.push({ threadId: thread.id, reason: "up-to-date" });
+          continue;
+        }
 
         const cwd =
           resolveThreadWorkspaceCwd({
@@ -68,29 +123,37 @@ const make = Effect.gen(function* () {
             projects: readModel.projects,
           }) ?? project.workspaceRoot;
 
-        const generatedTitle = yield* textGeneration
+        const titleResult = yield* textGeneration
           .generateThreadTitle({
             cwd,
             currentTitle: thread.title,
-            originalMessage: userMessages[0] ?? thread.title,
-            recentMessages: userMessages,
+            originalMessage: userMessages[0]?.text ?? thread.title,
+            recentMessages: userMessages.map((message) => message.text),
           })
           .pipe(
-            Effect.map((result) => result.title.trim()),
+            Effect.map(
+              (result) =>
+                ({
+                  ok: true,
+                  title: result.title.trim(),
+                }) as const,
+            ),
             Effect.catch((error) =>
               Effect.succeed({
+                ok: false,
                 error: error.message,
               } as const),
             ),
           );
 
-        if (typeof generatedTitle === "object" && "error" in generatedTitle) {
+        if (!titleResult.ok) {
           failed.push({
             threadId: thread.id,
-            message: generatedTitle.error,
+            message: titleResult.error,
           });
           continue;
         }
+        const generatedTitle = titleResult.title;
 
         if (generatedTitle === thread.title) {
           skipped.push({ threadId: thread.id, reason: "unchanged" });
@@ -126,13 +189,35 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           title: generatedTitle,
         });
+
+        const createdAt = new Date().toISOString();
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.activity.append",
+            commandId: serverCommandId("thread-autorename-cache"),
+            threadId: thread.id,
+            activity: {
+              id: EventId.makeUnsafe(crypto.randomUUID()),
+              tone: "info",
+              kind: "thread.autorename.completed",
+              summary: "Auto-renamed thread title",
+              payload: {
+                title: generatedTitle,
+                lastUserMessageId: latestUserMessage.id,
+              },
+              turnId: null,
+              createdAt,
+            },
+            createdAt,
+          })
+          .pipe(Effect.catch(() => Effect.void));
       }
 
       return {
         renamed,
         skipped,
         failed,
-      };
+      } satisfies OrchestrationAutorenameProjectThreadsResult;
     });
 
   return {

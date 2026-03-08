@@ -106,11 +106,11 @@ function sanitizeThreadTitle(raw: string): string {
     .trim();
 
   if (normalized.length === 0) {
-    return "Thread update";
+    return "Update thread title";
   }
 
   const words = normalized.split(" ").filter((word) => word.length > 0);
-  return words.slice(0, 6).join(" ");
+  return words.slice(0, 5).join(" ");
 }
 
 const makeCodexTextGeneration = Effect.gen(function* () {
@@ -486,20 +486,24 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   };
 
   const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) => {
-    const recentMessages = input.recentMessages
+    const allMessages = input.recentMessages
       .map((message) => message.trim())
       .filter((message) => message.length > 0)
-      .slice(-6);
+      .slice(-10);
+    const recentMessages = allMessages.slice(-4);
 
     const promptSections = [
       "You rename software engineering chat threads.",
       "Return a JSON object with key: title.",
       "Rules:",
-      "- Title must be short and concise, ideally 4 to 6 words.",
-      "- Prefer the newest user-sent messages when choosing the title.",
-      "- The original user message should strongly influence the title.",
+      "- Title must be short and concise, ideally 3 to 5 words.",
+      "- Read like a concise git commit subject fragment.",
+      "- The first user message is the primary source of intent and should strongly guide the title.",
+      "- Use the overall user message trail to refine wording and preserve the full scope.",
+      "- Recent user messages can adjust specifics, but should not dominate unless they clearly replace the original intent.",
       "- Use only the user's sent messages as source material.",
-      "- Avoid filler like 'help with', 'thread about', 'please', or 'need to'.",
+      "- Prefer concrete verbs and nouns that are easy to scan in a sidebar.",
+      "- Avoid filler like 'help with', 'thread about', 'please', 'need to', or vague words like 'magic'.",
       "- No quotes and no trailing punctuation.",
       ...(input.currentTitle
         ? [
@@ -509,14 +513,22 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           ]
         : []),
       "",
-      "Original user message:",
+      "Original user message (highest priority):",
       limitSection(input.originalMessage, 6_000),
       "",
-      "Most recent user messages:",
+      "Overall user message context:",
+      allMessages.length > 0
+        ? limitSection(
+            allMessages.map((message, index) => `${index + 1}. ${message}`).join("\n"),
+            20_000,
+          )
+        : "None",
+      "",
+      "Most recent user messages (secondary refinement):",
       recentMessages.length > 0
         ? limitSection(
             recentMessages.map((message, index) => `${index + 1}. ${message}`).join("\n"),
-            16_000,
+            10_000,
           )
         : "None",
     ];

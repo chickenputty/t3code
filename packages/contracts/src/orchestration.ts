@@ -1120,6 +1120,7 @@ export type OrchestrationAutorenameProjectThreadsInput =
 export const OrchestrationAutorenameSkippedReason = Schema.Literals([
   "no-user-messages",
   "unchanged",
+  "up-to-date",
 ]);
 export type OrchestrationAutorenameSkippedReason =
   typeof OrchestrationAutorenameSkippedReason.Type;
