@@ -51,7 +51,6 @@ const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
-  customClaudeModels: Schema.Array(Schema.String).pipe(
   customGeminiModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -121,19 +120,20 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
-    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeCode"),
     customGeminiModels: normalizeCustomModelSlugs(settings.customGeminiModels, "gemini"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeCode"),
   };
 }
 
 export function getCustomModelsForProvider(
-  settings: Pick<AppSettings, "customCodexModels" | "customGeminiModels" | "customClaudeModels">,
+  settings:
+    & Pick<AppSettings, "customCodexModels" | "customGeminiModels">
+    & Partial<Pick<AppSettings, "customClaudeModels">>,
   provider: ProviderKind,
 ): readonly string[] {
   switch (provider) {
     case "claudeCode":
-      return settings.customClaudeModels;
+      return settings.customClaudeModels ?? [];
     case "gemini":
       return settings.customGeminiModels;
     case "codex":

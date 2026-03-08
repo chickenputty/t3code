@@ -1,9 +1,10 @@
 import type { SidebarThreadSort } from "../sidebarThreadSort";
+import type { PendingThreadRunPhase } from "../threadRunStateStore";
 import { resolveLatestThreadContextMessage, resolveThreadContextMessage } from "../threadContext";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Paused";
+  label: "Working" | "Connecting" | "Preparing" | "Completed" | "Pending Approval" | "Paused";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -38,6 +39,7 @@ export function deriveThreadStatusPill(input: {
   readonly thread: ThreadStatusSource;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly pendingRunPhase?: PendingThreadRunPhase | null;
 }): ThreadStatusPill | null {
   if (input.hasPendingApprovals) {
     return {
@@ -54,6 +56,24 @@ export function deriveThreadStatusPill(input: {
       colorClass: "text-yellow-700 dark:text-yellow-300/90",
       dotClass: "bg-yellow-500 dark:bg-yellow-300/90",
       pulse: false,
+    };
+  }
+
+  if (input.pendingRunPhase === "preparing-worktree") {
+    return {
+      label: "Preparing",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (input.pendingRunPhase === "sending-turn") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
     };
   }
 
@@ -135,14 +155,16 @@ function getThreadStatusRank(input: {
       return 0;
     case "Paused":
       return 1;
-    case "Working":
+    case "Preparing":
       return 2;
-    case "Connecting":
+    case "Working":
       return 3;
-    case "Completed":
+    case "Connecting":
       return 4;
-    default:
+    case "Completed":
       return 5;
+    default:
+      return 6;
   }
 }
 

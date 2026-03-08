@@ -63,6 +63,7 @@ describe("deriveThreadStatusPill", () => {
         thread: baseThread,
         hasPendingApprovals: false,
         hasPendingUserInput: true,
+        pendingRunPhase: null,
       }),
     ).toEqual({
       label: "Paused",
@@ -78,9 +79,24 @@ describe("deriveThreadStatusPill", () => {
         thread: baseThread,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
+        pendingRunPhase: "sending-turn",
       }),
     ).toMatchObject({
       label: "Pending Approval",
+    });
+  });
+
+  it("returns preparing for optimistic worktree setup before the session connects", () => {
+    expect(
+      deriveThreadStatusPill({
+        thread: baseThread,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        pendingRunPhase: "preparing-worktree",
+      }),
+    ).toMatchObject({
+      label: "Preparing",
+      pulse: true,
     });
   });
 
@@ -95,6 +111,7 @@ describe("deriveThreadStatusPill", () => {
         },
         hasPendingApprovals: false,
         hasPendingUserInput: false,
+        pendingRunPhase: null,
       }),
     ).toMatchObject({
       label: "Working",
@@ -113,6 +130,7 @@ describe("deriveThreadStatusPill", () => {
         },
         hasPendingApprovals: false,
         hasPendingUserInput: false,
+        pendingRunPhase: null,
       }),
     ).toMatchObject({
       label: "Completed",
