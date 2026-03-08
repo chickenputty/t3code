@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   type ProviderRuntimeEvent,
@@ -23,8 +25,9 @@ import {
 } from "../Errors.ts";
 import { GeminiAdapter, type GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { GeminiCliManager } from "../../geminiCliManager.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { inferImageExtension } from "../../imageMime.ts";
 
 const PROVIDER = "gemini" as const;
 
@@ -88,6 +91,196 @@ function stringFromUnknown(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeImageMimeType(value: unknown): string | null {
+  return typeof value === "string" && value.trim().toLowerCase().startsWith("image/")
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function inferImageMimeTypeFromPath(sourcePath: string | null | undefined): string | null {
+  if (!sourcePath) {
+    return null;
+  }
+  switch (path.extname(sourcePath).toLowerCase()) {
+    case ".avif":
+      return "image/avif";
+    case ".bmp":
+      return "image/bmp";
+    case ".gif":
+      return "image/gif";
+    case ".heic":
+      return "image/heic";
+    case ".heif":
+      return "image/heif";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".svg":
+      return "image/svg+xml";
+    case ".tiff":
+      return "image/tiff";
+    case ".webp":
+      return "image/webp";
+    default:
+      return null;
+  }
+}
+
+function basenameFromImageSource(input: {
+  readonly name?: unknown;
+  readonly uri?: unknown;
+  readonly filePath?: unknown;
+}): string | null {
+  if (typeof input.name === "string" && input.name.trim().length > 0) {
+    return input.name.trim();
+  }
+  if (typeof input.filePath === "string" && input.filePath.trim().length > 0) {
+    const base = path.basename(input.filePath.trim());
+    return base.length > 0 ? base : null;
+  }
+  if (typeof input.uri === "string" && input.uri.trim().length > 0) {
+    try {
+      if (input.uri.startsWith("file://")) {
+        const base = path.basename(fileURLToPath(input.uri));
+        return base.length > 0 ? base : null;
+      }
+      const base = path.basename(input.uri.trim());
+      return base.length > 0 ? base : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function resolveLocalImageSourcePath(input: {
+  readonly uri?: unknown;
+  readonly filePath?: unknown;
+}): string | null {
+  if (typeof input.filePath === "string" && input.filePath.trim().length > 0) {
+    return input.filePath.trim();
+  }
+  if (typeof input.uri === "string" && input.uri.trim().length > 0) {
+    try {
+      if (input.uri.startsWith("file://")) {
+        return fileURLToPath(input.uri);
+      }
+      return input.uri.trim();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export function materializeGeminiAssistantImageAttachment(input: {
+  readonly rawEvent: Record<string, unknown>;
+  readonly threadId: ThreadId;
+  readonly stateDir: string;
+  readonly fileSystem: FileSystem.FileSystem;
+}) {
+  return Effect.gen(function* () {
+    const filePath = resolveLocalImageSourcePath({
+      uri: input.rawEvent.uri,
+      filePath: input.rawEvent.path,
+    });
+    const mimeType =
+      normalizeImageMimeType(input.rawEvent.mimeType) ??
+      inferImageMimeTypeFromPath(filePath) ??
+      normalizeImageMimeType(input.rawEvent.mime_type);
+    if (!mimeType) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "assistantImage",
+        detail: "Gemini image output is missing a supported image MIME type.",
+      });
+    }
+
+    const bytes =
+      typeof input.rawEvent.data === "string" && input.rawEvent.data.length > 0
+        ? Uint8Array.from(Buffer.from(input.rawEvent.data, "base64"))
+        : filePath
+          ? yield* input.fileSystem.readFile(filePath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "assistantImage",
+                    detail: toMessage(cause, "Failed to read Gemini image output."),
+                    cause: cause instanceof Error ? cause : undefined,
+                  }),
+              ),
+            )
+          : yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "assistantImage",
+              detail: "Gemini image output did not include image bytes or a file path.",
+            });
+
+    const attachmentId = createAttachmentId(String(input.threadId));
+    if (!attachmentId) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "assistantImage",
+        detail: "Failed to allocate a safe attachment id for Gemini image output.",
+      });
+    }
+
+    const baseName =
+      basenameFromImageSource({
+        name: input.rawEvent.name,
+        uri: input.rawEvent.uri,
+        filePath: input.rawEvent.path,
+      }) ?? `gemini-generated${inferImageExtension({ mimeType })}`;
+    const attachment: ChatAttachment = {
+      type: "image",
+      id: attachmentId,
+      name: baseName,
+      mimeType,
+      sizeBytes: bytes.byteLength,
+    };
+    const attachmentPath = resolveAttachmentPath({
+      stateDir: input.stateDir,
+      attachment,
+    });
+    if (!attachmentPath) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "assistantImage",
+        detail: "Failed to resolve a persisted path for Gemini image output.",
+      });
+    }
+
+    yield* input.fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "assistantImage",
+            detail: toMessage(cause, "Failed to create Gemini image output directory."),
+            cause: cause instanceof Error ? cause : undefined,
+          }),
+      ),
+    );
+
+    yield* input.fileSystem.writeFile(attachmentPath, bytes).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "assistantImage",
+            detail: toMessage(cause, "Failed to persist Gemini image output."),
+            cause: cause instanceof Error ? cause : undefined,
+          }),
+      ),
+    );
+
+    return attachment;
+  });
 }
 
 function buildGeminiPromptAttachment(input: {
@@ -418,6 +611,48 @@ function mapGeminiEventToCanonical(rawEvent: Record<string, unknown>): ProviderR
   }
 }
 
+function mapGeminiRawEventToCanonical(input: {
+  readonly rawEvent: Record<string, unknown>;
+  readonly stateDir: string;
+  readonly fileSystem: FileSystem.FileSystem;
+}) {
+  return Effect.gen(function* () {
+    if (input.rawEvent.method !== "gemini/message_image") {
+      const canonical = mapGeminiEventToCanonical(input.rawEvent);
+      return canonical ? [canonical] : [];
+    }
+
+    if (typeof input.rawEvent.threadId !== "string") {
+      return [] as ProviderRuntimeEvent[];
+    }
+
+    const attachment = yield* materializeGeminiAssistantImageAttachment({
+      rawEvent: input.rawEvent,
+      threadId: ThreadId.makeUnsafe(input.rawEvent.threadId),
+      stateDir: input.stateDir,
+      fileSystem: input.fileSystem,
+    });
+
+    return [
+      {
+        eventId: makeEventId(),
+        provider: PROVIDER,
+        threadId: ThreadId.makeUnsafe(input.rawEvent.threadId),
+        createdAt: nowIso(),
+        ...(typeof input.rawEvent.turnId === "string" && input.rawEvent.turnId.length > 0
+          ? { turnId: TurnId.makeUnsafe(input.rawEvent.turnId) }
+          : {}),
+        type: "content.delta" as const,
+        payload: {
+          streamKind: "assistant_image" as const,
+          delta: "",
+          attachments: [attachment],
+        },
+      },
+    ] satisfies ProviderRuntimeEvent[];
+  });
+}
+
 const makeGeminiAdapter = () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -426,12 +661,39 @@ const makeGeminiAdapter = () =>
     const manager = new GeminiCliManager();
 
     manager.on("event", (rawEvent: Record<string, unknown>) => {
-      const canonical = mapGeminiEventToCanonical(rawEvent);
-      if (!canonical) {
-        return;
-      }
-
-      Effect.runSync(Queue.offer(eventQueue, canonical));
+      void Effect.runPromise(
+        mapGeminiRawEventToCanonical({
+          rawEvent,
+          stateDir: serverConfig.stateDir,
+          fileSystem,
+        }).pipe(
+          Effect.match({
+            onFailure: (error) =>
+              typeof rawEvent.threadId === "string"
+                ? [
+                    {
+                      eventId: makeEventId(),
+                      provider: PROVIDER,
+                      threadId: ThreadId.makeUnsafe(rawEvent.threadId),
+                      createdAt: nowIso(),
+                      ...(typeof rawEvent.turnId === "string" && rawEvent.turnId.length > 0
+                        ? { turnId: TurnId.makeUnsafe(rawEvent.turnId) }
+                        : {}),
+                      type: "runtime.warning" as const,
+                      payload: {
+                        message: toMessage(error, "Failed to process Gemini image output."),
+                        detail: rawEvent,
+                      },
+                    } satisfies ProviderRuntimeEvent,
+                  ]
+                : [],
+            onSuccess: (events) => events,
+          }),
+          Effect.flatMap((events) =>
+            Effect.forEach(events, (event) => Queue.offer(eventQueue, event), { concurrency: 1 }),
+          ),
+        ),
+      );
     });
 
     const adapter: GeminiAdapterShape = {

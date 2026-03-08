@@ -375,4 +375,67 @@ describe("GeminiCliManager", () => {
       { type: "image", data: "ZmFrZQ==", mimeType: "image/png" },
     ]);
   });
+
+  it("emits assistant image events for ACP image content blocks", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const manager = new GeminiCliManager({
+      prewarmSessions: false,
+      runtimeFactory: async (_model, handlers) => ({
+        model: "gemini-3-pro-image-preview",
+        initialize: async () => undefined,
+        newSession: vi.fn(async () => ({
+          sessionId: "session-image-output",
+          modes: { currentModeId: "default" },
+        })),
+        loadSession: vi.fn(async (sessionId: string) => ({
+          sessionId,
+          modes: { currentModeId: "default" },
+        })),
+        setSessionMode: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => {
+          handlers.onSessionUpdate({
+            sessionId: "session-image-output",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "image",
+                mimeType: "image/png",
+                data: "ZmFrZQ==",
+                name: "generated.png",
+              },
+            },
+          });
+          return { stopReason: "end_turn" };
+        }),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(() => undefined),
+      }),
+    });
+
+    manager.on("event", (event: Record<string, unknown>) => {
+      events.push(event);
+    });
+
+    manager.startSession({
+      threadId: "thread-image-output",
+      model: "gemini-3-pro-image-preview",
+      cwd: process.cwd(),
+    });
+
+    manager.sendTurn({
+      threadId: "thread-image-output",
+      text: "generate a banana",
+      approvalMode: "yolo",
+    });
+
+    await waitFor(() => events.some((event) => event.method === "gemini/message_image"));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        method: "gemini/message_image",
+        mimeType: "image/png",
+        data: "ZmFrZQ==",
+        name: "generated.png",
+      }),
+    );
+  });
 });

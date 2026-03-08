@@ -651,6 +651,101 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("does not merge distinct assistant messages in the same turn when itemId is missing", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-missing-itemid"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-itemid"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-missing-itemid",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-missing-itemid-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-itemid"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Let me make the changes:",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-missing-itemid-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-itemid"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-missing-itemid-2"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-itemid"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Now let's update the container.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-missing-itemid-2"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-itemid"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      const assistantMessages = entry.messages.filter(
+        (message: ProviderRuntimeTestMessage) =>
+          message.role === "assistant" &&
+          message.turnId === "turn-missing-itemid" &&
+          !message.streaming,
+      );
+      return assistantMessages.length === 2;
+    });
+
+    const assistantMessages = thread.messages
+      .filter(
+        (message: ProviderRuntimeTestMessage) =>
+          message.role === "assistant" &&
+          message.turnId === "turn-missing-itemid" &&
+          !message.streaming,
+      )
+      .toSorted((left, right) => left.id.localeCompare(right.id));
+
+    expect(assistantMessages.map((message: ProviderRuntimeTestMessage) => message.text)).toEqual([
+      "Let me make the changes:",
+      "Now let's update the container.",
+    ]);
+    expect(new Set(assistantMessages.map((message: ProviderRuntimeTestMessage) => message.id)).size).toBe(2);
+  });
+
   it("projects thread token usage into normalized thread context-window state", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -1082,6 +1177,74 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.text.length).toBe(oversizedText.length);
     expect(message?.text).toBe(oversizedText);
     expect(message?.streaming).toBe(false);
+  });
+
+  it("finalizes assistant image attachments from assistant_image deltas", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-image-output"),
+      provider: "gemini",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-image-output"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-image-output",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-image-output"),
+      provider: "gemini",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-image-output"),
+      payload: {
+        streamKind: "assistant_image",
+        delta: "",
+        attachments: [
+          {
+            type: "image",
+            id: "thread-1-123e4567-e89b-12d3-a456-426614174001",
+            name: "generated.png",
+            mimeType: "image/png",
+            sizeBytes: 512,
+          },
+        ],
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-image-output"),
+      provider: "gemini",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-image-output"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.turnId === "turn-image-output" &&
+          !message.streaming &&
+          (message.attachments?.length ?? 0) === 1,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.turnId === "turn-image-output",
+    );
+    expect(message?.text).toBe("");
+    expect(message?.streaming).toBe(false);
+    expect(message?.attachments?.[0]?.name).toBe("generated.png");
   });
 
   it("does not duplicate assistant completion when item.completed is followed by turn.completed", async () => {

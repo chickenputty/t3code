@@ -29,10 +29,26 @@ interface GeminiAcpMessageContent {
   readonly type?: unknown;
   readonly text?: unknown;
   readonly path?: unknown;
+  readonly name?: unknown;
+  readonly uri?: unknown;
+  readonly data?: unknown;
+  readonly mimeType?: unknown;
+  readonly mime_type?: unknown;
   readonly oldText?: unknown;
   readonly newText?: unknown;
   readonly terminalId?: unknown;
 }
+
+type GeminiAssistantOutputBlock =
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "image";
+      readonly mimeType?: string;
+      readonly data?: string;
+      readonly uri?: string;
+      readonly path?: string;
+      readonly name?: string;
+    };
 
 interface GeminiAcpPlanEntry {
   readonly content?: unknown;
@@ -761,21 +777,37 @@ export class GeminiCliManager extends EventEmitter {
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
-        const text = readContentText(update.content);
-        if (!text) {
-          return;
+        const blocks = extractAssistantOutputBlocks(update.content);
+        for (const block of blocks) {
+          if (block.type === "text") {
+            this.emit("event", {
+              type: "message",
+              method: "gemini/message",
+              kind: "data",
+              threadId,
+              turnId,
+              provider: "gemini",
+              role: "assistant",
+              content: block.text,
+              delta: true,
+            });
+            continue;
+          }
+
+          this.emit("event", {
+            type: "message_image",
+            method: "gemini/message_image",
+            kind: "data",
+            threadId,
+            turnId,
+            provider: "gemini",
+            mimeType: block.mimeType,
+            data: block.data,
+            uri: block.uri,
+            path: block.path,
+            name: block.name,
+          });
         }
-        this.emit("event", {
-          type: "message",
-          method: "gemini/message",
-          kind: "data",
-          threadId,
-          turnId,
-          provider: "gemini",
-          role: "assistant",
-          content: text,
-          delta: true,
-        });
         return;
       }
 
@@ -1107,6 +1139,94 @@ function readContentText(content: unknown): string | undefined {
 
   const text = (content as GeminiAcpMessageContent).text;
   return typeof text === "string" && text.length > 0 ? text : undefined;
+}
+
+function unwrapContentBlock(entry: unknown): unknown {
+  if (!entry || typeof entry !== "object") {
+    return entry;
+  }
+  const record = entry as Record<string, unknown>;
+  return "content" in record ? record.content : entry;
+}
+
+function looksLikeImageMimeType(value: unknown): value is string {
+  return typeof value === "string" && value.toLowerCase().startsWith("image/");
+}
+
+function looksLikeImagePath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff|webp)$/i.test(value)
+  );
+}
+
+function readImageMimeType(content: Record<string, unknown>): string | undefined {
+  const directMimeType = content.mimeType;
+  if (looksLikeImageMimeType(directMimeType)) {
+    return directMimeType.toLowerCase();
+  }
+  const snakeMimeType = content.mime_type;
+  if (looksLikeImageMimeType(snakeMimeType)) {
+    return snakeMimeType.toLowerCase();
+  }
+  return undefined;
+}
+
+function readImageOutputBlock(content: unknown): GeminiAssistantOutputBlock | null {
+  if (!content || typeof content !== "object" || Array.isArray(content)) {
+    return null;
+  }
+
+  const record = content as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  const mimeType = readImageMimeType(record);
+  const data = typeof record.data === "string" && record.data.length > 0 ? record.data : undefined;
+  const uri = typeof record.uri === "string" && record.uri.length > 0 ? record.uri : undefined;
+  const path = typeof record.path === "string" && record.path.length > 0 ? record.path : undefined;
+  const name = typeof record.name === "string" && record.name.length > 0 ? record.name : undefined;
+
+  const isImageResource =
+    type === "image" ||
+    ((type === "resource_link" || type === "resource") &&
+      (mimeType !== undefined || looksLikeImagePath(uri) || looksLikeImagePath(path))) ||
+    ((mimeType !== undefined || data !== undefined) && (uri !== undefined || path !== undefined));
+
+  if (!isImageResource) {
+    return null;
+  }
+
+  if (!mimeType && !looksLikeImagePath(uri) && !looksLikeImagePath(path)) {
+    return null;
+  }
+
+  return {
+    type: "image",
+    ...(mimeType ? { mimeType } : {}),
+    ...(data ? { data } : {}),
+    ...(uri ? { uri } : {}),
+    ...(path ? { path } : {}),
+    ...(name ? { name } : {}),
+  };
+}
+
+function extractAssistantOutputBlocks(content: unknown): ReadonlyArray<GeminiAssistantOutputBlock> {
+  const contentBlocks = Array.isArray(content) ? content.map(unwrapContentBlock) : [content];
+  const blocks: GeminiAssistantOutputBlock[] = [];
+
+  for (const contentBlock of contentBlocks) {
+    const text = readContentText(contentBlock);
+    if (text) {
+      blocks.push({ type: "text", text });
+      continue;
+    }
+
+    const image = readImageOutputBlock(contentBlock);
+    if (image) {
+      blocks.push(image);
+    }
+  }
+
+  return blocks;
 }
 
 function flattenContentBlocks(content: unknown): string | undefined {

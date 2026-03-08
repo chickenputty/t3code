@@ -139,4 +139,34 @@ describe("ProviderRuntimeEvent", () => {
       }),
     ).toThrow();
   });
+
+  it("decodes assistant image content deltas with attachments", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "content.delta",
+      eventId: "event-image-1",
+      provider: "gemini",
+      createdAt: "2026-02-28T00:00:04.000Z",
+      threadId: "thread-3",
+      payload: {
+        streamKind: "assistant_image",
+        delta: "",
+        attachments: [
+          {
+            type: "image",
+            id: "thread-3-123e4567-e89b-12d3-a456-426614174000",
+            name: "generated.png",
+            mimeType: "image/png",
+            sizeBytes: 512,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("content.delta");
+    if (parsed.type !== "content.delta") {
+      throw new Error("expected content.delta");
+    }
+    expect(parsed.payload.streamKind).toBe("assistant_image");
+    expect(parsed.payload.attachments?.[0]?.mimeType).toBe("image/png");
+  });
 });

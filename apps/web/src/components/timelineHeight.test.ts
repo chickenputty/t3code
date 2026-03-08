@@ -12,6 +12,16 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(122);
   });
 
+  it("adds attachment rows for assistant image messages", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "assistant",
+        text: "",
+        attachments: [{ id: "1" }],
+      }),
+    ).toBe(328);
+  });
+
   it("uses assistant sizing rules for system messages", () => {
     expect(
       estimateTimelineMessageHeight({
