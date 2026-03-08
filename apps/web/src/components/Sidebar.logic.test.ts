@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { Thread } from "../types";
-import { deriveThreadStatusPill, getThreadLatestActivityAt, sortSidebarThreads } from "./Sidebar.logic";
+import {
+  deriveThreadStatusPill,
+  filterSidebarThreads,
+  getThreadLatestActivityAt,
+  sortSidebarThreads,
+  threadMatchesSidebarSearch,
+} from "./Sidebar.logic";
 
 const baseThread = {
   session: null,
@@ -253,5 +259,118 @@ describe("sortSidebarThreads", () => {
         ...threadSortMaps(),
       }).map((thread) => thread.id),
     ).toEqual([alpha.id, bravo.id]);
+  });
+});
+
+describe("threadMatchesSidebarSearch", () => {
+  it("matches thread titles case-insensitively", () => {
+    expect(
+      threadMatchesSidebarSearch(
+        makeThread({
+          title: "Fix Sidebar Search",
+        }),
+        "sidebar",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches the original user message", () => {
+    expect(
+      threadMatchesSidebarSearch(
+        makeThread({
+          messages: [
+            {
+              id: "message-1" as Thread["messages"][number]["id"],
+              role: "assistant",
+              text: "intro",
+              createdAt: "2026-03-07T10:00:00.000Z",
+              streaming: false,
+            },
+            {
+              id: "message-2" as Thread["messages"][number]["id"],
+              role: "user",
+              text: "Need a billing export page",
+              createdAt: "2026-03-07T10:01:00.000Z",
+              streaming: false,
+            },
+            {
+              id: "message-3" as Thread["messages"][number]["id"],
+              role: "user",
+              text: "Also add sorting",
+              createdAt: "2026-03-07T10:02:00.000Z",
+              streaming: false,
+            },
+          ],
+        }),
+        "billing export",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches the latest user message", () => {
+    expect(
+      threadMatchesSidebarSearch(
+        makeThread({
+          messages: [
+            {
+              id: "message-1" as Thread["messages"][number]["id"],
+              role: "user",
+              text: "First request",
+              createdAt: "2026-03-07T10:00:00.000Z",
+              streaming: false,
+            },
+            {
+              id: "message-2" as Thread["messages"][number]["id"],
+              role: "assistant",
+              text: "working on it",
+              createdAt: "2026-03-07T10:01:00.000Z",
+              streaming: false,
+            },
+            {
+              id: "message-3" as Thread["messages"][number]["id"],
+              role: "user",
+              text: "Latest note about invoices",
+              createdAt: "2026-03-07T10:02:00.000Z",
+              streaming: false,
+            },
+          ],
+        }),
+        "invoices",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("filterSidebarThreads", () => {
+  it("returns all threads when the query is empty", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as Thread["id"] }),
+      makeThread({ id: "thread-2" as Thread["id"] }),
+    ];
+
+    expect(filterSidebarThreads(threads, "   ")).toEqual(threads);
+  });
+
+  it("filters threads by searchable sidebar context", () => {
+    const matchingThread = makeThread({
+      id: "thread-match" as Thread["id"],
+      messages: [
+        {
+          id: "message-1" as Thread["messages"][number]["id"],
+          role: "user",
+          text: "Add a project-wide audit log",
+          createdAt: "2026-03-07T10:00:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const otherThread = makeThread({
+      id: "thread-other" as Thread["id"],
+      title: "Different work",
+    });
+
+    expect(filterSidebarThreads([matchingThread, otherThread], "audit log")).toEqual([
+      matchingThread,
+    ]);
   });
 });

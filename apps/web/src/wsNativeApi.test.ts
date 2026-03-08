@@ -365,6 +365,20 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards project thread autorename requests to the orchestration websocket method", async () => {
+    requestMock.mockResolvedValue({ renamed: [], skipped: [], failed: [] });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestration.autorenameProjectThreads({
+      projectId: ProjectId.makeUnsafe("project-1"),
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.autorenameProjectThreads, {
+      projectId: "project-1",
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

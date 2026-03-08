@@ -95,6 +95,12 @@ import {
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import {
+  describeThreadContextMessage,
+  resolveLatestThreadContextMessage,
+  resolveThreadContextMessage,
+} from "../threadContext";
+import { buildLocalDraftThread } from "../draftThreads";
 import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -102,7 +108,6 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
-  type Thread,
   type TurnDiffFileChange,
   type TurnDiffSummary,
 } from "../types";
@@ -212,7 +217,6 @@ import {
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
-  type DraftThreadState,
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
   useComposerThreadDraft,
@@ -225,47 +229,6 @@ import { estimateTimelineMessageHeight } from "./timelineHeight";
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
   return `${formatTimestamp(createdAt)} • ${duration}`;
-}
-
-function truncateThreadContextPreview(text: string, maxLength = 160): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
-}
-
-function describeThreadContextMessage(message: ChatMessage): string {
-  const textPreview = truncateThreadContextPreview(message.text);
-  if (textPreview.length > 0) {
-    return textPreview;
-  }
-
-  const attachmentCount = message.attachments?.length ?? 0;
-  if (attachmentCount > 0) {
-    return attachmentCount === 1 ? "1 attachment" : `${attachmentCount} attachments`;
-  }
-
-  return message.role === "assistant" ? "Assistant message" : "Message";
-}
-
-function resolveThreadContextMessage(
-  messages: ReadonlyArray<ChatMessage>,
-): ChatMessage | null {
-  return messages.find((message) => message.role === "user") ?? messages[0] ?? null;
-}
-
-function resolveLatestThreadContextMessage(
-  messages: ReadonlyArray<ChatMessage>,
-): ChatMessage | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === "user") {
-      return message;
-    }
-  }
-
-  return messages.at(-1) ?? null;
 }
 
 type ThreadContextMode = "original" | "last";
@@ -379,34 +342,6 @@ function buildExpandedImagePreview(
   return {
     images: previewableImages.map((image) => ({ src: image.src, name: image.name })),
     index: selectedIndex,
-  };
-}
-
-function buildLocalDraftThread(
-  threadId: ThreadId,
-  draftThread: DraftThreadState,
-  fallbackModel: string,
-  error: string | null,
-): Thread {
-  return {
-    id: threadId,
-    codexThreadId: null,
-    projectId: draftThread.projectId,
-    title: "New thread",
-    model: fallbackModel,
-    runtimeMode: draftThread.runtimeMode,
-    interactionMode: draftThread.interactionMode,
-    session: null,
-    messages: [],
-    error,
-    createdAt: draftThread.createdAt,
-    latestTurn: null,
-    lastVisitedAt: draftThread.createdAt,
-    branch: draftThread.branch,
-    worktreePath: draftThread.worktreePath,
-    turnDiffSummaries: [],
-    activities: [],
-    proposedPlans: [],
   };
 }
 
@@ -787,14 +722,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const localDraftThread = useMemo(
     () =>
       draftThread
-        ? buildLocalDraftThread(
+        ? buildLocalDraftThread({
             threadId,
             draftThread,
-            fallbackDraftProject?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
-            localDraftError,
-          )
+            fallbackModel: fallbackDraftProject?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
+            composerDraft,
+            error: localDraftError,
+          })
         : undefined,
-    [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
+    [composerDraft, draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
@@ -1149,12 +1085,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => resolveLatestThreadContextMessage(timelineMessages),
     [timelineMessages],
   );
-  const [threadContextMode, setThreadContextMode] = useState<ThreadContextMode>("original");
+  const [threadContextMode, setThreadContextMode] = useState<ThreadContextMode>(() => {
+    try {
+      const stored = localStorage.getItem("t3code:threadContextMode");
+      if (stored === "last" || stored === "original") return stored;
+    } catch {}
+    return "original";
+  });
+  const handleThreadContextModeChange = useCallback((mode: ThreadContextMode) => {
+    setThreadContextMode(mode);
+    try {
+      localStorage.setItem("t3code:threadContextMode", mode);
+    } catch {}
+  }, []);
   const threadContextMessage =
     threadContextMode === "last" ? latestThreadContextMessage : originalThreadContextMessage;
-  useEffect(() => {
-    setThreadContextMode("original");
-  }, [threadId]);
   const [threadContextJumpRequestKey, setThreadContextJumpRequestKey] = useState(0);
   const onJumpToThreadContext = useCallback(() => {
     if (!threadContextMessage) {
@@ -3533,7 +3478,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <ThreadContextPanel
         contextMessage={threadContextMessage}
         contextMode={threadContextMode}
-        onContextModeChange={setThreadContextMode}
+        onContextModeChange={handleThreadContextModeChange}
         onJumpToMessage={onJumpToThreadContext}
       />
       <PlanModePanel activePlan={activePlan} />
@@ -4395,29 +4340,29 @@ const ThreadContextPanel = memo(function ThreadContextPanel(props: {
               {formatTimestamp(contextMessage.createdAt)}
             </span>
           </div>
-          <Group aria-label="Context message range">
+          <Group aria-label="Context message range" className="flex gap-0.5 rounded-md bg-muted/60 p-0.5">
             <Toggle
               size="xs"
-              variant="outline"
               pressed={contextMode === "original"}
               onPressedChange={(pressed) => {
                 if (pressed) {
                   onContextModeChange("original");
                 }
               }}
+              className="h-5 min-w-0 rounded-[4px] border-transparent px-1.5 text-[11px] text-muted-foreground shadow-none data-[pressed]:bg-background data-[pressed]:text-foreground data-[pressed]:shadow-xs/5"
               aria-label="Show original thread context"
             >
               Original
             </Toggle>
             <Toggle
               size="xs"
-              variant="outline"
               pressed={contextMode === "last"}
               onPressedChange={(pressed) => {
                 if (pressed) {
                   onContextModeChange("last");
                 }
               }}
+              className="h-5 min-w-0 rounded-[4px] border-transparent px-1.5 text-[11px] text-muted-foreground shadow-none data-[pressed]:bg-background data-[pressed]:text-foreground data-[pressed]:shadow-xs/5"
               aria-label="Show latest thread context"
             >
               Last

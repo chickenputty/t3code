@@ -1,4 +1,5 @@
 import type { SidebarThreadSort } from "../sidebarThreadSort";
+import { resolveLatestThreadContextMessage, resolveThreadContextMessage } from "../threadContext";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {
@@ -150,6 +151,42 @@ function compareNames(left: Thread, right: Thread): number {
     numeric: true,
     sensitivity: "base",
   });
+}
+
+function normalizeSidebarSearchText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function matchesNormalizedSidebarSearch(thread: Thread, normalizedQuery: string): boolean {
+  const originalContextMessage = resolveThreadContextMessage(thread.messages);
+  const latestContextMessage = resolveLatestThreadContextMessage(thread.messages);
+  const searchableFields = [
+    thread.title,
+    originalContextMessage?.text ?? "",
+    latestContextMessage?.text ?? "",
+  ];
+
+  return searchableFields.some((field) =>
+    normalizeSidebarSearchText(field).includes(normalizedQuery),
+  );
+}
+
+export function threadMatchesSidebarSearch(thread: Thread, query: string): boolean {
+  const normalizedQuery = normalizeSidebarSearchText(query);
+  if (normalizedQuery.length === 0) {
+    return true;
+  }
+
+  return matchesNormalizedSidebarSearch(thread, normalizedQuery);
+}
+
+export function filterSidebarThreads(threads: readonly Thread[], query: string): Thread[] {
+  const normalizedQuery = normalizeSidebarSearchText(query);
+  if (normalizedQuery.length === 0) {
+    return [...threads];
+  }
+
+  return threads.filter((thread) => matchesNormalizedSidebarSearch(thread, normalizedQuery));
 }
 
 export function sortSidebarThreads(
