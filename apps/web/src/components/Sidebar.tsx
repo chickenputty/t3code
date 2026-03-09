@@ -1,12 +1,16 @@
 import {
+  ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  PlusIcon,
   RocketIcon,
   SparklesIcon,
+  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   XIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -19,7 +23,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
@@ -45,14 +49,18 @@ import { useThreadRunStateStore } from "../threadRunStateStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
+  getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
+  shouldShowArm64IntelBuildWarning,
   shouldHighlightDesktopUpdateError,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -181,7 +189,7 @@ function getServerHttpOrigin(): string {
       ? bridgeUrl
       : envUrl && envUrl.length > 0
         ? envUrl
-        : `ws://${window.location.hostname}:${window.location.port}`;
+        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
   // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
   const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
   try {
@@ -233,6 +241,7 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings, updateSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
@@ -249,6 +258,8 @@ export default function Sidebar() {
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [autoRenamingProjectId, setAutoRenamingProjectId] = useState<ProjectId | null>(null);
+  const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -260,6 +271,8 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const shouldBrowseForProjectImmediately = isElectron;
+  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -444,6 +457,7 @@ export default function Sidebar() {
       const finishAddingProject = () => {
         setIsAddingProject(false);
         setNewCwd("");
+        setAddProjectError(null);
         setAddingProject(false);
       };
 
@@ -469,18 +483,29 @@ export default function Sidebar() {
         });
         await handleNewThread(projectId).catch(() => undefined);
       } catch (error) {
+        const description =
+          error instanceof Error ? error.message : "An error occurred while adding the project.";
         setIsAddingProject(false);
-        toastManager.add({
-          type: "error",
-          title: "Unable to add project",
-          description:
-            error instanceof Error ? error.message : "An error occurred while adding the project.",
-        });
+        if (shouldBrowseForProjectImmediately) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to add project",
+            description,
+          });
+        } else {
+          setAddProjectError(description);
+        }
         return;
       }
       finishAddingProject();
     },
-    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
+    [
+      focusMostRecentThreadForProject,
+      handleNewThread,
+      isAddingProject,
+      projects,
+      shouldBrowseForProjectImmediately,
+    ],
   );
 
   const handleAddProject = () => {
@@ -499,6 +524,8 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
+    } else if (!shouldBrowseForProjectImmediately) {
+      addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
   };
@@ -554,6 +581,14 @@ export default function Sidebar() {
     },
     [autoRenamingProjectId],
   );
+  const handleStartAddProject = () => {
+    setAddProjectError(null);
+    if (shouldBrowseForProjectImmediately) {
+      void handlePickFolder();
+      return;
+    }
+    setAddingProject((prev) => !prev);
+  };
 
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
@@ -925,6 +960,12 @@ export default function Sidebar() {
   const desktopUpdateButtonAction = desktopUpdateState
     ? resolveDesktopUpdateButtonAction(desktopUpdateState)
     : "none";
+  const showArm64IntelBuildWarning =
+    isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
+  const arm64IntelBuildWarningDescription =
+    desktopUpdateState && showArm64IntelBuildWarning
+      ? getArm64IntelBuildWarningDescription(desktopUpdateState)
+      : null;
   const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
     ? "cursor-not-allowed opacity-60"
     : "hover:bg-accent hover:text-foreground";
@@ -1051,7 +1092,7 @@ export default function Sidebar() {
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
-      <div className="flex min-w-0 flex-1 items-center gap-1 mt-2 ml-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1 mt-1.5 ml-1">
         <T3Wordmark />
         <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
           Code
@@ -1067,7 +1108,7 @@ export default function Sidebar() {
     <>
       {isElectron ? (
         <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
+          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
             {wordmark}
             {showDesktopUpdateButton && (
               <Tooltip>
@@ -1078,7 +1119,7 @@ export default function Sidebar() {
                       aria-label={desktopUpdateTooltip}
                       aria-disabled={desktopUpdateButtonDisabled || undefined}
                       disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                      className={`inline-flex size-7 ml-auto mt-1.5 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >
                       <RocketIcon className="size-3.5" />
@@ -1097,7 +1138,120 @@ export default function Sidebar() {
       )}
 
       <SidebarContent className="gap-0">
+        {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
+          <SidebarGroup className="px-2 pt-2 pb-0">
+            <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
+              <TriangleAlertIcon />
+              <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+              <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
+              {desktopUpdateButtonAction !== "none" ? (
+                <AlertAction>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={desktopUpdateButtonDisabled}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
+                  </Button>
+                </AlertAction>
+              ) : null}
+            </Alert>
+          </SidebarGroup>
+        ) : null}
         <SidebarGroup className="px-2 py-2">
+          <div className="mb-1 flex items-center justify-between px-2">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              Projects
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Add project"
+                    aria-pressed={shouldShowProjectPathEntry}
+                    className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={handleStartAddProject}
+                  />
+                }
+              >
+                <PlusIcon
+                  className={`size-3.5 transition-transform duration-150 ${
+                    shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                  }`}
+                />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Add project</TooltipPopup>
+            </Tooltip>
+          </div>
+
+          {shouldShowProjectPathEntry && (
+            <div className="mb-2 px-1">
+              {isElectron && (
+                <button
+                  type="button"
+                  className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handlePickFolder()}
+                  disabled={isPickingFolder || isAddingProject}
+                >
+                  <FolderIcon className="size-3.5" />
+                  {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                </button>
+              )}
+              <div className="flex gap-1.5">
+                <input
+                  ref={addProjectInputRef}
+                  className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                    addProjectError
+                      ? "border-red-500/70 focus:border-red-500"
+                      : "border-border focus:border-ring"
+                  }`}
+                  placeholder="/path/to/project"
+                  value={newCwd}
+                  onChange={(event) => {
+                    setNewCwd(event.target.value);
+                    setAddProjectError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") {
+                      setAddingProject(false);
+                      setAddProjectError(null);
+                    }
+                  }}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                  onClick={handleAddProject}
+                  disabled={isAddingProject}
+                >
+                  {isAddingProject ? "Adding..." : "Add"}
+                </button>
+              </div>
+              {addProjectError && (
+                <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                  {addProjectError}
+                </p>
+              )}
+              <div className="mt-1.5 px-0.5">
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                  onClick={() => {
+                    setAddingProject(false);
+                    setAddProjectError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {projects.length > 0 && (
             <div className="px-1 pb-2">
               <label className="block space-y-1">
@@ -1508,70 +1662,39 @@ export default function Sidebar() {
             })}
           </SidebarMenu>
 
-          {projects.length === 0 && !addingProject && (
+          {projects.length === 0 && !shouldShowProjectPathEntry && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-              No projects yet.
-              <br />
-              Add one to get started.
+              No projects yet
             </div>
           )}
         </SidebarGroup>
       </SidebarContent>
 
       <SidebarSeparator />
-      <SidebarFooter className="gap-0 p-3">
-        {addingProject ? (
-          <>
-            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-              Add project
-            </p>
-            <input
-              className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-              placeholder="/path/to/project"
-              value={newCwd}
-              onChange={(event) => setNewCwd(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") handleAddProject();
-                if (event.key === "Escape") setAddingProject(false);
-              }}
-            />
-            {isElectron && (
-              <button
-                type="button"
-                className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handlePickFolder()}
-                disabled={isPickingFolder || isAddingProject}
+      <SidebarFooter className="p-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {isOnSettings ? (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => window.history.back()}
               >
-                {isPickingFolder ? "Picking folder..." : "Browse for folder"}
-              </button>
+                <ArrowLeftIcon className="size-3.5" />
+                <span className="text-xs">Back</span>
+              </SidebarMenuButton>
+            ) : (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => void navigate({ to: "/settings" })}
+              >
+                <SettingsIcon className="size-3.5" />
+                <span className="text-xs">Settings</span>
+              </SidebarMenuButton>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-                onClick={handleAddProject}
-                disabled={isAddingProject}
-              >
-                {isAddingProject ? "Adding..." : "Add"}
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                onClick={() => setAddingProject(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
-            onClick={() => setAddingProject(true)}
-          >
-            + Add project
-          </button>
-        )}
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </>
   );

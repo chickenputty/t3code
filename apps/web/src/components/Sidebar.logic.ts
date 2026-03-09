@@ -1,10 +1,18 @@
 import type { SidebarThreadSort } from "../sidebarThreadSort";
+import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 import type { PendingThreadRunPhase } from "../threadRunStateStore";
 import { resolveLatestThreadContextMessage, resolveThreadContextMessage } from "../threadContext";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Preparing" | "Completed" | "Pending Approval" | "Paused";
+  label:
+    | "Working"
+    | "Connecting"
+    | "Preparing"
+    | "Completed"
+    | "Pending Approval"
+    | "Awaiting Input"
+    | "Plan Ready";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -16,15 +24,15 @@ export interface SortSidebarThreadsOptions {
   readonly hasPendingUserInputByThreadId: ReadonlyMap<Thread["id"], boolean>;
 }
 
-type ThreadStatusSource = {
-  readonly session: Pick<NonNullable<Thread["session"]>, "status"> | null;
-  readonly latestTurn: Pick<NonNullable<Thread["latestTurn"]>, "completedAt"> | null;
-  readonly lastVisitedAt?: string | undefined;
+type ThreadStatusInput = {
+  readonly interactionMode: Thread["interactionMode"];
+  readonly latestTurn: Thread["latestTurn"];
+  readonly lastVisitedAt?: Thread["lastVisitedAt"];
+  readonly proposedPlans: ReadonlyArray<Thread["proposedPlans"][number]>;
+  readonly session: Thread["session"];
 };
 
-export function hasUnseenCompletion(
-  thread: Pick<ThreadStatusSource, "latestTurn" | "lastVisitedAt">,
-): boolean {
+export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
@@ -35,13 +43,23 @@ export function hasUnseenCompletion(
   return completedAt > lastVisitedAt;
 }
 
-export function deriveThreadStatusPill(input: {
-  readonly thread: ThreadStatusSource;
-  readonly hasPendingApprovals: boolean;
-  readonly hasPendingUserInput: boolean;
-  readonly pendingRunPhase?: PendingThreadRunPhase | null;
+function buildPlanReadyPill(): ThreadStatusPill {
+  return {
+    label: "Plan Ready",
+    colorClass: "text-violet-600 dark:text-violet-300/90",
+    dotClass: "bg-violet-500 dark:bg-violet-300/90",
+    pulse: false,
+  };
+}
+
+export function resolveThreadStatusPill(input: {
+  thread: ThreadStatusInput;
+  hasPendingApprovals: boolean;
+  hasPendingUserInput: boolean;
 }): ThreadStatusPill | null {
-  if (input.hasPendingApprovals) {
+  const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+
+  if (hasPendingApprovals) {
     return {
       label: "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
@@ -50,13 +68,63 @@ export function deriveThreadStatusPill(input: {
     };
   }
 
-  if (input.hasPendingUserInput) {
+  if (hasPendingUserInput) {
     return {
-      label: "Paused",
-      colorClass: "text-yellow-700 dark:text-yellow-300/90",
-      dotClass: "bg-yellow-500 dark:bg-yellow-300/90",
+      label: "Awaiting Input",
+      colorClass: "text-indigo-600 dark:text-indigo-300/90",
+      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,
     };
+  }
+
+  if (thread.session?.status === "running") {
+    return {
+      label: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (thread.session?.status === "connecting") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  const hasPlanReadyPrompt =
+    !hasPendingUserInput &&
+    thread.interactionMode === "plan" &&
+    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null) !== null;
+  if (hasPlanReadyPrompt) {
+    return buildPlanReadyPill();
+  }
+
+  if (hasUnseenCompletion(thread)) {
+    return {
+      label: "Completed",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
+  return null;
+}
+
+export function deriveThreadStatusPill(input: {
+  readonly thread: Thread;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly pendingRunPhase?: PendingThreadRunPhase | null;
+}): ThreadStatusPill | null {
+  const base = resolveThreadStatusPill(input);
+  if (base) {
+    return base;
   }
 
   if (input.pendingRunPhase === "preparing-worktree") {
@@ -77,31 +145,15 @@ export function deriveThreadStatusPill(input: {
     };
   }
 
-  if (input.thread.session?.status === "running") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (input.thread.session?.status === "connecting") {
-    return {
-      label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (hasUnseenCompletion(input.thread)) {
-    return {
-      label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-    };
+  const hasPlanReadyPrompt =
+    input.thread.interactionMode === "plan" &&
+    isLatestTurnSettled(input.thread.latestTurn, input.thread.session) &&
+    findLatestProposedPlan(
+      input.thread.proposedPlans,
+      input.thread.latestTurn?.turnId ?? null,
+    ) !== null;
+  if (hasPlanReadyPrompt) {
+    return buildPlanReadyPill();
   }
 
   return null;
@@ -153,7 +205,7 @@ function getThreadStatusRank(input: {
   switch (pill?.label) {
     case "Pending Approval":
       return 0;
-    case "Paused":
+    case "Awaiting Input":
       return 1;
     case "Preparing":
       return 2;
@@ -161,10 +213,12 @@ function getThreadStatusRank(input: {
       return 3;
     case "Connecting":
       return 4;
-    case "Completed":
+    case "Plan Ready":
       return 5;
-    default:
+    case "Completed":
       return 6;
+    default:
+      return 7;
   }
 }
 

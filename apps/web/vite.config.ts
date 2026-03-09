@@ -8,6 +8,14 @@ const bindHost = process.env.T3CODE_HOST ?? "localhost";
 const publicHost =
   process.env.T3CODE_PUBLIC_HOST ??
   (bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "[::]" ? "localhost" : bindHost);
+const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
+
+const buildSourcemap =
+  sourcemapEnv === "0" || sourcemapEnv === "false"
+    ? false
+    : sourcemapEnv === "hidden"
+      ? "hidden"
+      : true;
 
 export default defineConfig({
   plugins: [
@@ -47,5 +55,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    sourcemap: buildSourcemap,
   },
 });

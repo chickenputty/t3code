@@ -105,3 +105,9 @@ Do not use `bun test` in this repository.
 ## Status
 
 This fork is intentionally willing to make larger architectural changes when they improve correctness, recoverability, and long-term maintainability.
+
+## Contributing
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
+
+Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
