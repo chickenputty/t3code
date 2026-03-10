@@ -7,12 +7,12 @@ import {
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
 import {
-  resolveProviderForModel,
   resolveModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
+import { inferProviderForThreadModel } from "./threadSelectionDefaults";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -147,27 +147,6 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
     return providerName;
   }
   return "codex";
-}
-
-function inferProviderForThreadModel(input: {
-  readonly model: string;
-  readonly sessionProviderName: string | null;
-}): ProviderKind {
-  if (
-    input.sessionProviderName === "codex" ||
-    input.sessionProviderName === "claudeCode" ||
-    input.sessionProviderName === "gemini"
-  ) {
-    return input.sessionProviderName;
-  }
-  const trimmedModel = input.model.trim().toLowerCase();
-  const fallbackProvider =
-    trimmedModel.startsWith("claude-")
-      ? "claudeCode"
-      : trimmedModel.startsWith("gemini")
-        ? "gemini"
-        : "codex";
-  return resolveProviderForModel(input.model, fallbackProvider);
 }
 
 function resolveWsHttpOrigin(): string {

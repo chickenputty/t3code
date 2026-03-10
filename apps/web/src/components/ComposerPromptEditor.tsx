@@ -746,10 +746,11 @@ function ComposerPromptEditorInner({
         contentEditable={
           <ContentEditable
             className={cn(
-              "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-base leading-relaxed text-foreground focus:outline-none sm:text-sm",
+              "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-left text-base leading-relaxed text-foreground focus:outline-none sm:text-sm",
               className,
             )}
             aria-placeholder={placeholder}
+            style={{ direction: "ltr" }}
             placeholder={<span />}
             onPaste={onPaste}
           />

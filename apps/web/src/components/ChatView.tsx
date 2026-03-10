@@ -104,6 +104,7 @@ import {
   resolveThreadContextMessage,
 } from "../threadContext";
 import { buildLocalDraftThread } from "../draftThreads";
+import { getLatestStartedThreadSelection } from "../threadSelectionDefaults";
 import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -121,7 +122,6 @@ import { summarizeTurnDiffStats } from "../lib/turnDiffTree";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
-  isOpenFavoriteEditorShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
@@ -139,6 +139,7 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  GitCommitIcon,
   ImagePlusIcon,
   LockIcon,
   LockOpenIcon,
@@ -154,7 +155,7 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Separator } from "./ui/separator";
-import { Group, GroupSeparator } from "./ui/group";
+import { Group } from "./ui/group";
 import {
   Menu,
   MenuGroup,
@@ -798,6 +799,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const latestStartedThreadSelection = useMemo(
+    () => getLatestStartedThreadSelection(threads),
+    [threads],
+  );
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -825,13 +830,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
+  const defaultDraftSelection =
+    !hasThreadStarted && composerDraft.provider === null && composerDraft.model === null
+      ? latestStartedThreadSelection
+      : null;
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const selectedProvider: ProviderKind =
+    lockedProvider ?? selectedProviderByThreadId ?? defaultDraftSelection?.provider ?? "codex";
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
-    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
+    defaultDraftSelection?.provider === selectedProvider
+      ? defaultDraftSelection.model
+      : (activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider)),
   );
   const customModelsForSelectedProvider = getCustomModelsForProvider(settings, selectedProvider);
   const selectedModel = useMemo(() => {
@@ -2486,7 +2498,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const files = Array.from(event.currentTarget.files ?? []);
     if (files.length > 0) {
       addComposerImages(files);
-      scheduleComposerFocus();
+      if (!isMobileViewport) {
+        scheduleComposerFocus();
+      }
     }
     event.currentTarget.value = "";
   };
@@ -2546,7 +2560,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
     addComposerImages(files);
-    focusComposer();
+    if (!isMobileViewport) {
+      focusComposer();
+    }
   };
 
   const onRevertToTurnCount = useCallback(
@@ -4278,6 +4294,265 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 }
 
+interface ChatHeaderDropdownProps {
+  activeThreadId: ThreadId;
+  activeProjectName: string | undefined;
+  isGitRepo: boolean;
+  openInCwd: string | null;
+  activeProjectScripts: ProjectScript[] | undefined;
+  preferredScriptId: string | null;
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  terminalOpen: boolean;
+  terminalToggleShortcutLabel: string | null;
+  gitCwd: string | null;
+  onRunProjectScript: (script: ProjectScript) => void;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
+  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onToggleTerminal: () => void;
+}
+
+const ChatHeaderDropdown = memo(function ChatHeaderDropdown({
+  activeThreadId,
+  activeProjectName,
+  isGitRepo,
+  openInCwd,
+  activeProjectScripts,
+  preferredScriptId,
+  keybindings,
+  availableEditors,
+  terminalOpen,
+  terminalToggleShortcutLabel,
+  gitCwd,
+  onRunProjectScript,
+  onAddProjectScript,
+  onUpdateProjectScript,
+  onDeleteProjectScript,
+  onToggleTerminal,
+}: ChatHeaderDropdownProps) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  return (
+    <>
+      <Menu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Actions"
+              size="xs"
+              variant="outline"
+            />
+          }
+        >
+          <EllipsisIcon aria-hidden="true" className="size-4" />
+        </MenuTrigger>
+        <MenuPopup align="end" className="min-w-48">
+          {/* Terminal */}
+          <MenuItem
+            onClick={() => {
+              onToggleTerminal();
+              setDropdownOpen(false);
+            }}
+          >
+            <TerminalIcon className="size-4" />
+            {terminalOpen ? "Hide terminal" : "Show terminal"}
+            {terminalToggleShortcutLabel && (
+              <MenuShortcut>{terminalToggleShortcutLabel}</MenuShortcut>
+            )}
+          </MenuItem>
+
+          <MenuDivider />
+
+          {/* Git */}
+          {activeProjectName && isGitRepo && (
+            <MenuSub>
+              <MenuSubTrigger>
+                <GitCommitIcon className="size-4" />
+                Git
+              </MenuSubTrigger>
+              <MenuSubPopup>
+                <GitActionsDropdownContent />
+              </MenuSubPopup>
+            </MenuSub>
+          )}
+
+          {/* Folder / Open in editor */}
+          {activeProjectName && (
+            <MenuSub>
+              <MenuSubTrigger>
+                <FolderClosedIcon className="size-4" />
+                Open in...
+              </MenuSubTrigger>
+              <MenuSubPopup>
+                <OpenInDropdownContent
+                  keybindings={keybindings}
+                  availableEditors={availableEditors}
+                  openInCwd={openInCwd}
+                  onClose={() => setDropdownOpen(false)}
+                />
+              </MenuSubPopup>
+            </MenuSub>
+          )}
+
+          {/* Actions / Scripts */}
+          {activeProjectScripts && activeProjectScripts.length > 0 && (
+            <>
+              <MenuDivider />
+              <ActionsDropdownContent
+                scripts={activeProjectScripts}
+                keybindings={keybindings}
+                onRunScript={(script) => {
+                  onRunProjectScript(script);
+                  setDropdownOpen(false);
+                }}
+              />
+            </>
+          )}
+        </MenuPopup>
+      </Menu>
+      {/* Keep controls mounted (hidden) for their dialogs */}
+      <div className="sr-only">
+        {activeProjectScripts && (
+          <ProjectScriptsControl
+            scripts={activeProjectScripts}
+            keybindings={keybindings}
+            preferredScriptId={preferredScriptId}
+            onRunScript={onRunProjectScript}
+            onAddScript={onAddProjectScript}
+            onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
+          />
+        )}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+      </div>
+    </>
+  );
+});
+
+const GitActionsDropdownContent = memo(function GitActionsDropdownContent() {
+  // Delegate to the existing GitActionsControl which already handles everything
+  // For the submenu, we just render a placeholder that opens the git controls
+  return (
+    <MenuItem
+      onClick={() => {
+        // Click the hidden git actions button to open its menu
+        const gitButton = document.querySelector<HTMLButtonElement>(
+          '[aria-label="Git action options"]',
+        );
+        gitButton?.click();
+      }}
+    >
+      <GitCommitIcon className="size-4" />
+      Open Git actions
+    </MenuItem>
+  );
+});
+
+const ActionsDropdownContent = memo(function ActionsDropdownContent({
+  scripts,
+  keybindings,
+  onRunScript,
+}: {
+  scripts: ProjectScript[];
+  keybindings: ResolvedKeybindingsConfig;
+  onRunScript: (script: ProjectScript) => void;
+}) {
+  return (
+    <>
+      {scripts.map((script) => {
+        const shortcutLabel = shortcutLabelForCommand(
+          keybindings,
+          commandForProjectScript(script.id),
+        );
+        return (
+          <MenuItem key={script.id} onClick={() => onRunScript(script)}>
+            <ZapIcon className="size-4" />
+            {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+            {shortcutLabel && <MenuShortcut>{shortcutLabel}</MenuShortcut>}
+          </MenuItem>
+        );
+      })}
+    </>
+  );
+});
+
+const OpenInDropdownContent = memo(function OpenInDropdownContent({
+  keybindings,
+  availableEditors,
+  openInCwd,
+  onClose,
+}: {
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+  onClose: () => void;
+}) {
+  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
+    () => [
+      { label: "Cursor", Icon: CursorIcon, value: "cursor" },
+      { label: "VS Code", Icon: VisualStudioCode, value: "vscode" },
+      { label: "Zed", Icon: Zed, value: "zed" },
+      {
+        label: isMacPlatform(navigator.platform)
+          ? "Finder"
+          : isWindowsPlatform(navigator.platform)
+            ? "Explorer"
+            : "Files",
+        Icon: FolderClosedIcon,
+        value: "file-manager",
+      },
+    ],
+    [],
+  );
+  const options = useMemo(
+    () => allOptions.filter((option) => availableEditors.includes(option.value)),
+    [allOptions, availableEditors],
+  );
+
+  const openFavoriteEditorShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
+    [keybindings],
+  );
+
+  const [lastEditor] = useState<EditorId>(() => {
+    const stored = localStorage.getItem(LAST_EDITOR_KEY);
+    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
+  });
+  const effectiveEditor = options.some((option) => option.value === lastEditor)
+    ? lastEditor
+    : (options[0]?.value ?? null);
+
+  const openInEditor = useCallback(
+    (editorId: EditorId) => {
+      const api = readNativeApi();
+      if (!api || !openInCwd) return;
+      void api.shell.openInEditor(openInCwd, editorId);
+      localStorage.setItem(LAST_EDITOR_KEY, editorId);
+      onClose();
+    },
+    [openInCwd, onClose],
+  );
+
+  if (options.length === 0) {
+    return <MenuItem disabled>No installed editors found</MenuItem>;
+  }
+
+  return (
+    <>
+      {options.map(({ label, Icon, value }) => (
+        <MenuItem key={value} onClick={() => openInEditor(value)}>
+          <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
+          {label}
+          {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
+            <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+          )}
+        </MenuItem>
+      ))}
+    </>
+  );
+});
+
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -4345,47 +4620,25 @@ const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
         {activeProjectName && (
-          <OpenInPicker
+          <ChatHeaderDropdown
+            activeThreadId={activeThreadId}
+            activeProjectName={activeProjectName}
+            isGitRepo={isGitRepo}
+            openInCwd={openInCwd}
+            activeProjectScripts={activeProjectScripts}
+            preferredScriptId={preferredScriptId}
             keybindings={keybindings}
             availableEditors={availableEditors}
-            openInCwd={openInCwd}
+            terminalOpen={terminalOpen}
+            terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+            gitCwd={gitCwd}
+            onRunProjectScript={onRunProjectScript}
+            onAddProjectScript={onAddProjectScript}
+            onUpdateProjectScript={onUpdateProjectScript}
+            onDeleteProjectScript={onDeleteProjectScript}
+            onToggleTerminal={onToggleTerminal}
           />
-        )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        {activeProjectName && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0"
-                  pressed={terminalOpen}
-                  onPressedChange={onToggleTerminal}
-                  aria-label="Toggle terminal"
-                  variant="outline"
-                  size="xs"
-                >
-                  <TerminalIcon className="size-3" />
-                </Toggle>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {terminalToggleShortcutLabel
-                ? `Toggle terminal (${terminalToggleShortcutLabel})`
-                : "Toggle terminal"}
-            </TooltipPopup>
-          </Tooltip>
         )}
         <Tooltip>
           <TooltipTrigger
@@ -5186,13 +5439,13 @@ const CompactActivityStrip = memo(function CompactActivityStrip(props: {
           <BotIcon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <p className="text-sm font-medium text-foreground/92">{assistantLabel} is working</p>
-            <span className="rounded-full border border-border/70 bg-background/70 px-2 py-0.5 text-[10px] text-muted-foreground/72">
+            <span className="shrink-0 rounded-full border border-border/70 bg-background/70 px-2 py-0.5 text-[10px] text-muted-foreground/72">
               {statusLabel}
             </span>
             {elapsed ? (
-              <span className="text-[11px] text-muted-foreground/58">{elapsed}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground/58">{elapsed}</span>
             ) : null}
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-2">
@@ -5603,7 +5856,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
       if (liveWorkEntries.length > 0) {
         nextRows.push({
           kind: "work",
-          id: `live-work:${liveWorkEntries.at(-1)?.id ?? "current"}`,
+          // Anchor the active work group to the first streamed event for the turn so
+          // appending new events does not reset expansion state or row measurements.
+          id: `live-work:${liveWorkEntries[0]?.id ?? activeTurnStartedAt ?? "current"}`,
           createdAt: liveWorkEntries[0]?.createdAt ?? activeTurnStartedAt ?? null,
           groupedEntries: liveWorkEntries,
         });
@@ -6100,14 +6355,14 @@ const MessagesTimeline = memo(function MessagesTimeline({
             <>
               {row.showCompletionDivider && (
                 <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                  <span className="h-px flex-1 bg-success/25" />
+                  <span className="rounded-full border border-success/25 bg-success/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-success-foreground/65">
                     {completionSummary ? `Response • ${completionSummary}` : "Response"}
                   </span>
-                  <span className="h-px flex-1 bg-border" />
+                  <span className="h-px flex-1 bg-success/25" />
                 </div>
               )}
-              <div className="min-w-0 px-1 py-0.5">
+              <div className={cn("min-w-0 px-1 py-0.5", row.showCompletionDivider && "rounded-xl bg-success/[0.04] ring-1 ring-success/10 px-3 py-2")}>
                 {renderableAssistantImages.length > 0 && (
                   <div className="mb-3 grid max-w-[520px] grid-cols-2 gap-2">
                     {renderableAssistantImages.map((image) => (
@@ -6537,125 +6792,5 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
         </MenuGroup>
       </MenuPopup>
     </Menu>
-  );
-});
-
-const OpenInPicker = memo(function OpenInPicker({
-  keybindings,
-  availableEditors,
-  openInCwd,
-}: {
-  keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
-  openInCwd: string | null;
-}) {
-  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
-  });
-
-  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
-    () => [
-      {
-        label: "Cursor",
-        Icon: CursorIcon,
-        value: "cursor",
-      },
-      {
-        label: "VS Code",
-        Icon: VisualStudioCode,
-        value: "vscode",
-      },
-      {
-        label: "Zed",
-        Icon: Zed,
-        value: "zed",
-      },
-      {
-        label: isMacPlatform(navigator.platform)
-          ? "Finder"
-          : isWindowsPlatform(navigator.platform)
-            ? "Explorer"
-            : "Files",
-        Icon: FolderClosedIcon,
-        value: "file-manager",
-      },
-    ],
-    [],
-  );
-  const options = useMemo(
-    () => allOptions.filter((option) => availableEditors.includes(option.value)),
-    [allOptions, availableEditors],
-  );
-
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
-    ? lastEditor
-    : (options[0]?.value ?? null);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
-
-  const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
-      const api = readNativeApi();
-      if (!api || !openInCwd) return;
-      const editor = editorId ?? effectiveEditor;
-      if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
-      localStorage.setItem(LAST_EDITOR_KEY, editor);
-      setLastEditor(editor);
-    },
-    [effectiveEditor, openInCwd, setLastEditor],
-  );
-
-  const openFavoriteEditorShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
-    [keybindings],
-  );
-
-  useEffect(() => {
-    const handler = (e: globalThis.KeyboardEvent) => {
-      const api = readNativeApi();
-      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
-      if (!effectiveEditor) return;
-
-      e.preventDefault();
-      void api.shell.openInEditor(openInCwd, effectiveEditor);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [effectiveEditor, keybindings, openInCwd]);
-
-  return (
-    <Group aria-label="Subscription actions">
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={!effectiveEditor || !openInCwd}
-        onClick={() => openInEditor(effectiveEditor)}
-      >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
-          Open
-        </span>
-      </Button>
-      <GroupSeparator className="hidden @sm/header-actions:block" />
-      <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
-              {label}
-              {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
-            </MenuItem>
-          ))}
-        </MenuPopup>
-      </Menu>
-    </Group>
   );
 });

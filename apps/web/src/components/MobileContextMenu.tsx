@@ -85,8 +85,10 @@ export function MobileContextMenu({
       style={{
         opacity: visible ? 1 : 0,
         transition: "opacity 150ms ease-out",
+        WebkitTouchCallout: "none",
+        WebkitUserSelect: "none",
       }}
-      className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/40 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/40 backdrop-blur-[2px] select-none"
       onClick={handleOverlayInteraction}
       onTouchEnd={handleOverlayInteraction}
       role="dialog"

@@ -22,7 +22,7 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "min(22rem, calc(100vw - var(--spacing(14))))";
+const SIDEBAR_WIDTH_MOBILE = "min(16rem, calc(100vw - var(--spacing(28))))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 
@@ -231,6 +231,7 @@ function Sidebar({
             data-mobile="true"
             data-sidebar="sidebar"
             data-slot="sidebar"
+            keepMounted
             showCloseButton={false}
             side={side}
             style={

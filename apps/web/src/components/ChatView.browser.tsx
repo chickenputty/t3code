@@ -1301,6 +1301,60 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps focus off the mobile composer editor after image upload", async () => {
+    const mounted = await mountChatView({
+      viewport: MOBILE_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-mobile-upload-focus" as MessageId,
+        targetText: "mobile upload focus target",
+      }),
+    });
+
+    try {
+      const uploadButton = await waitForComposerImagePickerButton();
+      const imageInput = await waitForComposerImageInput();
+
+      uploadButton.focus();
+      expect(document.activeElement).toBe(uploadButton);
+
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["first"], "first.png", { type: "image/png" }));
+
+      Object.defineProperty(imageInput, "files", {
+        configurable: true,
+        value: transfer.files,
+      });
+      imageInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelectorAll("[data-composer-image-chip='true']").length).toBe(1);
+          expect(document.activeElement).toBe(uploadButton);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("pins the composer editor direction to ltr", async () => {
+    const mounted = await mountChatView({
+      viewport: MOBILE_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-mobile-editor-dir" as MessageId,
+        targetText: "mobile editor dir target",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      expect(getComputedStyle(composerEditor).direction).toBe("ltr");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("inserts a newline instead of sending when Enter is pressed in the mobile composer", async () => {
     useComposerDraftStore.getState().setPrompt(THREAD_ID, "Mobile draft");
 

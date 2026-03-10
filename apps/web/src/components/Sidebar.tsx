@@ -76,6 +76,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
+  useSidebar,
 } from "./ui/sidebar";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
@@ -223,6 +224,7 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
+  const { isMobile, setOpenMobile } = useSidebar();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -280,6 +282,11 @@ export default function Sidebar() {
   const [mobileMenuThreadId, setMobileMenuThreadId] = useState<ThreadId | null>(null);
   const [mobileMenuPosition, setMobileMenuPosition] = useState({ x: 0, y: 0 });
   const [mobileMenuProjectId, setMobileMenuProjectId] = useState<ProjectId | null>(null);
+
+  const closeMobileSidebar = useCallback(() => {
+    if (!isMobile) return;
+    setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
 
   const shouldBrowseForProjectImmediately = isElectron;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
@@ -408,6 +415,25 @@ export default function Sidebar() {
     });
   }, []);
 
+  const navigateToThread = useCallback(
+    async (threadId: ThreadId, options?: { replace?: boolean }) => {
+      if (options?.replace === true) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+          replace: true,
+        });
+      } else {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      }
+      closeMobileSidebar();
+    },
+    [closeMobileSidebar, navigate],
+  );
+
   const handleNewThread = useCallback(
     (
       projectId: ProjectId,
@@ -428,13 +454,10 @@ export default function Sidebar() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
-        });
+        await navigateToThread(threadId);
       })();
     },
-    [navigate, setProjectDraftThreadId],
+    [navigateToThread, setProjectDraftThreadId],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -448,12 +471,9 @@ export default function Sidebar() {
         })[0];
       if (!latestThread) return;
 
-      void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
-      });
+      void navigateToThread(latestThread.id);
     },
-    [navigate, sidebarThreads],
+    [navigateToThread, sidebarThreads],
   );
 
   const addProjectFromPath = useCallback(
@@ -719,11 +739,7 @@ export default function Sidebar() {
           clearTerminalState(threadId);
           if (shouldNavigateToFallback) {
             if (fallbackThreadId) {
-              void navigate({
-                to: "/$threadId",
-                params: { threadId: fallbackThreadId },
-                replace: true,
-              });
+              void navigateToThread(fallbackThreadId, { replace: true });
             } else {
               void navigate({ to: "/", replace: true });
             }
@@ -775,11 +791,7 @@ export default function Sidebar() {
         clearTerminalState(threadId);
         if (shouldNavigateToFallback) {
           if (fallbackThreadId) {
-            void navigate({
-              to: "/$threadId",
-              params: { threadId: fallbackThreadId },
-              replace: true,
-            });
+            void navigateToThread(fallbackThreadId, { replace: true });
           } else {
             void navigate({ to: "/", replace: true });
           }
@@ -835,11 +847,7 @@ export default function Sidebar() {
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
-          void navigate({
-            to: "/$threadId",
-            params: { threadId: fallbackThreadId },
-            replace: true,
-          });
+          void navigateToThread(fallbackThreadId, { replace: true });
         } else {
           void navigate({ to: "/", replace: true });
         }
@@ -878,6 +886,7 @@ export default function Sidebar() {
       clearTerminalState,
       markThreadUnread,
       navigate,
+      navigateToThread,
       projects,
       removeWorktreeMutation,
       routeThreadId,
@@ -1361,7 +1370,7 @@ export default function Sidebar() {
     <>
       {isElectron ? (
         <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
+          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px] select-none">
             {wordmark}
             {showDesktopUpdateButton && (
               <Tooltip>
@@ -1385,12 +1394,12 @@ export default function Sidebar() {
           </SidebarHeader>
         </>
       ) : (
-        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3 select-none">
           {wordmark}
         </SidebarHeader>
       )}
 
-      <SidebarContent className="gap-0">
+      <SidebarContent className="gap-0 select-none" style={{ WebkitTouchCallout: "none" }}>
         {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
           <SidebarGroup className="px-2 pt-2 pb-0">
             <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -1752,18 +1761,12 @@ export default function Sidebar() {
                                     : "text-muted-foreground"
                                 }`}
                                 onClick={() => {
-                                  void navigate({
-                                    to: "/$threadId",
-                                    params: { threadId: thread.id },
-                                  });
+                                  void navigateToThread(thread.id);
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key !== "Enter" && event.key !== " ") return;
                                   event.preventDefault();
-                                  void navigate({
-                                    to: "/$threadId",
-                                    params: { threadId: thread.id },
-                                  });
+                                  void navigateToThread(thread.id);
                                 }}
                                 onContextMenu={(event) => {
                                   event.preventDefault();
@@ -1926,7 +1929,7 @@ export default function Sidebar() {
       </SidebarContent>
 
       <SidebarSeparator />
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="p-2 select-none">
         <SidebarMenu>
           <SidebarMenuItem>
             {isOnSettings ? (
