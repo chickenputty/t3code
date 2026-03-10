@@ -87,6 +87,7 @@ import {
 } from "./Sidebar.logic";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { MobileContextMenu, type MobileContextMenuItem } from "./MobileContextMenu";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -273,6 +274,13 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+
+  // Mobile context menu state
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMenuThreadId, setMobileMenuThreadId] = useState<ThreadId | null>(null);
+  const [mobileMenuPosition, setMobileMenuPosition] = useState({ x: 0, y: 0 });
+  const [mobileMenuProjectId, setMobileMenuProjectId] = useState<ProjectId | null>(null);
+
   const shouldBrowseForProjectImmediately = isElectron;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const pendingApprovalByThreadId = useMemo(() => {
@@ -641,28 +649,14 @@ export default function Sidebar() {
     [],
   );
 
-  const handleThreadContextMenu = useCallback(
-    async (threadId: ThreadId, position: { x: number; y: number }) => {
+  // ── Context menu action handlers (shared by native right-click + mobile long-press) ──
+  const handleThreadContextMenuAction = useCallback(
+    async (threadId: ThreadId, clicked: string | null) => {
       const api = readNativeApi();
       if (!api) return;
       const thread = sidebarThreadById.get(threadId);
       if (!thread) return;
       const isDraftThread = draftThreadIdSet.has(threadId);
-      const clicked = await api.contextMenu.show(
-        isDraftThread
-          ? [
-              { id: "copy-thread-id", label: "Copy Thread ID" },
-              { id: "delete", label: "Delete draft", destructive: true },
-            ]
-          : [
-              { id: "rename", label: "Rename thread" },
-              { id: "mark-unread", label: "Mark unread" },
-              { id: "copy-thread-id", label: "Copy Thread ID" },
-              { id: "delete", label: "Delete", destructive: true },
-              { id: "force-delete", label: "Force delete", destructive: true },
-            ],
-        position,
-      );
 
       if (clicked === "rename" && !isDraftThread) {
         setRenamingThreadId(threadId);
@@ -895,14 +889,11 @@ export default function Sidebar() {
     ],
   );
 
-  const handleProjectContextMenu = useCallback(
-    async (projectId: ProjectId, position: { x: number; y: number }) => {
+  // Extracted action handler from handleProjectContextMenu so mobile menu can reuse it
+  const handleProjectContextMenuAction = useCallback(
+    async (projectId: ProjectId, clicked: string | null) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Delete", destructive: true }],
-        position,
-      );
       if (clicked !== "delete") return;
 
       const project = projects.find((entry) => entry.id === projectId);
@@ -945,6 +936,206 @@ export default function Sidebar() {
       projects,
       sidebarThreads,
     ],
+  );
+
+  // ── Native (right-click) context menu handlers ──────────────────────
+  const handleThreadContextMenu = useCallback(
+    async (threadId: ThreadId, position: { x: number; y: number }) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const thread = sidebarThreadById.get(threadId);
+      if (!thread) return;
+      const isDraftThread = draftThreadIdSet.has(threadId);
+      const clicked = await api.contextMenu.show(
+        isDraftThread
+          ? [
+              { id: "copy-thread-id", label: "Copy Thread ID" },
+              { id: "delete", label: "Delete draft", destructive: true },
+            ]
+          : [
+              { id: "rename", label: "Rename thread" },
+              { id: "mark-unread", label: "Mark unread" },
+              { id: "copy-thread-id", label: "Copy Thread ID" },
+              { id: "delete", label: "Delete", destructive: true },
+              { id: "force-delete", label: "Force delete", destructive: true },
+            ],
+        position,
+      );
+      await handleThreadContextMenuAction(threadId, clicked);
+    },
+    [sidebarThreadById, draftThreadIdSet, handleThreadContextMenuAction],
+  );
+
+  const handleProjectContextMenu = useCallback(
+    async (projectId: ProjectId, position: { x: number; y: number }) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [{ id: "delete", label: "Delete", destructive: true }],
+        position,
+      );
+      await handleProjectContextMenuAction(projectId, clicked);
+    },
+    [handleProjectContextMenuAction],
+  );
+
+  // ── Mobile context menu helpers (long-press) ──────────────────────
+  const openMobileThreadMenu = useCallback(
+    (threadId: ThreadId, position: { x: number; y: number }) => {
+      setMobileMenuThreadId(threadId);
+      setMobileMenuProjectId(null);
+      setMobileMenuPosition(position);
+      setMobileMenuOpen(true);
+    },
+    [],
+  );
+
+  const openMobileProjectMenu = useCallback(
+    (projectId: ProjectId, position: { x: number; y: number }) => {
+      setMobileMenuProjectId(projectId);
+      setMobileMenuThreadId(null);
+      setMobileMenuPosition(position);
+      setMobileMenuOpen(true);
+    },
+    [],
+  );
+
+  const closeMobileMenu = useCallback(() => {
+    setMobileMenuOpen(false);
+    setMobileMenuThreadId(null);
+    setMobileMenuProjectId(null);
+  }, []);
+
+  const handleMobileMenuSelect = useCallback(
+    (id: string) => {
+      closeMobileMenu();
+      if (mobileMenuThreadId) {
+        void handleThreadContextMenuAction(mobileMenuThreadId, id);
+      } else if (mobileMenuProjectId) {
+        void handleProjectContextMenuAction(mobileMenuProjectId, id);
+      }
+    },
+    [closeMobileMenu, mobileMenuThreadId, mobileMenuProjectId, handleThreadContextMenuAction, handleProjectContextMenuAction],
+  );
+
+  // Derive mobile menu items based on what's selected
+  const mobileMenuItems: MobileContextMenuItem[] = useMemo(() => {
+    if (mobileMenuThreadId) {
+      const isDraft = draftThreadIdSet.has(mobileMenuThreadId);
+      if (isDraft) {
+        return [
+          { id: "copy-thread-id", label: "Copy Thread ID" },
+          { id: "delete", label: "Delete draft", destructive: true },
+        ];
+      }
+      return [
+        { id: "rename", label: "Rename thread" },
+        { id: "mark-unread", label: "Mark unread" },
+        { id: "copy-thread-id", label: "Copy Thread ID" },
+        { id: "delete", label: "Delete", destructive: true },
+        { id: "force-delete", label: "Force delete", destructive: true },
+      ];
+    }
+    if (mobileMenuProjectId) {
+      return [{ id: "delete", label: "Delete project", destructive: true }];
+    }
+    return [];
+  }, [mobileMenuThreadId, mobileMenuProjectId, draftThreadIdSet]);
+
+  const mobileMenuTitle = useMemo(() => {
+    if (mobileMenuThreadId) {
+      const thread = sidebarThreadById.get(mobileMenuThreadId);
+      return thread?.title ?? "Thread";
+    }
+    if (mobileMenuProjectId) {
+      const project = projects.find((p) => p.id === mobileMenuProjectId);
+      return project?.name ?? "Project";
+    }
+    return undefined;
+  }, [mobileMenuThreadId, mobileMenuProjectId, sidebarThreadById, projects]);
+
+  // Long press state for mobile context menu (shared across all thread/project items)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFiredRef = useRef(false);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const makeThreadTouchHandlers = useCallback(
+    (threadId: ThreadId) => ({
+      onTouchStart: (e: React.TouchEvent) => {
+        const touch = e.touches[0];
+        if (!touch) return;
+        longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+        longPressFiredRef.current = false;
+        clearLongPress();
+        longPressTimerRef.current = setTimeout(() => {
+          longPressFiredRef.current = true;
+          openMobileThreadMenu(threadId, { x: touch.clientX, y: touch.clientY });
+        }, 500);
+      },
+      onTouchMove: (e: React.TouchEvent) => {
+        if (!longPressStartRef.current) return;
+        const touch = e.touches[0];
+        if (!touch) return;
+        const dx = touch.clientX - longPressStartRef.current.x;
+        const dy = touch.clientY - longPressStartRef.current.y;
+        if (Math.sqrt(dx * dx + dy * dy) > 10) clearLongPress();
+      },
+      onTouchEnd: (e: React.TouchEvent) => {
+        clearLongPress();
+        if (longPressFiredRef.current) {
+          e.preventDefault();
+          longPressFiredRef.current = false;
+        }
+      },
+      onTouchCancel: () => {
+        clearLongPress();
+        longPressFiredRef.current = false;
+      },
+    }),
+    [clearLongPress, openMobileThreadMenu],
+  );
+
+  const makeProjectTouchHandlers = useCallback(
+    (projectId: ProjectId) => ({
+      onTouchStart: (e: React.TouchEvent) => {
+        const touch = e.touches[0];
+        if (!touch) return;
+        longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+        longPressFiredRef.current = false;
+        clearLongPress();
+        longPressTimerRef.current = setTimeout(() => {
+          longPressFiredRef.current = true;
+          openMobileProjectMenu(projectId, { x: touch.clientX, y: touch.clientY });
+        }, 500);
+      },
+      onTouchMove: (e: React.TouchEvent) => {
+        if (!longPressStartRef.current) return;
+        const touch = e.touches[0];
+        if (!touch) return;
+        const dx = touch.clientX - longPressStartRef.current.x;
+        const dy = touch.clientY - longPressStartRef.current.y;
+        if (Math.sqrt(dx * dx + dy * dy) > 10) clearLongPress();
+      },
+      onTouchEnd: (e: React.TouchEvent) => {
+        clearLongPress();
+        if (longPressFiredRef.current) {
+          e.preventDefault();
+          longPressFiredRef.current = false;
+        }
+      },
+      onTouchCancel: () => {
+        clearLongPress();
+        longPressFiredRef.current = false;
+      },
+    }),
+    [clearLongPress, openMobileProjectMenu],
   );
 
   useEffect(() => {
@@ -1407,6 +1598,7 @@ export default function Sidebar() {
                             y: event.clientY,
                           });
                         }}
+                        {...makeProjectTouchHandlers(project.id)}
                       >
                         <ChevronRightIcon
                           className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
@@ -1580,6 +1772,7 @@ export default function Sidebar() {
                                     y: event.clientY,
                                   });
                                 }}
+                                {...makeThreadTouchHandlers(thread.id)}
                               >
                                 <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
                                   {prStatus && (
@@ -1758,6 +1951,16 @@ export default function Sidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+
+      {/* Mobile long-press context menu */}
+      <MobileContextMenu
+        open={mobileMenuOpen}
+        items={mobileMenuItems}
+        position={mobileMenuPosition}
+        onSelect={handleMobileMenuSelect}
+        onClose={closeMobileMenu}
+        title={mobileMenuTitle}
+      />
     </>
   );
 }
