@@ -863,6 +863,58 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.contextWindow).toBeNull();
   });
 
+  it("projects Claude turn usage into normalized thread context-window state", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-claude-context-window"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: TurnId.makeUnsafe("turn-claude-1"),
+      payload: {
+        state: "completed",
+        usage: {
+          input_tokens: 80_000,
+          cache_creation_input_tokens: 5_000,
+          cache_read_input_tokens: 20_000,
+          output_tokens: 4_000,
+        },
+        modelUsage: {
+          "claude-sonnet-5-0": {
+            inputTokens: 85_000,
+            outputTokens: 4_000,
+            cacheReadInputTokens: 20_000,
+            cacheCreationInputTokens: 5_000,
+            webSearchRequests: 0,
+            costUSD: 1.23,
+            contextWindow: 200_000,
+            maxOutputTokens: 8_192,
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.contextWindow?.provider === "claudeCode" &&
+        entry.contextWindow.usedTokens === 109_000,
+    );
+    expect(thread.contextWindow).toMatchObject({
+      provider: "claudeCode",
+      usedTokens: 109_000,
+      maxTokens: 200_000,
+      remainingTokens: 91_000,
+      usedPercent: 55,
+      inputTokens: 85_000,
+      cachedInputTokens: 20_000,
+      outputTokens: 4_000,
+    });
+  });
+
   it("projects completed plan items into first-class proposed plans", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

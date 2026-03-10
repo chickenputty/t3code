@@ -1,14 +1,8 @@
 import type { OrchestrationContextWindow } from "@t3tools/contracts";
 
+import { asNonNegativeInteger, asRecord, clampPercent } from "./contextWindowCommon.ts";
+
 type UnknownRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): UnknownRecord | null {
-  return value !== null && typeof value === "object" ? (value as UnknownRecord) : null;
-}
-
-function asNonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
-}
 
 function compactRecords(
   values: ReadonlyArray<UnknownRecord | null | undefined>,
@@ -75,10 +69,6 @@ function pickFirstNumber(
     }
   }
   return undefined;
-}
-
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 export function normalizeCodexContextWindow(

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
@@ -5,9 +9,10 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Fiber, Random, Stream } from "effect";
+import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
 import {
   ProviderAdapterValidationError,
@@ -17,6 +22,8 @@ import {
   makeClaudeCodeAdapterLive,
   type ClaudeCodeAdapterLiveOptions,
 } from "./ClaudeCodeAdapter.ts";
+import { createAttachmentId } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private readonly queue: Array<SDKMessage> = [];
@@ -99,7 +106,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 }
 
 interface Harness {
-  readonly layer: ReturnType<typeof makeClaudeCodeAdapterLive>;
+  readonly layer: Layer.Layer<ClaudeCodeAdapter, never, never>;
   readonly query: FakeClaudeQuery;
   readonly getLastCreateQueryInput: () =>
     | {
@@ -112,6 +119,7 @@ interface Harness {
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeCodeAdapterLiveOptions["nativeEventLogger"];
+  readonly stateDir?: string;
 }): Harness {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -139,7 +147,12 @@ function makeHarness(config?: {
   };
 
   return {
-    layer: makeClaudeCodeAdapterLive(adapterOptions),
+    layer: makeClaudeCodeAdapterLive(adapterOptions).pipe(
+      Layer.provideMerge(
+        ServerConfig.layerTest(config?.stateDir ?? process.cwd(), config?.stateDir ?? process.cwd()),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
     query,
     getLastCreateQueryInput: () => createInput,
   };
@@ -164,6 +177,17 @@ function makeDeterministicRandomService(seed = 0x1234_5678): {
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
+
+async function readNextPromptMessage(
+  prompt: AsyncIterable<SDKUserMessage> | undefined,
+): Promise<SDKUserMessage | undefined> {
+  if (!prompt) {
+    return undefined;
+  }
+  const iterator = prompt[Symbol.asyncIterator]();
+  const result = await iterator.next();
+  return result.done ? undefined : result.value;
+}
 
 describe("ClaudeCodeAdapterLive", () => {
   it.effect("returns validation error for non-claudeCode provider on startSession", () => {
@@ -234,6 +258,66 @@ describe("ClaudeCodeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect("sends Claude image attachments as inline Anthropic image blocks", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* Effect.acquireRelease(
+        Effect.sync(() => fs.mkdtempSync(path.join(os.tmpdir(), "t3code-claude-image-"))),
+        (dir) => Effect.sync(() => fs.rmSync(dir, { recursive: true, force: true })),
+      );
+      const harness = makeHarness({ stateDir });
+      const attachmentId = createAttachmentId(String(THREAD_ID));
+      assert.equal(typeof attachmentId, "string");
+      if (!attachmentId) {
+        return;
+      }
+
+      fs.mkdirSync(path.join(stateDir, "attachments"), { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "attachments", `${attachmentId}.png`), Buffer.from("fake"));
+
+      yield* Effect.gen(function* () {
+        const adapter = yield* ClaudeCodeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeCode",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "describe this",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "example.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        const promptMessage = yield* Effect.promise(() => readNextPromptMessage(createInput?.prompt));
+        assert.deepEqual(promptMessage?.message, {
+          role: "user",
+          content: [
+            { type: "text", text: "describe this" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: Buffer.from("fake").toString("base64"),
+              },
+            },
+          ],
+        });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    }));
 
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
@@ -461,6 +545,114 @@ describe("ClaudeCodeAdapterLive", () => {
     );
   });
 
+  it.effect("separates distinct Claude text blocks within one turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeCode",
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-multi-block",
+        uuid: "stream-multi-block-text-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "text_delta",
+            text: "First sentence.",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-multi-block",
+        uuid: "stream-multi-block-tool-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-multi-block",
+            name: "Edit",
+            input: { file_path: "site.css" },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-multi-block",
+        uuid: "stream-multi-block-tool-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 1,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-multi-block",
+        uuid: "stream-multi-block-text-2",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 2,
+          delta: {
+            type: "text_delta",
+            text: "Second sentence.",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-multi-block",
+        uuid: "result-multi-block",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const assistantTextDeltas = runtimeEvents
+        .filter((event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
+          event.type === "content.delta",
+        )
+        .map((event) => event.payload.delta);
+
+      assert.deepEqual(assistantTextDeltas, [
+        "First sentence.",
+        "\n\n",
+        "Second sentence.",
+      ]);
+      assert.equal(String(runtimeEvents.at(-1)?.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("falls back to assistant payload text when stream deltas are absent", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -523,6 +715,65 @@ describe("ClaudeCodeAdapterLive", () => {
       assert.equal(deltaEvent?.type, "content.delta");
       if (deltaEvent?.type === "content.delta") {
         assert.equal(deltaEvent.payload.delta, "Fallback hello");
+        assert.equal(String(deltaEvent.turnId), String(turn.turnId));
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves separation between fallback assistant text blocks", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeCode",
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-fallback-multi-block",
+        uuid: "assistant-fallback-multi-block",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-fallback-multi-block",
+          content: [
+            { type: "text", text: "First sentence." },
+            { type: "tool_use", id: "tool-fallback", name: "Edit", input: { file_path: "site.css" } },
+            { type: "text", text: "Second sentence." },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-fallback-multi-block",
+        uuid: "result-fallback-multi-block",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const deltaEvent = runtimeEvents.find((event) => event.type === "content.delta");
+      assert.equal(deltaEvent?.type, "content.delta");
+      if (deltaEvent?.type === "content.delta") {
+        assert.equal(deltaEvent.payload.delta, "First sentence.\n\nSecond sentence.");
         assert.equal(String(deltaEvent.turnId), String(turn.turnId));
       }
     }).pipe(

@@ -143,6 +143,7 @@ interface GeminiAcpRuntimeHandlers {
   readonly onRequestPermission: (
     params: GeminiAcpRequestPermissionParams,
   ) => Promise<{ outcome: { outcome: string; optionId?: string } }>;
+  readonly onStderrLine: (line: string) => void;
   readonly onClose: (error?: Error) => void;
 }
 
@@ -746,6 +747,9 @@ export class GeminiCliManager extends EventEmitter {
         this.handleAcpSessionUpdate(notification);
       },
       onRequestPermission: async (params) => this.handleAcpPermissionRequest(params),
+      onStderrLine: (line) => {
+        this.handleAcpStderr(normalizedModel, line);
+      },
       onClose: (error) => {
         this.runtimePromises.delete(normalizedModel);
         this.handleRuntimeClose(normalizedModel, error);
@@ -961,6 +965,30 @@ export class GeminiCliManager extends EventEmitter {
       : { outcome: { outcome: "cancelled" } };
   }
 
+  private handleAcpStderr(model: string, line: string): void {
+    const classified = classifyGeminiAcpStderrLine(line);
+    if (!classified) {
+      return;
+    }
+
+    for (const context of this.sessions.values()) {
+      if (context.runtimeModel !== model || !context.activeTurnId) {
+        continue;
+      }
+
+      this.emit("event", {
+        type: "error",
+        method: "gemini/error",
+        kind: classified.severity === "warning" ? "data" : "error",
+        threadId: context.threadId,
+        turnId: context.activeTurnId,
+        provider: "gemini",
+        severity: classified.severity,
+        message: classified.message,
+      });
+    }
+  }
+
   private handleRuntimeClose(model: string, error?: Error): void {
     const message = error?.message?.trim();
     for (const context of this.sessions.values()) {
@@ -1031,6 +1059,7 @@ async function createGeminiAcpRuntime(
   );
 
   let stderrBuffer = "";
+  let stderrLineBuffer = "";
   let closing = false;
   let closeNotified = false;
 
@@ -1043,7 +1072,16 @@ async function createGeminiAcpRuntime(
   };
 
   child.stderr?.on("data", (chunk: Buffer | string) => {
-    stderrBuffer += chunk.toString();
+    const text = chunk.toString();
+    stderrBuffer += text;
+    stderrLineBuffer += text;
+
+    const normalized = stderrLineBuffer.replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    stderrLineBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      handlers.onStderrLine(line);
+    }
   });
 
   child.on("error", (error: Error) => {
@@ -1051,6 +1089,11 @@ async function createGeminiAcpRuntime(
   });
 
   child.on("close", (code) => {
+    if (stderrLineBuffer.trim().length > 0) {
+      handlers.onStderrLine(stderrLineBuffer);
+      stderrLineBuffer = "";
+    }
+
     if (closing) {
       notifyClose();
       return;
@@ -1351,6 +1394,39 @@ function toErrorMessage(error: unknown, fallback: string): string {
     return error.trim();
   }
   return fallback;
+}
+
+function classifyGeminiAcpStderrLine(
+  line: string,
+): { readonly severity: "warning" | "error"; readonly message: string } | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes("deprecationwarning") ||
+    lower === "loaded cached credentials." ||
+    lower === "yolo mode is enabled. all tool calls will be automatically approved."
+  ) {
+    return null;
+  }
+
+  if (
+    lower.includes("no capacity available for model") ||
+    lower.includes("model_capacity_exhausted") ||
+    lower.includes("resource_exhausted") ||
+    lower.includes("you have exhausted your capacity on this model")
+  ) {
+    return { severity: "error", message: trimmed };
+  }
+
+  if (lower.startsWith("attempt ") || lower.includes("status 429")) {
+    return { severity: "warning", message: trimmed };
+  }
+
+  return null;
 }
 
 function killChildTree(child: ChildProcess): void {

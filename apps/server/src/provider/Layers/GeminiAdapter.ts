@@ -23,6 +23,7 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import { readPromptImageAttachment } from "../promptImageAttachment.ts";
 import { GeminiAdapter, type GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { GeminiCliManager } from "../../geminiCliManager.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -291,35 +292,19 @@ function buildGeminiPromptAttachment(input: {
 }): Effect.Effect<
   { readonly type: "image"; readonly data: string; readonly mimeType: string },
   ProviderAdapterError
-> {
+  > {
   return Effect.gen(function* () {
-    const attachmentPath = resolveAttachmentPath({
-      stateDir: input.stateDir,
+    const promptAttachment = yield* readPromptImageAttachment({
       attachment: input.attachment,
+      stateDir: input.stateDir,
+      provider: PROVIDER,
+      method: "sendTurn",
+      fileSystem: input.fileSystem,
     });
-    if (!attachmentPath) {
-      return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method: "sendTurn",
-        detail: `Invalid attachment id '${input.attachment.id}'.`,
-      });
-    }
-
-    const bytes = yield* input.fileSystem.readFile(attachmentPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "sendTurn",
-            detail: toMessage(cause, "Failed to read Gemini attachment"),
-            cause: cause instanceof Error ? cause : undefined,
-          }),
-      ),
-    );
 
     return {
       type: "image" as const,
-      data: Buffer.from(bytes).toString("base64"),
+      data: promptAttachment.base64,
       mimeType: input.attachment.mimeType,
     };
   });

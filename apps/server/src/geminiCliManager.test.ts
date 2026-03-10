@@ -438,4 +438,68 @@ describe("GeminiCliManager", () => {
       }),
     );
   });
+
+  it("surfaces ACP capacity failures as Gemini error events", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const manager = new GeminiCliManager({
+      prewarmSessions: false,
+      runtimeFactory: async (_model, handlers) => ({
+        model: "gemini-3-pro-preview",
+        initialize: async () => undefined,
+        newSession: vi.fn(async () => ({
+          sessionId: "session-capacity",
+          modes: { currentModeId: "default" },
+        })),
+        loadSession: vi.fn(async (sessionId: string) => ({
+          sessionId,
+          modes: { currentModeId: "default" },
+        })),
+        setSessionMode: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => {
+          handlers.onStderrLine(
+            "Attempt 1 failed with status 429. Retrying with backoff... GaxiosError: ...",
+          );
+          handlers.onStderrLine(
+            "No capacity available for model gemini-3-pro-preview on the server",
+          );
+          return new Promise<{ stopReason?: unknown }>(() => undefined);
+        }),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(() => undefined),
+      }),
+    });
+
+    manager.on("event", (event: Record<string, unknown>) => {
+      events.push(event);
+    });
+
+    manager.startSession({
+      threadId: "thread-capacity",
+      model: "gemini-3-pro-preview",
+      cwd: process.cwd(),
+    });
+
+    manager.sendTurn({
+      threadId: "thread-capacity",
+      text: "generate a dog",
+      approvalMode: "yolo",
+    });
+
+    await waitFor(
+      () =>
+        events.some(
+          (event) =>
+            event.method === "gemini/error" &&
+            event.severity === "error" &&
+            event.message === "No capacity available for model gemini-3-pro-preview on the server",
+        ),
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        method: "gemini/error",
+        severity: "warning",
+      }),
+    );
+  });
 });

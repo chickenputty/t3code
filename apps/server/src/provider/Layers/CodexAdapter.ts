@@ -35,8 +35,8 @@ import {
   CodexAppServerManager,
   type CodexAppServerStartSessionInput,
 } from "../../codexAppServerManager.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { readPromptImageAttachment } from "../promptImageAttachment.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1319,34 +1319,25 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
-      Effect.gen(function* () {
-        const codexAttachments = yield* Effect.forEach(
-          input.attachments ?? [],
-          (attachment) =>
-            Effect.gen(function* () {
-              const attachmentPath = resolveAttachmentPath({
-                stateDir: serverConfig.stateDir,
-                attachment,
-              });
-              if (!attachmentPath) {
-                return yield* toRequestError(
-                  input.threadId,
-                  "turn/start",
-                  new Error(`Invalid attachment id '${attachment.id}'.`),
-                );
-              }
-              const bytes = yield* fileSystem
-                .readFile(attachmentPath)
-                .pipe(
-                  Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)),
-                );
-              return {
-                type: "image" as const,
-                url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
-              };
-            }),
-          { concurrency: 1 },
-        );
+        Effect.gen(function* () {
+          const codexAttachments = yield* Effect.forEach(
+            input.attachments ?? [],
+            (attachment) =>
+              Effect.gen(function* () {
+                const promptAttachment = yield* readPromptImageAttachment({
+                  attachment,
+                  stateDir: serverConfig.stateDir,
+                  provider: PROVIDER,
+                  method: "turn/start",
+                  fileSystem,
+                });
+                return {
+                  type: "image" as const,
+                  url: `data:${attachment.mimeType};base64,${promptAttachment.base64}`,
+                };
+              }),
+            { concurrency: 1 },
+          );
 
         return yield* Effect.tryPromise({
           try: () => {

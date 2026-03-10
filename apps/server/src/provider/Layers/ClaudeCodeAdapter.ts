@@ -34,7 +34,18 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Cause, DateTime, Deferred, Effect, Layer, Queue, Random, Ref, Stream } from "effect";
+import {
+  Cause,
+  DateTime,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Queue,
+  Random,
+  Ref,
+  Stream,
+} from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -45,9 +56,12 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
+import { readPromptImageAttachment } from "../promptImageAttachment.ts";
+import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeCode" as const;
+const ASSISTANT_TEXT_BLOCK_SEPARATOR = "\n\n";
 
 type PromptQueueItem =
   | {
@@ -73,6 +87,7 @@ interface ClaudeTurnState {
   readonly messageCompleted: boolean;
   readonly emittedTextDelta: boolean;
   readonly fallbackAssistantText: string;
+  readonly lastTextBlockIndex: number | null;
 }
 
 interface PendingApproval {
@@ -115,6 +130,21 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly close: () => void;
 }
+
+type ClaudeImageMediaType = "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+type ClaudeUserContentBlock =
+  | {
+      readonly type: "text";
+      readonly text: string;
+    }
+  | {
+      readonly type: "image";
+      readonly source: {
+        readonly type: "base64";
+        readonly media_type: ClaudeImageMediaType;
+        readonly data: string;
+      };
+    };
 
 export interface ClaudeCodeAdapterLiveOptions {
   readonly createQuery?: (input: {
@@ -269,32 +299,91 @@ function titleForTool(itemType: CanonicalItemType): string {
   }
 }
 
-function buildUserMessage(input: ProviderSendTurnInput): SDKUserMessage {
-  const fragments: string[] = [];
-
-  if (input.input && input.input.trim().length > 0) {
-    fragments.push(input.input.trim());
+function toClaudeImageMediaType(mimeType: string): ClaudeImageMediaType | null {
+  switch (mimeType.trim().toLowerCase()) {
+    case "image/jpg":
+    case "image/jpeg":
+      return "image/jpeg";
+    case "image/gif":
+    case "image/png":
+    case "image/webp":
+      return mimeType.trim().toLowerCase() as ClaudeImageMediaType;
+    default:
+      return null;
   }
+}
 
-  for (const attachment of input.attachments ?? []) {
-    if (attachment.type === "image") {
-      fragments.push(
-        `Attached image: ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes).`,
-      );
+function buildUserMessage(input: {
+  readonly turn: ProviderSendTurnInput;
+  readonly stateDir: string;
+  readonly fileSystem: FileSystem.FileSystem;
+}): Effect.Effect<SDKUserMessage, ProviderAdapterError> {
+  return Effect.gen(function* () {
+    const content: ClaudeUserContentBlock[] = [];
+    const text = input.turn.input?.trim();
+
+    if (text && text.length > 0) {
+      content.push({
+        type: "text",
+        text,
+      });
     }
-  }
 
-  const text = fragments.join("\n\n");
+    const imageBlocks = yield* Effect.forEach(
+      input.turn.attachments ?? [],
+      (attachment) =>
+        Effect.gen(function* () {
+          const mediaType = toClaudeImageMediaType(attachment.mimeType);
+          if (!mediaType) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "turn/start",
+              detail:
+                `Claude image input requires JPEG, PNG, GIF, or WebP; ` +
+                `received '${attachment.mimeType}' for '${attachment.name}'.`,
+            });
+          }
 
-  return {
-    type: "user",
-    session_id: "",
-    parent_tool_use_id: null,
-    message: {
-      role: "user",
-      content: [{ type: "text", text }],
-    },
-  } as SDKUserMessage;
+          const promptAttachment = yield* readPromptImageAttachment({
+            attachment,
+            stateDir: input.stateDir,
+            provider: PROVIDER,
+            method: "turn/start",
+            fileSystem: input.fileSystem,
+          });
+
+          return {
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: mediaType,
+              data: promptAttachment.base64,
+            },
+          } satisfies ClaudeUserContentBlock;
+        }),
+      { concurrency: 1 },
+    );
+
+    content.push(...imageBlocks);
+
+    if (content.length === 0) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "sendTurn",
+        issue: "Turn input must include text or at least one image attachment.",
+      });
+    }
+
+    return {
+      type: "user",
+      session_id: "",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content,
+      } as SDKUserMessage["message"],
+    };
+  });
 }
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
@@ -347,7 +436,7 @@ function extractAssistantText(message: SDKMessage): string {
     }
   }
 
-  return fragments.join("");
+  return fragments.join(ASSISTANT_TEXT_BLOCK_SEPARATOR);
 }
 
 function toSessionError(
@@ -452,6 +541,8 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
 
 function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
   return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverConfig = yield* Effect.service(ServerConfig);
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -786,10 +877,48 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             event.delta.text.length > 0 &&
             context.turnState
           ) {
+            const shouldInsertBlockSeparator =
+              context.turnState.emittedTextDelta &&
+              context.turnState.lastTextBlockIndex !== null &&
+              context.turnState.lastTextBlockIndex !== event.index;
+
+            if (shouldInsertBlockSeparator) {
+              const separatorStamp = yield* makeEventStamp();
+              yield* offerRuntimeEvent({
+                type: "content.delta",
+                eventId: separatorStamp.eventId,
+                provider: PROVIDER,
+                createdAt: separatorStamp.createdAt,
+                threadId: context.session.threadId,
+                turnId: context.turnState.turnId,
+                itemId: asRuntimeItemId(context.turnState.assistantItemId),
+                payload: {
+                  streamKind: "assistant_text",
+                  delta: ASSISTANT_TEXT_BLOCK_SEPARATOR,
+                },
+                providerRefs: {
+                  ...providerThreadRef(context),
+                  providerTurnId: context.turnState.turnId,
+                  providerItemId: ProviderItemId.makeUnsafe(context.turnState.assistantItemId),
+                },
+                raw: {
+                  source: "claude.sdk.message",
+                  method: "claude/stream_event/content_block_delta",
+                  payload: message,
+                },
+              });
+            }
+
             if (!context.turnState.emittedTextDelta) {
               context.turnState = {
                 ...context.turnState,
                 emittedTextDelta: true,
+                lastTextBlockIndex: event.index,
+              };
+            } else if (context.turnState.lastTextBlockIndex !== event.index) {
+              context.turnState = {
+                ...context.turnState,
+                lastTextBlockIndex: event.index,
               };
             }
             const stamp = yield* makeEventStamp();
@@ -1693,6 +1822,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           messageCompleted: false,
           emittedTextDelta: false,
           fallbackAssistantText: "",
+          lastTextBlockIndex: null,
         };
 
         const updatedAt = yield* nowIso;
@@ -1718,7 +1848,11 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           },
         });
 
-        const message = buildUserMessage(input);
+        const message = yield* buildUserMessage({
+          turn: input,
+          stateDir: serverConfig.stateDir,
+          fileSystem,
+        });
 
         yield* Queue.offer(context.promptQueue, {
           type: "message",

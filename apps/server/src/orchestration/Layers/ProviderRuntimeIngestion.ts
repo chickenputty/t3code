@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
+import { normalizeClaudeContextWindow } from "../../provider/claudeContextWindow.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { normalizeCodexContextWindow } from "../../provider/codexContextWindow.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -1204,6 +1205,25 @@ const make = Effect.gen(function* () {
 
       if (event.type === "thread.token-usage.updated") {
         const contextWindow = normalizeCodexContextWindow(event.payload.usage, now);
+        if (contextWindow) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.context-window.set",
+            commandId: providerCommandId(event, "thread-context-window-set"),
+            threadId: thread.id,
+            contextWindow,
+            createdAt: now,
+          });
+        }
+      }
+
+      if (event.type === "turn.completed" && event.provider === "claudeCode") {
+        const contextWindow = normalizeClaudeContextWindow(
+          {
+            usage: event.payload.usage,
+            modelUsage: event.payload.modelUsage,
+          },
+          now,
+        );
         if (contextWindow) {
           yield* orchestrationEngine.dispatch({
             type: "thread.context-window.set",
