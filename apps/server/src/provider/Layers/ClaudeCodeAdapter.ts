@@ -55,6 +55,11 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import {
+  buildClaudeSystemPrompt,
+  defaultClaudeSettingSources,
+  resolveClaudePermissionMode,
+} from "../claudeInstructions.ts";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 import { readPromptImageAttachment } from "../promptImageAttachment.ts";
 import { ServerConfig } from "../../config.ts";
@@ -88,6 +93,8 @@ interface ClaudeTurnState {
   readonly emittedTextDelta: boolean;
   readonly fallbackAssistantText: string;
   readonly lastTextBlockIndex: number | null;
+  readonly currentAssistantMessageId: string | null;
+  readonly lastTextAssistantMessageId: string | null;
 }
 
 interface PendingApproval {
@@ -109,6 +116,8 @@ interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
+  readonly permissionModeRef: Ref.Ref<PermissionMode>;
+  readonly providerPermissionMode: PermissionMode | undefined;
   readonly startedAt: string;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -180,19 +189,6 @@ function asCanonicalTurnId(value: TurnId): TurnId {
 
 function asRuntimeRequestId(value: ApprovalRequestId): RuntimeRequestId {
   return RuntimeRequestId.makeUnsafe(value);
-}
-
-function toPermissionMode(value: unknown): PermissionMode | undefined {
-  switch (value) {
-    case "default":
-    case "acceptEdits":
-    case "bypassPermissions":
-    case "plan":
-    case "dontAsk":
-      return value;
-    default:
-      return undefined;
-  }
 }
 
 function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undefined {
@@ -871,16 +867,34 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         const { event } = message;
 
+        if (event.type === "message_start") {
+          const messageId =
+            typeof event.message?.id === "string" && event.message.id.length > 0
+              ? event.message.id
+              : null;
+          if (messageId && context.turnState) {
+            context.turnState = {
+              ...context.turnState,
+              currentAssistantMessageId: messageId,
+            };
+          }
+          return;
+        }
+
         if (event.type === "content_block_delta") {
           if (
             event.delta.type === "text_delta" &&
             event.delta.text.length > 0 &&
             context.turnState
           ) {
+            const currentAssistantMessageId = context.turnState.currentAssistantMessageId;
             const shouldInsertBlockSeparator =
               context.turnState.emittedTextDelta &&
-              context.turnState.lastTextBlockIndex !== null &&
-              context.turnState.lastTextBlockIndex !== event.index;
+              ((context.turnState.lastTextBlockIndex !== null &&
+                context.turnState.lastTextBlockIndex !== event.index) ||
+                (currentAssistantMessageId !== null &&
+                  context.turnState.lastTextAssistantMessageId !== null &&
+                  context.turnState.lastTextAssistantMessageId !== currentAssistantMessageId));
 
             if (shouldInsertBlockSeparator) {
               const separatorStamp = yield* makeEventStamp();
@@ -914,11 +928,16 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 ...context.turnState,
                 emittedTextDelta: true,
                 lastTextBlockIndex: event.index,
+                lastTextAssistantMessageId: currentAssistantMessageId,
               };
-            } else if (context.turnState.lastTextBlockIndex !== event.index) {
+            } else if (
+              context.turnState.lastTextBlockIndex !== event.index ||
+              context.turnState.lastTextAssistantMessageId !== currentAssistantMessageId
+            ) {
               context.turnState = {
                 ...context.turnState,
                 lastTextBlockIndex: event.index,
+                lastTextAssistantMessageId: currentAssistantMessageId,
               };
             }
             const stamp = yield* makeEventStamp();
@@ -1529,7 +1548,13 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
         const inFlightTools = new Map<number, ToolInFlight>();
-
+        const providerOptions = input.providerOptions?.claudeCode;
+        const initialPermissionMode = resolveClaudePermissionMode({
+          runtimeMode: input.runtimeMode,
+          interactionMode: undefined,
+          providerPermissionMode: providerOptions?.permissionMode,
+        });
+        const permissionModeRef = yield* Ref.make<PermissionMode>(initialPermissionMode);
         const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
@@ -1543,8 +1568,27 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 } satisfies PermissionResult;
               }
 
-              const runtimeMode = input.runtimeMode ?? "full-access";
-              if (runtimeMode === "full-access") {
+              const permissionMode = yield* Ref.get(context.permissionModeRef);
+              const itemType = classifyToolItemType(toolName);
+              if (permissionMode === "bypassPermissions") {
+                return {
+                  behavior: "allow",
+                  updatedInput: toolInput,
+                } satisfies PermissionResult;
+              }
+              if (permissionMode === "plan") {
+                return {
+                  behavior: "deny",
+                  message: "Plan mode does not allow tool execution.",
+                } satisfies PermissionResult;
+              }
+              if (permissionMode === "dontAsk") {
+                return {
+                  behavior: "deny",
+                  message: "Tool execution is disabled while Claude is in dontAsk mode.",
+                } satisfies PermissionResult;
+              }
+              if (permissionMode === "acceptEdits" && itemType === "file_change") {
                 return {
                   behavior: "allow",
                   updatedInput: toolInput,
@@ -1664,11 +1708,10 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               } satisfies PermissionResult;
             }),
           );
-
-        const providerOptions = input.providerOptions?.claudeCode;
-        const permissionMode =
-          toPermissionMode(providerOptions?.permissionMode) ??
-          (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
+        const systemPrompt = yield* buildClaudeSystemPrompt({
+          cwd: input.cwd,
+          fileSystem,
+        });
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -1676,8 +1719,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           ...(providerOptions?.binaryPath
             ? { pathToClaudeCodeExecutable: providerOptions.binaryPath }
             : {}),
-          ...(permissionMode ? { permissionMode } : {}),
-          ...(permissionMode === "bypassPermissions"
+          permissionMode: initialPermissionMode,
+          ...(initialPermissionMode === "bypassPermissions"
             ? { allowDangerouslySkipPermissions: true }
             : {}),
           ...(providerOptions?.maxThinkingTokens !== undefined
@@ -1689,6 +1732,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           canUseTool,
           env: process.env,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
+          ...(input.cwd ? { settingSources: [...defaultClaudeSettingSources] } : {}),
+          ...(systemPrompt ? { systemPrompt } : {}),
         };
 
         const queryRuntime = yield* Effect.try({
@@ -1730,6 +1775,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           session,
           promptQueue,
           query: queryRuntime,
+          permissionModeRef,
+          providerPermissionMode:
+            providerOptions?.permissionMode !== undefined ? initialPermissionMode : undefined,
           startedAt,
           resumeSessionId: resumeState?.resume,
           pendingApprovals,
@@ -1765,7 +1813,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             config: {
               ...(input.model ? { model: input.model } : {}),
               ...(input.cwd ? { cwd: input.cwd } : {}),
-              ...(permissionMode ? { permissionMode } : {}),
+              permissionMode: initialPermissionMode,
               ...(providerOptions?.maxThinkingTokens !== undefined
                 ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
                 : {}),
@@ -1813,6 +1861,20 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           });
         }
 
+        const permissionMode = resolveClaudePermissionMode({
+          runtimeMode: context.session.runtimeMode,
+          interactionMode: input.interactionMode,
+          providerPermissionMode: context.providerPermissionMode,
+        });
+        const currentPermissionMode = yield* Ref.get(context.permissionModeRef);
+        if (currentPermissionMode !== permissionMode) {
+          yield* Effect.tryPromise({
+            try: () => context.query.setPermissionMode(permissionMode),
+            catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+          });
+          yield* Ref.set(context.permissionModeRef, permissionMode);
+        }
+
         const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
         const turnState: ClaudeTurnState = {
           turnId,
@@ -1823,6 +1885,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           emittedTextDelta: false,
           fallbackAssistantText: "",
           lastTextBlockIndex: null,
+          currentAssistantMessageId: null,
+          lastTextAssistantMessageId: null,
         };
 
         const updatedAt = yield* nowIso;
