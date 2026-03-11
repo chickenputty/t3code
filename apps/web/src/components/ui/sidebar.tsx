@@ -18,6 +18,11 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import {
+  beginMobileSidebarSwipe,
+  markMobileSidebarSwipeHandled,
+  updateMobileSidebarSwipe,
+} from "~/mobileSidebarSwipe";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -98,6 +103,7 @@ function SidebarProvider({
 }) {
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [openMobile, setOpenMobile] = React.useState(false);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -145,6 +151,80 @@ function SidebarProvider({
     [state, open, setOpen, isMobile, openMobile, toggleSidebar],
   );
 
+  React.useEffect(() => {
+    if (!isMobile) {
+      return;
+    }
+
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    let gestureState = null as ReturnType<typeof beginMobileSidebarSwipe>;
+
+    const resetGesture = () => {
+      gestureState = null;
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        resetGesture();
+        return;
+      }
+
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      gestureState = beginMobileSidebarSwipe({
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        sidebarOpen: openMobile,
+        viewportWidth,
+      });
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch || !gestureState) {
+        return;
+      }
+
+      const result = updateMobileSidebarSwipe(gestureState, {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+      });
+
+      if (result === "pending") {
+        return;
+      }
+
+      if (result === "cancel") {
+        resetGesture();
+        return;
+      }
+
+      event.preventDefault();
+
+      if (result === "open-left-menu") {
+        setOpenMobile(true);
+      }
+
+      gestureState = markMobileSidebarSwipeHandled(gestureState);
+    };
+
+    wrapper.addEventListener("touchstart", handleTouchStart, { passive: true });
+    wrapper.addEventListener("touchmove", handleTouchMove, { passive: false });
+    wrapper.addEventListener("touchend", resetGesture);
+    wrapper.addEventListener("touchcancel", resetGesture);
+
+    return () => {
+      wrapper.removeEventListener("touchstart", handleTouchStart);
+      wrapper.removeEventListener("touchmove", handleTouchMove);
+      wrapper.removeEventListener("touchend", resetGesture);
+      wrapper.removeEventListener("touchcancel", resetGesture);
+    };
+  }, [isMobile, openMobile, setOpenMobile]);
+
   return (
     <SidebarContext.Provider value={contextValue}>
       <div
@@ -153,6 +233,7 @@ function SidebarProvider({
           className,
         )}
         data-slot="sidebar-wrapper"
+        ref={wrapperRef}
         style={
           {
             "--sidebar-width": SIDEBAR_WIDTH,
@@ -225,7 +306,7 @@ function Sidebar({
         <Sheet onOpenChange={setOpenMobile} open={openMobile} {...props}>
           <SheetPopup
             className={cn(
-              "w-(--sidebar-width) max-w-none bg-sidebar p-0 text-sidebar-foreground",
+              "app-safe-area-shell w-(--sidebar-width) max-w-none bg-sidebar p-0 text-sidebar-foreground",
               className,
             )}
             data-mobile="true"
@@ -275,7 +356,7 @@ function Sidebar({
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-[var(--app-viewport-height)] w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+            "app-safe-area-shell fixed inset-y-0 z-10 hidden h-[var(--app-viewport-height)] w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -596,7 +677,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
       className={cn(
-        "relative flex min-w-0 w-full flex-1 flex-col bg-background",
+        "app-safe-area-shell relative flex min-w-0 w-full flex-1 flex-col bg-background",
         "md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2 md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ms-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm/5",
         className,
       )}

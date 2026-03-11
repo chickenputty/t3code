@@ -749,6 +749,13 @@ function ComposerPromptEditorInner({
               className,
             )}
             aria-placeholder={placeholder}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            data-chat-composer-editor="true"
+            data-form-type="other"
+            inputMode="text"
+            spellCheck={false}
             style={{ direction: "ltr" }}
             placeholder={<span />}
             onPaste={onPaste}

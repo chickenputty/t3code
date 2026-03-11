@@ -8,6 +8,8 @@ type ThemeSnapshot = {
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
+const LIGHT_THEME_COLOR = "#ffffff";
+const DARK_THEME_COLOR = "#0a0a0a";
 
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
@@ -32,6 +34,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
   const isDark = theme === "dark" || (theme === "system" && getSystemDark());
   document.documentElement.classList.toggle("dark", isDark);
+  syncThemeColor(isDark);
   syncDesktopTheme(theme);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
@@ -41,6 +44,15 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
       document.documentElement.classList.remove("no-transitions");
     });
   }
+}
+
+function syncThemeColor(isDark: boolean) {
+  const themeColorMeta = document.querySelector<HTMLMetaElement>("meta[name='theme-color']");
+  if (!themeColorMeta) {
+    return;
+  }
+
+  themeColorMeta.content = isDark ? DARK_THEME_COLOR : LIGHT_THEME_COLOR;
 }
 
 function syncDesktopTheme(theme: Theme) {
