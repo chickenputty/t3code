@@ -3,7 +3,9 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
+  isToolLifecycleItemType,
   type ProviderKind,
+  type ToolLifecycleItemType,
   type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
@@ -36,6 +38,9 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
+  toolTitle?: string;
+  itemType?: ToolLifecycleItemType;
+  requestKind?: PendingApproval["requestKind"];
   tone: "thinking" | "tool" | "info" | "error";
 }
 
@@ -424,7 +429,14 @@ export function deriveWorkLogEntries(
           : null;
       const command = extractToolCommand(payload);
       const changedFiles = extractChangedFiles(payload);
-      const detail = extractWorkDetail(payload, changedFiles);
+      const title = extractToolTitle(payload);
+      const itemType = extractWorkLogItemType(payload);
+      const requestKind = extractWorkLogRequestKind(payload);
+      const explicitDetail =
+        payload && typeof payload.detail === "string" && payload.detail.length > 0
+          ? stripTrailingExitCode(payload.detail).output
+          : null;
+      const detail = explicitDetail ?? extractWorkDetail(payload, changedFiles);
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
@@ -439,6 +451,15 @@ export function deriveWorkLogEntries(
       }
       if (changedFiles.length > 0) {
         entry.changedFiles = changedFiles;
+      }
+      if (title) {
+        entry.toolTitle = title;
+      }
+      if (itemType) {
+        entry.itemType = itemType;
+      }
+      if (requestKind) {
+        entry.requestKind = requestKind;
       }
       return entry;
     });
@@ -631,6 +652,54 @@ function extractToolName(payload: Record<string, unknown> | null): string | null
     asTrimmedString(item?.name),
   ];
   return candidates.find((candidate) => candidate !== null) ?? null;
+}
+
+function extractToolTitle(payload: Record<string, unknown> | null): string | null {
+  return asTrimmedString(payload?.title) ?? extractToolName(payload);
+}
+
+function stripTrailingExitCode(value: string): {
+  output: string | null;
+  exitCode?: number | undefined;
+} {
+  const trimmed = value.trim();
+  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(
+    trimmed,
+  );
+  if (!match?.groups) {
+    return {
+      output: trimmed.length > 0 ? trimmed : null,
+    };
+  }
+
+  const exitCode = Number.parseInt(match.groups.code ?? "", 10);
+  const normalizedOutput = match.groups.output?.trim() ?? "";
+  return {
+    output: normalizedOutput.length > 0 ? normalizedOutput : null,
+    ...(Number.isInteger(exitCode) ? { exitCode } : {}),
+  };
+}
+
+function extractWorkLogItemType(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["itemType"] | undefined {
+  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+    return payload.itemType;
+  }
+  return undefined;
+}
+
+function extractWorkLogRequestKind(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["requestKind"] | undefined {
+  if (
+    payload?.requestKind === "command" ||
+    payload?.requestKind === "file-read" ||
+    payload?.requestKind === "file-change"
+  ) {
+    return payload.requestKind;
+  }
+  return requestKindFromRequestType(payload?.requestType) ?? undefined;
 }
 
 function extractWorkDetail(

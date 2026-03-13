@@ -59,6 +59,29 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
 }
 
+export function resolveSidebarNewThreadEnvMode(input: {
+  requestedEnvMode?: "local" | "worktree" | undefined;
+  defaultEnvMode: "local" | "worktree";
+}): "local" | "worktree" {
+  return input.requestedEnvMode ?? input.defaultEnvMode;
+}
+
+export function resolveThreadRowClassName(input: {
+  isActive: boolean;
+  isSelected: boolean;
+}): string {
+  if (input.isSelected && input.isActive) {
+    return "bg-primary/22 text-foreground font-medium ring-1 ring-primary/25 hover:bg-primary/26 dark:bg-primary/30 dark:ring-primary/35";
+  }
+  if (input.isSelected) {
+    return "bg-primary/15 text-foreground hover:bg-primary/19 dark:bg-primary/22";
+  }
+  if (input.isActive) {
+    return "bg-accent/85 text-foreground font-medium ring-1 ring-border/70 hover:bg-accent dark:bg-accent/55 dark:ring-border/50";
+  }
+  return "text-muted-foreground hover:bg-accent hover:text-foreground";
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;

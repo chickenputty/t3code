@@ -3542,7 +3542,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback(
-    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (
+      nextPrompt: string,
+      nextCursor: number,
+      nextExpandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
@@ -3558,10 +3563,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(
         cursorAdjacentToMention
           ? null
-          : detectComposerTrigger(
-              nextPrompt,
-              expandCollapsedComposerCursor(nextPrompt, nextCursor),
-            ),
+          : detectComposerTrigger(nextPrompt, nextExpandedCursor),
       );
     },
     [

@@ -6,6 +6,8 @@ import {
   filterSidebarThreads,
   getThreadLatestActivityAt,
   hasUnseenCompletion,
+  resolveSidebarNewThreadEnvMode,
+  resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortSidebarThreads,
@@ -113,6 +115,25 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
     } as unknown as HTMLElement;
 
     expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("resolveSidebarNewThreadEnvMode", () => {
+  it("uses the app default when the caller does not request a specific mode", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("preserves an explicit requested mode over the app default", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        requestedEnvMode: "local",
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("local");
   });
 });
 
@@ -380,5 +401,29 @@ describe("filterSidebarThreads", () => {
     expect(filterSidebarThreads([matchingThread, otherThread], "audit log")).toEqual([
       matchingThread,
     ]);
+  });
+});
+
+describe("resolveThreadRowClassName", () => {
+  it("uses the darker selected palette when a thread is both selected and active", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
+    expect(className).toContain("bg-primary/22");
+    expect(className).toContain("hover:bg-primary/26");
+    expect(className).toContain("dark:bg-primary/30");
+    expect(className).not.toContain("bg-accent/85");
+  });
+
+  it("uses selected hover colors for selected threads", () => {
+    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
+    expect(className).toContain("bg-primary/15");
+    expect(className).toContain("hover:bg-primary/19");
+    expect(className).toContain("dark:bg-primary/22");
+    expect(className).not.toContain("hover:bg-accent");
+  });
+
+  it("keeps the accent palette for active-only threads", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
+    expect(className).toContain("bg-accent/85");
+    expect(className).toContain("hover:bg-accent");
   });
 });

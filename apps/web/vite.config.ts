@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
 import { VitePWA, type ManifestOptions } from "vite-plugin-pwa";
-import { version } from "./package.json" with { type: "json" };
+import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const bindHost = process.env.T3CODE_HOST ?? "localhost";
@@ -113,7 +113,8 @@ export default defineConfig({
     tanstackRouter(),
     react({
       babel: {
-        plugins: [["babel-plugin-react-compiler", { target: "19" }]],
+        parserOpts: { plugins: ["typescript", "jsx"] },
+        plugins: ["babel-plugin-react-compiler"],
       },
     }),
     tailwindcss(),
@@ -146,7 +147,7 @@ export default defineConfig({
   define: {
     // In dev mode, tell the web app where the WebSocket server lives
     "import.meta.env.VITE_WS_URL": JSON.stringify(process.env.VITE_WS_URL ?? ""),
-    "import.meta.env.APP_VERSION": JSON.stringify(version),
+    "import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
   },
   resolve: {
     tsconfigPaths: true,
