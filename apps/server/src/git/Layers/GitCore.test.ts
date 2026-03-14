@@ -599,6 +599,47 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("backs off repeated status refresh fetches after a failure", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", defaultBranch]);
+
+        const realGitService = yield* GitService;
+        let refreshFetchAttempts = 0;
+        const core = yield* makeIsolatedGitCore({
+          execute: (input) => {
+            if (input.args[0] === "fetch") {
+              refreshFetchAttempts += 1;
+              return Effect.fail(
+                new GitCommandError({
+                  operation: "git.test.statusRefreshFailureBackoff",
+                  command: `git ${input.args.join(" ")}`,
+                  cwd: input.cwd,
+                  detail: "simulated fetch timeout",
+                }),
+              );
+            }
+            return realGitService.execute(input);
+          },
+        });
+
+        const first = yield* core.statusDetails(source);
+        const second = yield* core.statusDetails(source);
+
+        expect(first.branch).toBe(defaultBranch);
+        expect(second.branch).toBe(defaultBranch);
+        expect(refreshFetchAttempts).toBe(1);
+      }),
+    );
+
     it.effect("refresh fetch is scoped to the checked out branch upstream refspec", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();

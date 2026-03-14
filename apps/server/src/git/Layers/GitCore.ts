@@ -5,6 +5,7 @@ import { GitService } from "../Services/GitService.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
+const STATUS_UPSTREAM_REFRESH_FAILURE_BACKOFF = Duration.minutes(1);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
@@ -391,8 +392,11 @@ const makeGitCore = Effect.gen(function* () {
         });
         return true as const;
       }),
-    // Keep successful refreshes warm; drop failures immediately so next request can retry.
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_UPSTREAM_REFRESH_INTERVAL : Duration.zero),
+    // Back off after failures so polling UIs do not repeatedly block on an unreachable remote.
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit)
+        ? STATUS_UPSTREAM_REFRESH_INTERVAL
+        : STATUS_UPSTREAM_REFRESH_FAILURE_BACKOFF,
   });
 
   const refreshStatusUpstreamIfStale = (cwd: string): Effect.Effect<void, GitCommandError> =>
@@ -654,7 +658,7 @@ const makeGitCore = Effect.gen(function* () {
 
   const statusDetails: GitCoreShape["statusDetails"] = (cwd) =>
     Effect.gen(function* () {
-      yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.catch(() => Effect.void));
 
       const [statusStdout, unstagedNumstatStdout, stagedNumstatStdout] = yield* Effect.all(
         [
