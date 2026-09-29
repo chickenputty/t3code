@@ -22,7 +22,7 @@ A conflict is resolved once and stays resolved.
 2. Commit to `main` and push. Keep each patch a focused commit with a clear subject; the release
    notes list them.
 3. Run `pwsh fork/fork.ps1 sync` to build and publish now, or leave it for the daily run.
-4. T3 Code shows the update on its next check. Restart it to apply.
+4. T3 Code checks for updates every 4 minutes and offers the new build. Restart it to apply.
 
 Try a change without publishing: `vp run dev:desktop` runs the app from source against
 `~/.t3/dev`, never the live `~/.t3/userdata`. `pwsh fork/fork.ps1 sync -NoPublish` builds the

@@ -32,7 +32,9 @@ param(
   [string]$UpstreamRef = 'refs/remotes/upstream/main',
   # install: run the installer now (used by the one-shot install task).
   [switch]$Now,
-  [switch]$SkipBackup
+  [switch]$SkipBackup,
+  # No Windows notifications (for runs where someone is watching the console).
+  [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,6 +116,7 @@ function Save-State([hashtable]$State) {
 }
 
 function Show-Toast([string]$Title, [string]$Body) {
+  if ($Quiet) { return }
   # WinRT toasts need Windows PowerShell; pwsh 7 has no WinRT projection.
   $esc = { param($s) [Security.SecurityElement]::Escape($s) }
   $xml = "<toast><visual><binding template=`"ToastGeneric`"><text>$(& $esc $Title)</text><text>$(& $esc $Body)</text></binding></visual></toast>"
@@ -265,6 +268,8 @@ function Invoke-Sync {
     $published = $state.published
     if (-not $needMerge -and -not $Force -and -not $NoPublish -and $published -and $published.commit -eq $base) {
       Log "Up to date: $($published.version) is $Branch at $(Short $base), upstream $(Short $up) already merged."
+      # An earlier fast-forward may have been refused by local edits; try again.
+      if ($local -ne $base) { Log (Move-LocalBranch $repo $Branch $local $base) }
       $state.lastRun = @{ at = (Get-Date).ToString('o'); result = 'up-to-date'; message = $published.version }
       return
     }
@@ -272,6 +277,7 @@ function Invoke-Sync {
     # Build in a worktree of its own so the build never sees half-made edits in the checkout.
     if (-not (Test-Path (Join-Path $BuildDir '.git'))) {
       Log "creating build worktree $BuildDir"
+      GitOut $repo worktree prune | Out-Null
       GitOut $repo worktree add --detach $BuildDir $base | Out-Null
     } else {
       Invoke-Git $BuildDir merge --abort | Out-Null
@@ -347,7 +353,7 @@ function Invoke-Sync {
 
     $state.published = @{ version = $ver; commit = $candidate; upstream = $up; at = (Get-Date).ToString('o'); url = $url; installer = $exe }
     $state.lastRun = @{ at = (Get-Date).ToString('o'); result = 'published'; message = $ver }
-    Show-Toast "T3 Code fork $ver is out" 'T3 Code offers it as an update on its next check.'
+    Show-Toast "T3 Code fork $ver is out" 'T3 Code offers it as an update within about 4 minutes.'
   } catch {
     $msg = "$_"
     Log "FAILED: $msg"
