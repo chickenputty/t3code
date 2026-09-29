@@ -14,7 +14,12 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  GitCommandError,
+  VcsProcessExitError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -212,6 +217,39 @@ it.effect("checkpoint capture still fails when a clean filter rejects a file", (
     assert.strictEqual(result._tag, "Failure");
     assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint capture waits for staging that outlasts the default Git timeout", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-slow-stage-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    // Hashing a workspace's untracked binaries through Git LFS took 44s on a real vault.
+    const stageDurationMs = 44_000;
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          input.args.includes("add") &&
+          input.args.includes("-A") &&
+          (input.timeoutMs ?? 30_000) < stageDurationMs
+            ? Effect.fail(
+                new VcsProcessTimeoutError({
+                  operation: input.operation,
+                  command: input.command,
+                  cwd: input.cwd,
+                  timeoutMs: input.timeoutMs ?? 30_000,
+                }),
+              )
+            : liveProcess.run(input),
+      }),
+    );
+
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 

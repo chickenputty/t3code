@@ -392,6 +392,10 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// The private index only carries stat data for tracked files, so every capture re-hashes each
+// untracked file, through clean filters such as Git LFS. A few hundred MB of untracked binaries
+// takes tens of seconds; the default Git timeout would fail every capture in such a workspace.
+const CHECKPOINT_STAGE_TIMEOUT_MS = 5 * 60_000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -947,6 +951,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...exclusions,
             ],
             env: commitEnv,
+            timeoutMs: CHECKPOINT_STAGE_TIMEOUT_MS,
           });
         yield* stageFiles([]).pipe(
           Effect.catchTags({
