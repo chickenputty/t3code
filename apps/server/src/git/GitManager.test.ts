@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -55,6 +56,8 @@ const decodeForgejoPullRequest = Schema.decodeEffect(ForgejoPullRequestSchema);
 
 interface FakeGhScenario {
   prListSequence?: string[];
+  /** How long each `gh pr list` call takes, in call order; undefined and later calls answer at once. */
+  prListDelays?: ReadonlyArray<Duration.Input | undefined>;
   prListByHeadSelector?: Record<string, string>;
   prListSequenceByHeadSelector?: Record<string, string[]>;
   createdPrUrl?: string;
@@ -366,6 +369,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
+  const prListDelays = [...(scenario.prListDelays ?? [])];
   const prListQueueByHeadSelector = new Map(
     Object.entries(scenario.prListSequenceByHeadSelector ?? {}).map(([headSelector, values]) => [
       headSelector,
@@ -397,7 +401,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
       const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
-      return Effect.succeed(fakeGhOutput(stdout));
+      const delay = prListDelays.shift();
+      return delay === undefined
+        ? Effect.succeed(fakeGhOutput(stdout))
+        : Effect.sleep(delay).pipe(Effect.as(fakeGhOutput(stdout)));
     }
 
     if (args[0] === "pr" && args[1] === "create") {
@@ -1092,6 +1099,50 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       expect(callsAfterFailure).toBeGreaterThan(0);
       expect(ghCalls).toHaveLength(callsAfterFailure);
+    }),
+  );
+
+  it.effect("status answers with the last known PR while a slow host read finishes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/slow-host"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/slow-host"]);
+      const pullRequest = (title: string) =>
+        encodeCliJson([
+          {
+            number: 115,
+            title,
+            url: "https://github.com/pingdotgg/codething-mvp/pull/115",
+            baseRefName: "main",
+            headRefName: "feature/slow-host",
+          },
+        ]);
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [pullRequest("Before"), pullRequest("After")],
+          prListDelays: [undefined, "30 seconds"],
+        },
+      });
+      const prListCalls = () => ghCalls.filter((call) => call.startsWith("pr list "));
+      const status = manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+
+      expect((yield* status)?.pr?.title).toBe("Before");
+
+      // Past the PR cache the host takes 30 seconds to answer.
+      yield* TestClock.adjust("61 seconds");
+      const slow = yield* Effect.forkScoped(status);
+      // Real git work runs before the host read, so wait in live time for it to start.
+      while (prListCalls().length < 2) yield* TestClock.withLive(Effect.sleep("5 millis"));
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* Fiber.join(slow))?.pr?.title).toBe("Before");
+
+      // The read kept going, so the next refresh has its answer without asking again.
+      yield* TestClock.adjust("25 seconds");
+      expect((yield* status)?.pr?.title).toBe("After");
+      expect(prListCalls()).toHaveLength(2);
     }),
   );
 

@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -154,6 +155,10 @@ const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+// A status answer waits this long for the branch's PR before settling for the last known one.
+// Host reads queue behind a few gh processes, so a busy or throttled host held status refreshes
+// for half a minute and more, only to fail and fall back anyway.
+const STATUS_PR_LOOKUP_BUDGET = Duration.seconds(5);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -694,6 +699,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 }
 
 export const make = Effect.gen(function* () {
+  const backgroundScope = yield* Effect.scope;
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -1220,7 +1226,19 @@ export const make = Effect.gen(function* () {
         yield* Cache.invalidate(prLookupCache, cacheKey);
       }
     }
-    return yield* Cache.get(prLookupCache, cacheKey).pipe(
+    const lastKnownPr = resolveLookupHeadContext(cwd, details).pipe(
+      Effect.map(({ headContext }) =>
+        resolveLastKnownPr(branchKey, {
+          upstreamRef: details.upstreamRef,
+          headBranch: headContext.headBranch,
+          remoteName: headContext.remoteName,
+          headRemoteUrlKey: headContext.headRemoteUrlKey,
+        }),
+      ),
+    );
+    // The lookup runs apart from this answer: interrupting the last reader of a cache entry
+    // cancels its read, so a slow host would never fill the cache for the next refresh.
+    const lookup = yield* Cache.get(prLookupCache, cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
@@ -1242,6 +1260,19 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.map(({ pr }) => pr),
+      Effect.exit,
+      Effect.forkIn(backgroundScope),
+    );
+    return yield* Fiber.join(lookup).pipe(
+      Effect.flatten,
+      Effect.timeoutOrElse({
+        duration: STATUS_PR_LOOKUP_BUDGET,
+        orElse: () =>
+          Effect.logInfo("PR lookup is still running; keeping last known PR state.").pipe(
+            Effect.annotateLogs({ operation: "lookupStatusPr", branch: details.branch }),
+            Effect.andThen(lastKnownPr),
+          ),
+      }),
       Effect.catch((error) =>
         Effect.logWarning("PR lookup failed; keeping last known PR state.").pipe(
           Effect.annotateLogs({
@@ -1260,15 +1291,7 @@ export const make = Effect.gen(function* () {
                 }
               : {}),
           }),
-          Effect.andThen(resolveLookupHeadContext(cwd, details)),
-          Effect.map(({ headContext }) =>
-            resolveLastKnownPr(branchKey, {
-              upstreamRef: details.upstreamRef,
-              headBranch: headContext.headBranch,
-              remoteName: headContext.remoteName,
-              headRemoteUrlKey: headContext.headRemoteUrlKey,
-            }),
-          ),
+          Effect.andThen(lastKnownPr),
         ),
       ),
     );
