@@ -247,7 +247,9 @@ import {
   SidebarProjectGroupHeader,
   SidebarStatusGlyph,
   SidebarViewControls,
+  ThreadTopicEmoji,
 } from "./sidebar/SidebarViewControls";
+import { threadEmojiForTitle } from "./sidebar/threadEmoji";
 import { useSidebarViewStore } from "./sidebar/sidebarViewStore";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -987,6 +989,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Fork: the "Slim" thread row setting. Slim rows shrink to 28px, and live
   // rows keep only the project icon, the title and a status icon.
   statusSlim?: boolean;
+  // Fork: a topic emoji shown instead of the project icon inside a project group.
+  leadingEmoji?: string | null;
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
@@ -1660,7 +1664,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.leadingEmoji ? (
+                <ThreadTopicEmoji emoji={props.leadingEmoji} />
+              ) : props.project ? (
+                <ProjectFavicon project={props.project} className="size-4" />
+              ) : null}
             </span>
             {statusOnly ? null : draftIndicator}
             {title}
@@ -1824,7 +1832,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.leadingEmoji ? (
+                <ThreadTopicEmoji emoji={props.leadingEmoji} />
+              ) : props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {props.projectDisplayName ? (
@@ -2755,6 +2765,9 @@ export default function Sidebar() {
   );
   const displayedActiveThreads = activeArrangement.threads;
   const threadRowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
+  const showGroupedThreadEmoji = useClientSettings(
+    (settings) => settings.sidebarGroupedThreadEmoji,
+  );
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4829,6 +4842,14 @@ export default function Sidebar() {
                             thread={thread}
                             variant={rowVariant}
                             statusSlim={threadRowDensity === "slim"}
+                            // Fork: grouped rows trade the project icon for a topic emoji.
+                            leadingEmoji={
+                              section === "active" &&
+                              activeArrangement.groups !== null &&
+                              showGroupedThreadEmoji
+                                ? threadEmojiForTitle(thread.title)
+                                : null
+                            }
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"

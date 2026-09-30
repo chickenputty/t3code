@@ -569,6 +569,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadRowDensity !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity
         ? ["Thread rows"]
         : []),
+      ...(settings.sidebarGroupedThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji
+        ? ["Topic emoji in project groups"]
+        : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
@@ -696,6 +699,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.sidebarThreadRowDensity,
+      settings.sidebarGroupedThreadEmoji,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
@@ -792,6 +796,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
+      sidebarGroupedThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1397,6 +1402,32 @@ export function AppearanceSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-grouped-thread-emoji")}
+          description="When the sidebar is grouped by project, rows show an emoji for their topic instead of the project icon their group already shows."
+          resetAction={
+            settings.sidebarGroupedThreadEmoji !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji ? (
+              <SettingResetButton
+                label="topic emoji"
+                onClick={() =>
+                  updateSettings({
+                    sidebarGroupedThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarGroupedThreadEmoji}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarGroupedThreadEmoji: Boolean(checked) })
+              }
+              aria-label="Show topic emoji in project groups"
+            />
           }
         />
         <SettingsRow

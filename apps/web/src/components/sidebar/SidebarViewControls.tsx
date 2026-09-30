@@ -106,6 +106,18 @@ export function SidebarViewControls() {
   );
 }
 
+/** A grouped row's topic emoji, sized to the project icon it stands in for. */
+export function ThreadTopicEmoji(props: { emoji: string }) {
+  return (
+    <span
+      aria-hidden
+      className="flex size-4 shrink-0 items-center justify-center text-sm leading-none"
+    >
+      {props.emoji}
+    </span>
+  );
+}
+
 /** The card's status icons, alone: a slim row's whole status slot. */
 export function SidebarStatusGlyph(props: {
   icon: "working" | "monitoring" | "approval" | "input" | "failed" | "woke" | "done";
