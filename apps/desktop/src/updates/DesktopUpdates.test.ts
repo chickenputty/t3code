@@ -87,6 +87,55 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("downloads an update a scheduled check finds and installs it on quit", () => {
+    let duringCheck = () => {};
+    const harness = makeHarness({ checkForUpdates: Effect.sync(() => duringCheck()) });
+    // The updater reports the release while its check is still running.
+    duringCheck = () => harness.emit("update-available", { version: "1.2.4" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.isFalse(harness.installsOnQuit());
+
+        yield* TestClock.adjust(Duration.millis(15_000));
+        yield* flushCallbacks;
+        assert.equal(harness.checkCount(), 1);
+        assert.equal(harness.downloadCount(), 1);
+        assert.equal((yield* updates.getState).status, "downloading");
+        assert.isFalse(harness.installsOnQuit());
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "downloaded");
+        assert.isTrue(harness.installsOnQuit());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("downloads nothing when a scheduled check finds no update", () => {
+    let duringCheck = () => {};
+    const harness = makeHarness({ checkForUpdates: Effect.sync(() => duringCheck()) });
+    duringCheck = () => harness.emit("update-not-available");
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* TestClock.adjust(Duration.millis(15_000));
+        yield* flushCallbacks;
+        yield* TestClock.adjust(Duration.minutes(4));
+        yield* flushCallbacks;
+        assert.equal(harness.checkCount(), 2);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal((yield* updates.getState).status, "up-to-date");
+        assert.isFalse(harness.installsOnQuit());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>

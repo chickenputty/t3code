@@ -43,6 +43,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
+  let installOnQuitCheck: (() => boolean) | null = null;
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -97,6 +98,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         quitAndInstallCount += 1;
         installSteps.push("quitAndInstall");
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
+    installOnQuit: (shouldInstall) =>
+      Effect.sync(() => {
+        installOnQuitCheck = shouldInstall;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -260,6 +265,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     installSteps,
     updateRestartMarkers,
     downloadCount: () => downloadCount,
+    /** What quitting the app now would do: null until install-on-quit is armed. */
+    installsOnQuit: () => installOnQuitCheck?.() ?? null,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>

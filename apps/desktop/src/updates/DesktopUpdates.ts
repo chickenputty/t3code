@@ -516,6 +516,23 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
+  // Fork (chickenputty/t3code): fetch the update a scheduled check found, so
+  // quitting T3 is enough to install it. The updater's events can land just
+  // after its check resolves, so wait briefly for the check's outcome first.
+  const downloadFoundUpdate = Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* PubSub.subscribe(stateChanges);
+      if ((yield* Ref.get(updateStateRef)).status === "checking") {
+        yield* Stream.fromSubscription(changes).pipe(
+          Stream.filter((state) => state.status !== "checking"),
+          Stream.runHead,
+          Effect.timeoutOption(Duration.seconds(30)),
+        );
+      }
+      yield* downloadAvailableUpdate;
+    }),
+  ).pipe(Effect.withSpan("desktop.updates.downloadFoundUpdate"));
+
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
   // effort: without the marker the backend only re-provisions its tunnel.
@@ -705,6 +722,7 @@ export const make = Effect.gen(function* () {
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
       Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(downloadFoundUpdate),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -719,6 +737,7 @@ export const make = Effect.gen(function* () {
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
       Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(downloadFoundUpdate),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -932,6 +951,11 @@ export const make = Effect.gen(function* () {
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      // Fork (chickenputty/t3code): quitting T3 installs a downloaded update
+      // and reopens T3 on it, as the Update button does.
+      yield* electronUpdater.installOnQuit(
+        () => Effect.runSyncWith(context)(Ref.get(updateStateRef)).downloadedVersion !== null,
+      );
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),

@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import * as Electron from "electron";
 import { autoUpdater } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
@@ -73,12 +74,18 @@ export class ElectronUpdater extends Context.Service<
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
     }) => Effect.Effect<void, ElectronUpdaterQuitAndInstallError>;
+    /** Fork (chickenputty/t3code): when the app next quits for real and
+        `shouldInstall` says so, run the downloaded installer silently and
+        reopen the app on the new version. Arming it again is a no-op. */
+    readonly installOnQuit: (shouldInstall: () => boolean) => Effect.Effect<void>;
     readonly on: <Args extends ReadonlyArray<unknown>>(
       eventName: string,
       listener: (...args: Args) => void,
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
+
+let installOnQuitArmed = false;
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
@@ -149,6 +156,27 @@ export const make = ElectronUpdater.of({
             isForceRunAfter,
             cause,
           }),
+      });
+    }),
+  installOnQuit: (shouldInstall) =>
+    Effect.sync(() => {
+      if (installOnQuitArmed) return;
+      installOnQuitArmed = true;
+      // Not scoped: the desktop scope closes during shutdown, before Electron
+      // emits "quit", and would take a scoped listener with it. A relaunch
+      // (app.exit) emits "quit" without "will-quit", so it never installs.
+      let quitRequested = false;
+      Electron.app.once("will-quit", () => {
+        quitRequested = true;
+      });
+      Electron.app.once("quit", (_event, exitCode) => {
+        if (!quitRequested || exitCode !== 0 || !shouldInstall()) return;
+        try {
+          // Ignored when the Update button already started the installer.
+          autoUpdater.quitAndInstall(true, true);
+        } catch {
+          // The app is exiting; the next start finds the update again.
+        }
       });
     }),
   on: (eventName, listener) => {
