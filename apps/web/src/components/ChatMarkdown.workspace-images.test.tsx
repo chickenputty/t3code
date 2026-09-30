@@ -153,6 +153,21 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("Image unavailable");
   });
 
+  it("keeps a backslash before a dot in an absolute Windows image path", () => {
+    const html = render(
+      String.raw`![compare](C:\Users\shawn\project\.claude\worktrees\gen\claude\.work\compare.png)`,
+    );
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: "C:\\Users\\shawn\\project\\.claude\\worktrees\\gen\\claude\\.work\\compare.png",
+      },
+    ]);
+    expect(html).not.toContain("Image unavailable");
+  });
+
   it("loads a POSIX absolute path and file URI through a signed asset URL", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown

@@ -863,6 +863,31 @@ describe("ChatMarkdown Windows file links", () => {
   });
 
   it.each([true, false])(
+    "keeps a backslash before a dot or underscore in a drive path with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={[
+            String.raw`[Open](C:\Users\shawn\project\.claude\_notes\main.ts)`,
+            String.raw`[Doubled](C:\\Users\\shawn\\project\\.claude\\doubled.ts)`,
+            String.raw`[Defined][ref]`,
+            "",
+            String.raw`[ref]: C:\Users\shawn\project\.work\defined.ts`,
+          ].join("\n")}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain('href="C:/Users/shawn/project/.claude/_notes/main.ts"');
+      expect(html).toContain('href="C:/Users/shawn/project/.claude/doubled.ts"');
+      expect(html).toContain('href="C:/Users/shawn/project/.work/defined.ts"');
+    },
+  );
+
+  it.each([true, false])(
     "distinguishes same-named backslash paths with parseRawHtml=%s",
     (parseRawHtml) => {
       const html = renderToStaticMarkup(
