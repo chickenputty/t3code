@@ -223,6 +223,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "sidebar-thread-rows",
+    title: "Thread rows",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar density compact slim height card thread list rows"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
