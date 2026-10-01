@@ -251,6 +251,7 @@ import {
 } from "./sidebar/SidebarViewControls";
 import { threadEmojiForTitle } from "./sidebar/threadEmoji";
 import { useSidebarViewStore } from "./sidebar/sidebarViewStore";
+import { useThreadVisitsStore } from "./sidebar/threadVisits";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2717,6 +2718,10 @@ export default function Sidebar() {
   const lastVisitedAtByThreadKey = useUiStateStore((state) =>
     sidebarThreadSort.field === "status" ? state.threadLastVisitedAtById : null,
   );
+  // Likewise only "Recently opened" reads when each thread was last opened.
+  const openedAtByThreadKey = useThreadVisitsStore((state) =>
+    sidebarThreadSort.field === "opened" ? state.openedAt : null,
+  );
   const logicalProjectByProjectKey = useMemo(
     () =>
       new Map(
@@ -2741,6 +2746,8 @@ export default function Sidebar() {
               ],
             wokeAt: threadWokeAt(thread, { now: snoozeNow }),
           }),
+        openedAtOf: (thread) =>
+          openedAtByThreadKey?.[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
         groupOf: (thread) => {
           const group = logicalProjectByProjectKey.get(
             `${thread.environmentId}:${thread.projectId}`,
@@ -2754,6 +2761,7 @@ export default function Sidebar() {
       collapsedProjectKeys,
       lastVisitedAtByThreadKey,
       logicalProjectByProjectKey,
+      openedAtByThreadKey,
       sidebarGroupByProject,
       sidebarThreadSort,
       snoozeNow,

@@ -87,6 +87,25 @@ describe("sortSidebarThreads", () => {
     expect(ids(sorted)).toEqual(["approval", "done-new", "done-old", "working", "idle"]);
   });
 
+  it("orders by when each thread was last opened, never-opened threads last", () => {
+    const openedAt: Record<string, number> = { early: 100, late: 900 };
+    const threads = [thread("never"), thread("early"), thread("late")];
+    const newest = sortSidebarThreads(
+      threads,
+      { field: "opened", reversed: false },
+      noStatus,
+      (entry) => openedAt[entry.id],
+    );
+    expect(ids(newest)).toEqual(["late", "early", "never"]);
+    const oldest = sortSidebarThreads(
+      threads,
+      { field: "opened", reversed: true },
+      noStatus,
+      (entry) => openedAt[entry.id],
+    );
+    expect(ids(oldest)).toEqual(["never", "early", "late"]);
+  });
+
   it("sorts names with numbers in reading order", () => {
     const threads = [thread("Thread 10"), thread("thread 2"), thread("Alpha")];
     const byName = sortSidebarThreads(threads, { field: "name", reversed: false }, noStatus);

@@ -21,6 +21,7 @@ export const SIDEBAR_THREAD_ROW_DENSITY_LABELS: Record<SidebarThreadRowDensity, 
 export const SIDEBAR_THREAD_SORT_FIELDS = [
   "manual",
   "activity",
+  "opened",
   "status",
   "name",
   "created",
@@ -38,6 +39,7 @@ export const MANUAL_SIDEBAR_THREAD_SORT: SidebarThreadSort = { field: "manual", 
 export const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortField, string> = {
   manual: "Manual",
   activity: "Latest activity",
+  opened: "Recently opened",
   status: "Status",
   name: "Name",
   created: "Created",
@@ -49,6 +51,7 @@ export const SIDEBAR_THREAD_SORT_DIRECTION_LABELS: Record<
   readonly [natural: string, reversed: string]
 > = {
   activity: ["Newest first", "Oldest first"],
+  opened: ["Newest first", "Oldest first"],
   status: ["Needs you first", "Needs you last"],
   name: ["A to Z", "Z to A"],
   created: ["Newest first", "Oldest first"],
@@ -133,20 +136,32 @@ const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 
 
 type SortableThread = ActivityThread & Pick<SidebarThreadSummary, "title">;
 
+/** Newest first, without the NaN that subtracting two missing (-Infinity) times gives. */
+function compareNewestFirst(left: number, right: number): number {
+  return left === right ? 0 : right > left ? 1 : -1;
+}
+
 /**
  * Orders threads by `sort`. Ties fall back to latest activity, newest first,
  * then to the incoming order, so equal rows never trade places between renders.
+ * `openedAtOf` gives when a thread was last opened, for the "opened" sort;
+ * threads never opened come after every opened one.
  */
 export function sortSidebarThreads<T extends SortableThread>(
   threads: readonly T[],
   sort: SidebarThreadSort,
   statusOf: (thread: T) => SidebarThreadDisplayStatus,
+  openedAtOf?: (thread: T) => number | undefined,
 ): readonly T[] {
   if (sort.field === "manual") return threads;
   const direction = sort.reversed ? -1 : 1;
   const keyed = threads.map((thread) => ({
     thread,
     activity: sidebarThreadLatestActivityMs(thread),
+    opened:
+      sort.field === "opened"
+        ? (openedAtOf?.(thread) ?? Number.NEGATIVE_INFINITY)
+        : Number.NEGATIVE_INFINITY,
     status: sort.field === "status" ? DISPLAY_STATUS_RANK[statusOf(thread)] : 0,
   }));
   keyed.sort((left, right) => {
@@ -154,6 +169,9 @@ export function sortSidebarThreads<T extends SortableThread>(
     switch (sort.field) {
       case "activity":
         primary = right.activity - left.activity;
+        break;
+      case "opened":
+        primary = compareNewestFirst(left.opened, right.opened);
         break;
       case "status":
         primary = left.status - right.status;
@@ -199,11 +217,12 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
     readonly sort: SidebarThreadSort;
     readonly groupByProject: boolean;
     readonly statusOf: (thread: T) => SidebarThreadDisplayStatus;
+    readonly openedAtOf?: (thread: T) => number | undefined;
     readonly groupOf: (thread: T) => SidebarProjectGroupRef | null;
     readonly collapsedGroupKeys: ReadonlySet<string>;
   },
 ): SidebarActiveArrangement<T> {
-  const sorted = sortSidebarThreads(threads, options.sort, options.statusOf);
+  const sorted = sortSidebarThreads(threads, options.sort, options.statusOf, options.openedAtOf);
   if (!options.groupByProject) return { threads: sorted, groups: null };
 
   const byKey = new Map<string, { ref: SidebarProjectGroupRef; threads: T[] }>();
