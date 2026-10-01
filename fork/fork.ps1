@@ -73,7 +73,12 @@ $RestartTaskName = 'T3 Code fork restart'
 $RestartPath = Join-Path $StateDir 'restart.json'
 $KeepReleases = 5
 $KeepLocalBuilds = 3
-$AppDir = $env:T3CODE_FORK_APP_DIR ?? (Join-Path $env:LOCALAPPDATA 'Programs\t3code')
+# Where T3 is installed. The NSIS installer records the folder under the app's GUID key (the GUID
+# comes from the appId, so it is the same on every machine) and keeps upgrading into that folder,
+# which is Programs\t3-code-desktop on installs that started before the package was renamed.
+$AppDir = $env:T3CODE_FORK_APP_DIR
+if (-not $AppDir) { $AppDir = (Get-ItemProperty 'HKCU:\Software\e9197887-efb3-55e0-985e-d6d3b5dd594a' -ErrorAction SilentlyContinue).InstallLocation }
+if (-not $AppDir) { $AppDir = Join-Path $env:LOCALAPPDATA 'Programs\t3code' }
 $AppExe = Join-Path $AppDir 'T3 Code (Alpha).exe'
 $AppExeName = Split-Path $AppExe -Leaf
 $LiveDb = Join-Path $env:USERPROFILE '.t3\userdata\state.sqlite'
