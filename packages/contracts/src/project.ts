@@ -245,6 +245,17 @@ type ProjectFileFailureContext = {
   readonly cause?: unknown;
 };
 
+/** The OS error code in a cause chain, such as "ENOENT", if one carries it. */
+function causeErrorCode(cause: unknown): string | undefined {
+  let current = cause;
+  for (let depth = 0; depth < 4 && current !== null && typeof current === "object"; depth++) {
+    const code = (current as { readonly code?: unknown }).code;
+    if (typeof code === "string") return code;
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileError>()(
   "ProjectReadFileError",
   {
@@ -265,7 +276,11 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        // Fork (chickenputty/t3code): say when the file is simply not there, which is
+        // what a relative path meant for another folder looks like.
+        (causeErrorCode(props.cause) === "ENOENT"
+          ? `There is no file '${props.relativePath}' in '${props.cwd}'.`
+          : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

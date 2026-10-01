@@ -70,6 +70,21 @@ describe("project RPC errors", () => {
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
 
+    // A path that names no file (often a relative path meant for another repo) says so plainly.
+    const missing = Object.assign(new Error("ENOENT: no such file or directory"), {
+      code: "ENOENT",
+    });
+    const missingError = new ProjectReadFileError({
+      cwd: "/workspace",
+      relativePath: "config/ui_state.json",
+      failure: "operation_failed",
+      operation: "realpath-target",
+      operationPath: "/workspace/config/ui_state.json",
+      resolvedPath: "/workspace/config/ui_state.json",
+      cause: { _tag: "WorkspaceFileSystemOperationError", cause: missing },
+    });
+    expect(missingError.message).toBe("There is no file 'config/ui_state.json' in '/workspace'.");
+
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",
       queryLength: "authorization: Bearer secret-token".length,
