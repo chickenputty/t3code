@@ -12,35 +12,54 @@
   pwsh fork/fork.ps1 patches
   pwsh fork/fork.ps1 merge           # merge upstream into main by hand when sync hit a conflict
   pwsh fork/fork.ps1 install         # install the newest fork build (waits for T3 Code to quit)
+  pwsh fork/fork.ps1 restart         # quit T3 now (after this thread's turn), install, reopen, report
+  pwsh fork/fork.ps1 restart -WhenIdle             # the same, once no agent has worked for 10 minutes
+  pwsh fork/fork.ps1 restart -WhenIdle -Probe      # what it would do, without doing it
+  pwsh fork/fork.ps1 restart -Cancel
   pwsh fork/fork.ps1 task install    # register the daily sync task
 #>
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('sync', 'status', 'patches', 'merge', 'install', 'task', 'help')]
+  [ValidateSet('sync', 'status', 'patches', 'merge', 'install', 'restart', 'task', 'help')]
   [string]$Command = 'help',
   [Parameter(Position = 1)]
   [string]$Action,
   # sync: build even when nothing changed since the last published build.
+  # restart: restart even when T3 already runs the target build.
   [switch]$Force,
   # sync: build the installer but do not push, publish or move main.
   [switch]$NoPublish,
-  # sync: override the computed version. install: which fork build to install.
+  # sync: override the computed version. install, restart: which fork build to install.
   [string]$Version,
   # Branch that carries the fork (tests point this at a scratch branch).
   [string]$Branch = 'main',
   [string]$UpstreamRef = 'refs/remotes/upstream/main',
-  # install: run the installer now (used by the one-shot install task).
+  # install, restart: do the waiting in this process (what their one-shot tasks run).
   [switch]$Now,
   [switch]$SkipBackup,
   # No Windows notifications (for runs where someone is watching the console).
-  [switch]$Quiet
+  [switch]$Quiet,
+  # restart: wait until no agent has worked for 10 minutes instead of restarting right away.
+  [switch]$WhenIdle,
+  # restart -WhenIdle: regexes for background processes that do not count as agent work
+  # (added to config.json "idleIgnore").
+  [string[]]$Ignore = @(),
+  # restart: stop waiting at this time (default: 30 minutes, or 12 hours with -WhenIdle).
+  [Nullable[datetime]]$GiveUpAt,
+  # restart: the T3 thread to wait for and report to (default: the thread this runs in, if any).
+  [string]$Thread,
+  # restart: print what would happen, without arming or quitting anything.
+  [switch]$Probe,
+  # restart: cancel the armed restart.
+  [switch]$Cancel
 )
 
 $ErrorActionPreference = 'Stop'
 
 $ReleaseRepo = 'chickenputty/t3code'
-$StateDir = Join-Path $env:LOCALAPPDATA 't3code-fork'
+# The two overrides let fork/test-restart.ps1 run the install logic against a stand-in app.
+$StateDir = $env:T3CODE_FORK_STATE_DIR ?? (Join-Path $env:LOCALAPPDATA 't3code-fork')
 $BuildDir = Join-Path $StateDir 'build'
 $ReleaseDir = Join-Path $StateDir 'release'
 $LogDir = Join-Path $StateDir 'logs'
@@ -50,11 +69,18 @@ $ConfigPath = Join-Path $StateDir 'config.json'
 $RustupHome = Join-Path $StateDir 'rustup'
 $SyncTaskName = 'T3 Code fork sync'
 $InstallTaskName = 'T3 Code fork install'
+$RestartTaskName = 'T3 Code fork restart'
+$RestartPath = Join-Path $StateDir 'restart.json'
 $KeepReleases = 5
 $KeepLocalBuilds = 3
-$AppDir = Join-Path $env:LOCALAPPDATA 'Programs\t3code'
+$AppDir = $env:T3CODE_FORK_APP_DIR ?? (Join-Path $env:LOCALAPPDATA 'Programs\t3code')
 $AppExe = Join-Path $AppDir 'T3 Code (Alpha).exe'
+$AppExeName = Split-Path $AppExe -Leaf
 $LiveDb = Join-Path $env:USERPROFILE '.t3\userdata\state.sqlite'
+# T3's local HTTP API, for "is T3 back" when agent-kit's t3 CLI is not installed.
+$ApiPort = 3773
+# restart -WhenIdle: minutes with no agent work before T3 restarts, and how often it looks.
+$IdlePollSeconds = 30
 
 # Public T3 Connect settings that official builds bake in (read from the 0.0.42 app bundle on
 # 2026-09-29). Without them the fork build loses Connect sign-in, the relay and mobile pairing.
@@ -390,12 +416,20 @@ function Show-Status {
     if ($state.lastRun.log) { "            log $($state.lastRun.log)" }
   }
   if (Test-Path $AppExe) {
-    $appVer = (Get-Item $AppExe).VersionInfo.ProductVersion
+    $build = Get-InstalledBuild
     $feed = Get-Content (Join-Path $AppDir 'resources\app-update.yml') -Raw -ErrorAction SilentlyContinue
     $owner = if ($feed -match 'owner:\s*(\S+)') { $Matches[1] } else { '?' }
     $repoName = if ($feed -match 'repo:\s*(\S+)') { $Matches[1] } else { '?' }
-    "Installed   $appVer, updates from $owner/$repoName$(if ($owner -ne $ReleaseRepo.Split('/')[0]) { ' (the official app; run fork.ps1 install to switch)' })"
+    $main = Get-AppMain | Select-Object -First 1
+    $running = $main ? "running since $($main.CreationDate.ToString('yyyy-MM-dd HH:mm'))" : 'not running'
+    "Installed   $build ($running), updates from $owner/$repoName$(if ($owner -ne $ReleaseRepo.Split('/')[0]) { ' (the official app; run fork.ps1 install to switch)' })"
+    $dl = Get-DownloadedUpdate
+    $newest = $state.published ? $state.published.version : $null
+    if ($dl -and (Compare-Build $dl $build) -gt 0) { "App update  $dl downloaded; T3 installs it when it quits, then reopens" }
+    elseif ($newest -and (Compare-Build $newest $build) -gt 0) { "App update  $newest is out; T3 downloads it at its next check (every 4 minutes), then installs it when it quits" }
+    else { 'App update  none; T3 runs the newest fork build' }
   }
+  "Armed       $(Get-ArmedSummary)"
   $task = Get-ScheduledTask -TaskName $SyncTaskName -ErrorAction SilentlyContinue
   if ($task) {
     $info = $task | Get-ScheduledTaskInfo
@@ -462,44 +496,508 @@ function Get-Installer([string]$Ver) {
   $exe
 }
 
-function Get-AppProcesses {
-  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($AppDir, 'OrdinalIgnoreCase') }
+function Get-ExeVersion([string]$Exe) {
+  [IO.Path]::GetFileNameWithoutExtension($Exe) -replace '^T3-Code-', '' -replace '-x64$', ''
 }
 
-function Test-AppRunning { [bool](Get-Process -Name 'T3 Code (Alpha)' -ErrorAction SilentlyContinue) }
+function Read-Config {
+  if (Test-Path $ConfigPath) { return (Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable) }
+  @{}
+}
 
-function Install-WhenClosed([string]$Exe) {
+# ---------- The installed app ----------
+
+function Get-InstalledBuild {
+  # The build the app runs: the version in its own package.json inside app.asar, read from the
+  # archive's header. The exe's ProductVersion drops the fork suffix; FileVersion is the fallback.
+  $asar = Join-Path $AppDir 'resources\app.asar'
+  if (Test-Path $asar) {
+    try {
+      $fs = [IO.File]::OpenRead($asar)
+      try {
+        $r = [IO.BinaryReader]::new($fs)
+        [void]$r.ReadUInt32()
+        $headerSize = $r.ReadUInt32()
+        [void]$r.ReadUInt32()
+        $header = [Text.Encoding]::UTF8.GetString($r.ReadBytes($r.ReadInt32())) | ConvertFrom-Json -AsHashtable
+        $entry = $header.files['package.json']
+        $fs.Position = 8 + $headerSize + [long]$entry.offset
+        $pkg = [Text.Encoding]::UTF8.GetString($r.ReadBytes([int]$entry.size)) | ConvertFrom-Json
+        if ($pkg.version) { return $pkg.version }
+      } finally { $fs.Dispose() }
+    } catch { }
+  }
+  if (Test-Path $AppExe) { return (Get-Item $AppExe).VersionInfo.FileVersion }
+  $null
+}
+
+function Get-BuildKey([string]$Ver) {
+  # Sortable form of 0.0.45-fork.20260930.2; an official 0.0.45 sorts before its fork builds.
+  if ($Ver -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-fork\.(\d{8})\.(\d+))?') { return '' }
+  '{0:D6}.{1:D6}.{2:D6}.{3}.{4:D6}' -f [int]$Matches[1], [int]$Matches[2], [int]$Matches[3], ($Matches[4] ?? '00000000'), [int]($Matches[5] ?? '0')
+}
+
+function Compare-Build([string]$A, [string]$B) { [string]::CompareOrdinal((Get-BuildKey $A), (Get-BuildKey $B)) }
+
+function Get-UpdaterDir {
+  if ($env:T3CODE_FORK_UPDATER_DIR) { return $env:T3CODE_FORK_UPDATER_DIR }
+  $yml = Get-Content (Join-Path $AppDir 'resources\app-update.yml') -Raw -ErrorAction SilentlyContinue
+  Join-Path $env:LOCALAPPDATA ($yml -match 'updaterCacheDirName:\s*(\S+)' ? $Matches[1] : 't3code-updater')
+}
+
+function Get-DownloadedUpdate {
+  # The build T3 downloaded itself. Fork builds from 0.0.45-fork.20260929.4 on install it when
+  # T3 quits (silently, then T3 reopens); older builds wait for the Update button.
+  $exe = Get-ChildItem (Join-Path (Get-UpdaterDir) 'pending') -Filter '*.exe' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($exe -and $exe.Name -match '(\d+\.\d+\.\d+-fork\.\d{8}\.\d+)') { return $Matches[1] }
+  $null
+}
+
+function Get-AppInstallers {
+  # Installers T3's own updater started; they run from its cache folder.
+  $dir = "$(Get-UpdaterDir)\"
+  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($dir, 'OrdinalIgnoreCase') })
+}
+
+function Get-AppProcesses {
+  @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith("$AppDir\", 'OrdinalIgnoreCase') })
+}
+
+function Get-AppMain {
+  # T3's main process: no --type= switch, and not started by another T3 process (its backend is).
+  $all = @(Get-CimInstance Win32_Process -Filter "Name='$AppExeName'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$AppDir\", 'OrdinalIgnoreCase') })
+  $ids = @($all | ForEach-Object ProcessId)
+  @($all | Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ParentProcessId -notin $ids })
+}
+
+function Test-AppRunning { [bool](Get-AppMain) }
+
+function Wait-AppQuit([datetime]$Until) {
+  # Blocks on the handles of T3's main processes as they are now, so a quit followed by a quick
+  # reopen still counts as a quit (polling for "no T3 process" misses a reopen 2 seconds later).
+  # Returns when they quit, or $null if one still runs at $Until.
+  $mains = @(Get-AppMain | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } | Where-Object { $_ })
+  foreach ($p in $mains) {
+    while (-not $p.WaitForExit(1000)) { if ((Get-Date) -gt $Until) { return $null } }
+  }
+  Get-Date
+}
+
+function Request-AppClose([Diagnostics.Process]$P) {
+  # What the window's close button does: T3 shuts down cleanly. False while T3 is still starting
+  # and has no window yet. (fork/test-restart.ps1 replaces this for its windowless stand-in.)
+  if ($P.MainWindowHandle -eq [IntPtr]::Zero) { return $false }
+  [void]$P.CloseMainWindow()
+  $true
+}
+
+function Invoke-Installer([string]$Exe) {
+  # NSIS /S: silent, no window. Returns its exit code.
+  (Start-Process -FilePath $Exe -ArgumentList '/S' -PassThru -Wait).ExitCode
+}
+
+function Close-App([int]$Seconds = 90) {
+  # Closes T3 the way its window's close button does, so it shuts down cleanly; ends whatever is
+  # left after $Seconds. A T3 that is still starting has no window yet, so keep looking for one.
+  $until = (Get-Date).AddSeconds($Seconds)
+  $asked = @{}
+  while ((Get-Date) -lt $until) {
+    $mains = @(Get-AppMain)
+    if (-not $mains) { return }
+    foreach ($m in $mains) {
+      if ($asked["$($m.ProcessId)"]) { continue }
+      $p = Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue
+      if ($p -and (Request-AppClose $p)) { $asked["$($m.ProcessId)"] = $true }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  Log "T3 did not close within $Seconds s; ending it"
+  Get-AppProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Clear-ForInstall([datetime]$ClosedAt) {
+  # A T3 reopened right after it quit holds the old files and would make the install fail or be
+  # skipped: close it again. Then give its helpers (resource monitor, backend) a moment to exit.
+  if (Test-AppRunning) {
+    Log "T3 was reopened $([int]((Get-Date) - $ClosedAt).TotalSeconds) s after it quit; closing it again so the install runs"
+    Close-App 45
+  }
+  $until = (Get-Date).AddSeconds(15)
+  while ((Get-AppProcesses) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 500 }
+  $left = @(Get-AppProcesses)
+  if ($left) {
+    Log "ending $(($left | ForEach-Object ProcessName | Sort-Object -Unique) -join ', ') left from the old app"
+    $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+  }
+}
+
+function Start-App { Start-Process -FilePath $AppExe }
+
+function Complete-Install([string]$Exe, [string]$Ver, [datetime]$ClosedAt, [switch]$SkipIfCurrent, [switch]$Rollback) {
+  # Runs right after T3 quit. Returns the build installed afterwards, with T3 running on it.
+  # A fork build that downloaded an update installs it itself as it quits (and reopens T3). Let
+  # that installer finish and install $Ver on top only if it left something older, or if $Ver is
+  # an older build asked for on purpose.
+  $own = $null
+  $until = $ClosedAt.AddSeconds(5)
+  while (-not ($own = Get-AppInstallers | Select-Object -First 1) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 250 }
+  if ($own) {
+    Log "T3 is installing the update it downloaded ($(Split-Path $own.ExecutablePath -Leaf)); waiting for it"
+    $p = Get-Process -Id $own.ProcessId -ErrorAction SilentlyContinue
+    if ($p -and -not $p.WaitForExit(600000)) { throw "T3's own installer was still running after 10 minutes." }
+    $got = Get-InstalledBuild
+    if (-not $Rollback -and (Compare-Build $got $Ver) -ge 0) {
+      Log "T3 installed $got itself"
+      # Its installer reopens T3; start it only if that did not happen.
+      $back = (Get-Date).AddSeconds(30)
+      while (-not (Test-AppRunning) -and (Get-Date) -lt $back) { Start-Sleep -Milliseconds 500 }
+      if (-not (Test-AppRunning)) { Log 'starting T3 Code'; Start-App }
+      return $got
+    }
+    Log "T3 installed $got itself; installing $Ver over it$($Rollback ? ' (the older build asked for)' : '')"
+    $ClosedAt = Get-Date
+    Start-Sleep -Seconds 3
+  }
+
+  if ($SkipIfCurrent -and (Get-InstalledBuild) -eq $Ver) {
+    Log "T3 already has $Ver; nothing to install"
+  } else {
+    Clear-ForInstall $ClosedAt
+    Log "installing $Exe"
+    $code = Invoke-Installer $Exe
+    if ($code) { throw "The installer exited with $code." }
+    # Opened while the installer ran, T3 may have loaded half-replaced files: restart it.
+    if (Test-AppRunning) {
+      Log 'T3 was opened during the install; restarting it on the new files'
+      Close-App 45
+    }
+  }
+  $got = Get-InstalledBuild
+  if (-not (Test-AppRunning)) { Log "installed $got; starting T3 Code"; Start-App }
+  $got
+}
+
+function Install-WhenClosed([string]$Exe, [string]$Ver) {
   Log "waiting for T3 Code to quit before installing $Exe"
-  $deadline = (Get-Date).AddHours(24)
-  while ((Test-AppRunning) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
-  if (Test-AppRunning) { throw 'T3 Code did not quit within 24 hours; nothing installed.' }
-  Start-Sleep -Seconds 3
-  # Helpers from the old install (the resource monitor) can outlive the window by a few seconds.
-  if (Get-AppProcesses) { Start-Sleep -Seconds 15; Get-AppProcesses | Stop-Process -Force -ErrorAction SilentlyContinue }
-  Log "installing $Exe"
-  $p = Start-Process -FilePath $Exe -ArgumentList '/S' -PassThru -Wait
-  if ($p.ExitCode) { throw "The installer exited with $($p.ExitCode)." }
-  $installed = (Get-Item $AppExe).VersionInfo.ProductVersion
-  Log "installed $installed; starting T3 Code"
-  Start-Process -FilePath $AppExe
+  $rollback = (Compare-Build $Ver (Get-InstalledBuild)) -lt 0
+  $closedAt = Wait-AppQuit (Get-Date).AddHours(24)
+  if (-not $closedAt) { throw 'T3 Code did not quit within 24 hours; nothing installed.' }
+  Log 'T3 Code quit'
+  $installed = Complete-Install $Exe $Ver $closedAt -Rollback:$rollback
   Unregister-ScheduledTask -TaskName $InstallTaskName -Confirm:$false -ErrorAction SilentlyContinue
   Show-Toast 'T3 Code fork installed' "Running $installed. Updates now come from $ReleaseRepo."
 }
 
+function Get-OneShotScript([string]$Verb) { Join-Path $StateDir "$Verb.vbs" }
+
+function Register-OneShot([string]$Verb, [string]$Name, [string]$Arguments, [timespan]$Limit, [string]$Description) {
+  # A one-shot task, so the wait survives T3 closing (a process started from a T3 terminal dies
+  # with it). wscript starts pwsh with no window at all; pwsh -WindowStyle Hidden would still
+  # flash a console and take the keyboard focus.
+  Copy-Item $PSCommandPath (Join-Path $StateDir 'fork.ps1') -Force -ErrorAction SilentlyContinue
+  $vbs = Get-OneShotScript $Verb
+  Set-Content $vbs -Encoding ASCII -Value @(
+    'Set sh = CreateObject("WScript.Shell")',
+    "sh.Run """"""$(Get-Pwsh)"""" -NoProfile -ExecutionPolicy Bypass -File """"$(Join-Path $StateDir 'fork.ps1')"""" $Arguments"", 0, True"
+  )
+  $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
+  $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5)
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit $Limit -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger -Settings $settings -Description $Description -Force | Out-Null
+}
+
+function Stop-OneShot([string]$Name, [string]$Verb) {
+  # Stops and removes a waiting install or restart task. True if there was one.
+  $task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+  if (-not $task) { return $false }
+  Stop-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+  Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "fork\.ps1`"?\s+$Verb -Now" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction SilentlyContinue
+  $true
+}
+
+function Get-ArmedRestart {
+  if ((Get-ScheduledTask -TaskName $RestartTaskName -ErrorAction SilentlyContinue) -and (Test-Path $RestartPath)) {
+    return (Get-Content $RestartPath -Raw | ConvertFrom-Json -AsHashtable)
+  }
+  $null
+}
+
+function Get-ArmedSummary {
+  # The restart or install waiting to run, in one line.
+  $parts = @()
+  $r = Get-ArmedRestart
+  if ($r) {
+    $when = $r.whenIdle ? "when no agent has worked for $($r.idleMinutes) minutes" : 'when the requesting turn ends'
+    $parts += "restart into $($r.version) $when, until $(([datetime]$r.giveUpAt).ToString('yyyy-MM-dd HH:mm'))$($r.thread ? ", reports to $($r.thread)" : '')"
+  }
+  if (Get-ScheduledTask -TaskName $InstallTaskName -ErrorAction SilentlyContinue) {
+    $how = "$(Get-Content (Get-OneShotScript 'install') -Raw -ErrorAction SilentlyContinue)"
+    $parts += $how -match 'install -Now -Version ([^\s"]+)' ? "install of $($Matches[1]) when T3 quits" : 'an install when T3 quits'
+  }
+  $parts ? ($parts -join '; ') : 'nothing'
+}
+
 function Invoke-Install {
   $exe = Get-Installer $Version
-  if ($Now) { Install-WhenClosed $exe; return }
+  $ver = Get-ExeVersion $exe
+  if ($Now) { Install-WhenClosed $exe $ver; return }
+  if (Get-ArmedRestart) { throw 'A restart is armed and installs a build itself. Cancel it first: fork.ps1 restart -Cancel' }
 
   Backup-LiveDb
-  if (-not (Test-AppRunning)) { Install-WhenClosed $exe; return }
-  # Hand the wait to a scheduled task: a process started from a T3 terminal dies with T3.
-  $ver = [IO.Path]::GetFileNameWithoutExtension($exe) -replace '^T3-Code-', '' -replace '-x64$', ''
-  Copy-Item $PSCommandPath (Join-Path $StateDir 'fork.ps1') -Force -ErrorAction SilentlyContinue
-  $action = New-ScheduledTaskAction -Execute (Get-Pwsh) -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $StateDir 'fork.ps1')`" install -Now -Version $ver"
-  $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10)
-  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 25) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-  Register-ScheduledTask -TaskName $InstallTaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+  if (-not (Test-AppRunning)) { Install-WhenClosed $exe $ver; return }
+  Register-OneShot 'install' $InstallTaskName "install -Now -Version $ver" (New-TimeSpan -Hours 25) "Installs T3 Code fork $ver when T3 Code quits. fork/README.md"
   Log "Ready: quit T3 Code whenever you like. $ver installs and T3 Code reopens by itself (task '$InstallTaskName', log in $LogDir)."
+}
+
+# ---------- Restart (quit T3, install, reopen, report) ----------
+
+function Get-T3Cli {
+  # agent-kit's t3 CLI talks to T3's own HTTP API with a saved token: thread states, send.
+  foreach ($p in @($env:T3_CLI, (Read-Config).t3Cli, (Join-Path $env:USERPROFILE 'Workspaces\Centio\agent-kit\bin\t3.mjs'))) {
+    if ($p -and (Test-Path $p)) { return $p }
+  }
+  $null
+}
+
+function Invoke-T3([string[]]$T3Args) {
+  # The CLI's output, or $null when it is missing or T3 does not answer.
+  $cli = Get-T3Cli
+  if (-not $cli) { return $null }
+  $node = (Get-Command node -ErrorAction SilentlyContinue).Source ?? 'node'
+  $out = & $node $cli @T3Args 2>$null
+  if ($LASTEXITCODE) { return $null }
+  (@($out) | ForEach-Object { "$_" }) -join "`n"
+}
+
+function Get-Threads {
+  $json = Invoke-T3 @('ls', '--all', '--json')
+  if ($null -eq $json) { return $null }
+  , @($json | ConvertFrom-Json)
+}
+
+function Test-AppApi {
+  if (Get-T3Cli) { return $null -ne (Invoke-T3 @('ls', '--json')) }
+  $c = [Net.Sockets.TcpClient]::new()
+  try { $c.ConnectAsync('127.0.0.1', $ApiPort).Wait(2000) } catch { $false } finally { $c.Dispose() }
+}
+
+function Get-AgentWork([string[]]$IgnorePatterns) {
+  # Tools running under T3's agent sessions, background jobs of idle threads included. MCP servers,
+  # npx launchers, bare shells and git's fsmonitor are not work; neither is anything matching
+  # $IgnorePatterns (its children still count).
+  $shells = 'bash.exe', 'sh.exe', 'cmd.exe', 'conhost.exe', 'OpenConsole.exe', 'chcp.com'
+  $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
+  $kids = $all | Group-Object { "$($_.ParentProcessId)" } -AsHashTable
+  $appIds = @($all | Where-Object Name -eq $AppExeName | ForEach-Object { "$($_.ProcessId)" })
+  $work = [Collections.Generic.List[string]]::new()
+  $visit = {
+    param($k)
+    $ignored = @($IgnorePatterns | Where-Object { $_ -and $k.CommandLine -match $_ })
+    if ($k.Name -notin $shells -and $k.CommandLine -notmatch 'fsmonitor--daemon' -and -not $ignored) {
+      $line = "$($k.Name) $($k.CommandLine)" -replace '\s+', ' '
+      $work.Add($line.Substring(0, [Math]::Min(140, $line.Length)))
+    }
+    foreach ($c in @($kids["$($k.ProcessId)"])) { if ($c) { & $visit $c } }
+  }
+  foreach ($s in @($all | Where-Object { $_.Name -in 'claude.exe', 'codex.exe' -and "$($_.ParentProcessId)" -in $appIds })) {
+    foreach ($k in @($kids["$($s.ProcessId)"])) {
+      if ($k -and $k.CommandLine -notmatch 'mcp|npx') { & $visit $k }
+    }
+  }
+  , $work.ToArray()
+}
+
+function Get-BusyReason([string[]]$IgnorePatterns) {
+  # '' when no thread is mid-turn and no agent tool runs; otherwise what is busy.
+  $threads = Get-Threads
+  if ($null -eq $threads) { return 'the T3 API does not answer' }
+  $running = @($threads | Where-Object state -eq 'running' | ForEach-Object title)
+  $work = Get-AgentWork $IgnorePatterns
+  $work = @($work | Select-Object -Unique)
+  if (-not ($running.Count + $work.Count)) { return '' }
+  (@($running | ForEach-Object { "running: $_" }) + @($work | Select-Object -First 4 | ForEach-Object { "work: $_" })) -join ' | '
+}
+
+function Wait-ForTurn([string]$ThreadId, [datetime]$Until) {
+  # Lets the thread that asked for the restart finish its turn, so its reply is saved first.
+  if (-not $ThreadId) { $q = Wait-AppQuit (Get-Date).AddSeconds(10); return $q ? @{ result = 'quit'; at = $q } : @{ result = 'ready' } }
+  while ((Get-Date) -lt $Until) {
+    $threads = Get-Threads
+    $t = $threads | Where-Object id -eq $ThreadId | Select-Object -First 1
+    if ($t -and $t.state -ne 'running') {
+      $q = Wait-AppQuit (Get-Date).AddSeconds(10)
+      return $q ? @{ result = 'quit'; at = $q } : @{ result = 'ready' }
+    }
+    $q = Wait-AppQuit (Get-Date).AddSeconds(5)
+    if ($q) { return @{ result = 'quit'; at = $q } }
+  }
+  @{ result = 'gave-up'; reason = 'the thread that asked was still mid-turn' }
+}
+
+function Wait-ForIdle([string[]]$IgnorePatterns, [datetime]$Until, [string]$Ver, [int]$Minutes) {
+  # Waits for $Minutes with no agent work, warns with a toast, looks once more a minute later.
+  # Returns early if T3 quits on its own meanwhile.
+  $need = [Math]::Max(1, [int]($Minutes * 60 / $IdlePollSeconds))
+  $quiet = 0
+  $last = $null
+  while ((Get-Date) -lt $Until) {
+    $reason = Get-BusyReason $IgnorePatterns
+    if ($reason) {
+      if ($reason -ne $last) { Log "busy: $reason" }
+      $last = $reason
+      $quiet = 0
+    } else {
+      if ($quiet -eq 0) { Log 'quiet; counting' }
+      $quiet++
+      if ($quiet -ge $need) {
+        Show-Toast 'T3 Code restarts in 1 minute' "No agent is working. It installs $Ver and reopens."
+        $q = Wait-AppQuit (Get-Date).AddSeconds(60)
+        if ($q) { return @{ result = 'quit'; at = $q } }
+        $reason = Get-BusyReason $IgnorePatterns
+        if (-not $reason) { return @{ result = 'ready' } }
+        Log "busy again in the last minute: $reason"
+        $last = $reason
+        $quiet = 0
+      }
+    }
+    $q = Wait-AppQuit (Get-Date).AddSeconds($IdlePollSeconds)
+    if ($q) { return @{ result = 'quit'; at = $q } }
+  }
+  @{ result = 'gave-up'; reason = "agents kept working (last: $last)" }
+}
+
+function Wait-AppBack([int]$Minutes = 15) {
+  # T3 is back when its API answers, which is also when its window appears.
+  $until = (Get-Date).AddMinutes($Minutes)
+  $since = Get-Date
+  while ((Get-Date) -lt $until) {
+    if ((Test-AppRunning) -and (Test-AppApi)) { return $true }
+    if (-not (Test-AppRunning) -and ((Get-Date) - $since).TotalSeconds -gt 60) { Log 'T3 is not running; starting it'; Start-App; $since = Get-Date }
+    Start-Sleep -Seconds 3
+  }
+  $false
+}
+
+function Send-Report([string]$ThreadId, [string]$Text) {
+  if (-not $ThreadId) { return }
+  for ($i = 0; $i -lt 20; $i++) {
+    if ($null -ne (Invoke-T3 @('send', $ThreadId, $Text))) { Log "reported to thread $ThreadId"; return }
+    Start-Sleep -Seconds 30
+  }
+  Log "could not report to thread $ThreadId"
+}
+
+function Get-RestartIgnore {
+  @(@($Ignore) + @((Read-Config).idleIgnore) | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Show-RestartProbe([string]$Exe, [string]$Ver, [string]$ThreadId, [datetime]$Until) {
+  $from = Get-InstalledBuild
+  $main = Get-AppMain | Select-Object -First 1
+  "Installed   $from$($main ? ", running since $($main.CreationDate.ToString('yyyy-MM-dd HH:mm'))" : ', not running')"
+  "Target      $Ver ($Exe)"
+  $dl = Get-DownloadedUpdate
+  "App update  $($dl ? "$dl downloaded by T3; it installs that itself when it quits" : 'nothing downloaded by T3')"
+  "Armed       $(Get-ArmedSummary)"
+  if ($ThreadId) {
+    $threads = Get-Threads
+    $t = $threads | Where-Object id -eq $ThreadId | Select-Object -First 1
+    $about = $t ? ' "{0}" ({1})' -f $t.title, $t.state : ' (not found)'
+    "Thread      $ThreadId$about"
+  } else { 'Thread      none (nothing to wait for or report to)' }
+  $ign = Get-RestartIgnore
+  $busy = Get-BusyReason $ign
+  "Busy now    $($busy ? $busy : 'no: no thread mid-turn and no agent tool running')$($ign ? " (ignoring $($ign -join ', '))" : '')"
+  $what = if ($from -eq $Ver -and -not $Force) { "nothing: T3 already runs $Ver (-Force restarts it anyway)" }
+    elseif ($WhenIdle) { "quit T3 once nothing has been busy for $((Read-Config).idleMinutes ?? 10) minutes (giving up at $($Until.ToString('yyyy-MM-dd HH:mm'))), install $Ver, reopen T3, check it, report" }
+    else { "quit T3 once the thread's turn ends (giving up at $($Until.ToString('HH:mm'))), install $Ver, reopen T3, check it, report" }
+  "Would do    $what"
+}
+
+function Invoke-RestartRun {
+  # The one-shot task: wait, quit T3, install, reopen, check, report.
+  $req = Get-Content $RestartPath -Raw | ConvertFrom-Json -AsHashtable
+  $ver = $req.version
+  $until = [datetime]$req.giveUpAt
+  $threadId = $req.thread
+  $from = Get-InstalledBuild
+  $why = $req.whenIdle ? "once no agent has worked for $($req.idleMinutes) minutes" : 'once the requesting turn ends'
+  Log "restart T3 from $from into $ver $why; gives up at $($until.ToString('yyyy-MM-dd HH:mm')); reports to $($threadId ? $threadId : 'nobody')"
+  try {
+    $wait = $req.whenIdle ? (Wait-ForIdle @($req.ignore) $until $ver $req.idleMinutes) : (Wait-ForTurn $threadId $until)
+    if ($wait.result -eq 'gave-up') {
+      Log "gave up: $($wait.reason)"
+      Show-Toast 'T3 Code was not restarted' $wait.reason
+      Send-Report $threadId "T3 Code was not restarted into $ver by $($until.ToString('yyyy-MM-dd HH:mm')): $($wait.reason). Arm it again with: pwsh $(Join-Path (Resolve-Repo) 'fork\fork.ps1') restart$($req.whenIdle ? ' -WhenIdle' : '')"
+      return
+    }
+    if ($wait.result -eq 'quit') {
+      $closedAt = $wait.at
+      Log 'T3 Code quit on its own'
+    } else {
+      Log 'closing T3 Code'
+      Close-App 90
+      $closedAt = Get-Date
+    }
+    [void](Complete-Install $req.installer $ver $closedAt -SkipIfCurrent)
+    $back = Wait-AppBack 15
+    $installed = Get-InstalledBuild
+    $ok = (Compare-Build $installed $ver) -ge 0
+    Log "T3 is $($back ? 'back' : 'NOT back after 15 minutes') on $installed$($ok ? '' : ", not $ver")"
+    Show-Toast ($ok ? "T3 Code restarted on $installed" : 'T3 Code restart did not finish') ($ok ? "Was $from." : "Installed build reads $installed. Log: $script:RunLog")
+    # Give the threads a moment to reconnect before one of them gets a message.
+    if ($threadId) { Start-Sleep -Seconds 30 }
+    $at = (Get-Date).ToString('HH:mm')
+    Send-Report $threadId ($ok -and $back ?
+      "T3 Code restarted at $at and runs $installed (was $from). Background jobs that threads had running ended with T3; re-arm any that are still needed. Log: $script:RunLog" :
+      "T3 Code restart at $at did not finish: T3 $($back ? 'is back' : 'did not come back') and its installed build reads $installed, not $ver. Log: $script:RunLog")
+  } catch {
+    Log "FAILED: $_"
+    Show-Toast 'T3 Code restart failed' "$_"
+    Send-Report $threadId "T3 Code restart failed: $_. Log: $script:RunLog"
+  } finally {
+    # Whatever happened, never leave T3 closed.
+    if (-not (Test-AppRunning)) { Log 'starting T3 Code'; Start-App }
+    Remove-Item $RestartPath -Force -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $RestartTaskName -Confirm:$false -ErrorAction SilentlyContinue
+  }
+}
+
+function Invoke-Restart {
+  if ($Cancel) {
+    $had = Stop-OneShot $RestartTaskName 'restart'
+    Remove-Item $RestartPath -Force -ErrorAction SilentlyContinue
+    return ($had ? 'Cancelled the armed restart.' : 'No restart was armed.')
+  }
+  if ($Now) { Invoke-RestartRun; return }
+
+  $exe = Get-Installer $Version
+  $ver = Get-ExeVersion $exe
+  $threadId = $Thread ? $Thread : "$(Invoke-T3 @('me', '--id'))".Trim()
+  $until = $GiveUpAt ?? (Get-Date).AddHours($WhenIdle ? 12 : 0.5)
+  if ($Probe) { Show-RestartProbe $exe $ver $threadId $until; return }
+  $from = Get-InstalledBuild
+  if ($from -eq $ver -and -not $Force) { return "T3 already runs $ver, the newest fork build. -Force restarts it anyway." }
+  if ($WhenIdle -and -not (Get-T3Cli)) { throw "-WhenIdle needs agent-kit's t3 CLI to see thread states (config.json t3Cli, or T3_CLI)." }
+
+  Backup-LiveDb
+  if (Stop-OneShot $InstallTaskName 'install') { Log "stopped the waiting install task: the restart installs $ver itself" }
+  if (Stop-OneShot $RestartTaskName 'restart') { Log 'replaced the restart that was armed' }
+  $idleMinutes = [int]((Read-Config).idleMinutes ?? 10)
+  [ordered]@{
+    version = $ver; installer = $exe; from = $from; armedAt = (Get-Date).ToString('o'); giveUpAt = $until.ToString('o')
+    whenIdle = [bool]$WhenIdle; idleMinutes = $idleMinutes; ignore = @(Get-RestartIgnore); thread = $threadId
+  } | ConvertTo-Json | Set-Content $RestartPath -Encoding UTF8
+  Register-OneShot 'restart' $RestartTaskName 'restart -Now' (($until - (Get-Date)) + (New-TimeSpan -Hours 1)) "Restarts T3 Code into fork $ver. Cancel: fork.ps1 restart -Cancel. fork/README.md"
+  $when = $WhenIdle ? "once no agent has worked for $idleMinutes minutes" : ($threadId ? 'as soon as this thread''s turn ends' : 'in a few seconds')
+  Log "Armed: T3 Code restarts $when, installs $ver (now $from), reopens and $($threadId ? "reports to thread $threadId" : 'shows a notification'). Gives up at $($until.ToString('yyyy-MM-dd HH:mm')). Cancel: fork.ps1 restart -Cancel. Log in $LogDir."
 }
 
 function Invoke-Task {
@@ -535,12 +1033,16 @@ function Invoke-Task {
   }
 }
 
+# Dot-sourced (fork/test-restart.ps1): define the functions only.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 switch ($Command) {
   'sync' { Invoke-Sync }
   'status' { Show-Status }
   'patches' { Show-Patches }
   'merge' { Invoke-ManualMerge }
   'install' { Invoke-Install }
+  'restart' { Invoke-Restart }
   'task' { Invoke-Task }
   default { Get-Help $PSCommandPath -Examples | Out-String | Write-Host; 'See fork/README.md.' }
 }

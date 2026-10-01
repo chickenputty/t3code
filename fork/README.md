@@ -22,7 +22,8 @@ A conflict is resolved once and stays resolved.
 2. Commit to `main` and push. Keep each patch a focused commit with a clear subject; the release
    notes list them.
 3. Run `pwsh fork/fork.ps1 sync` to build and publish now, or leave it for the daily run.
-4. T3 Code checks for updates every 4 minutes and offers the new build. Restart it to apply.
+4. T3 Code downloads the new build by itself (see "Getting a new build into T3") and installs it
+   the next time T3 quits.
 
 Try a change without publishing: `vp run dev:desktop` runs the app from source against
 `~/.t3/dev`, never the live `~/.t3/userdata`. `pwsh fork/fork.ps1 sync -NoPublish` builds the
@@ -59,18 +60,24 @@ fork builds).
 ## Commands
 
 ```powershell
-pwsh fork/fork.ps1 status          # checkout, patches, last build, installed app, task
+pwsh fork/fork.ps1 status          # checkout, patches, last build, installed build, update, what is armed
 pwsh fork/fork.ps1 patches         # the fork patches on top of upstream, with a diffstat
 pwsh fork/fork.ps1 sync            # merge upstream, build, publish (what the task runs)
 pwsh fork/fork.ps1 sync -NoPublish # build the installer only
 pwsh fork/fork.ps1 sync -Force     # rebuild and republish even if nothing changed
 pwsh fork/fork.ps1 merge           # merge upstream into main in the checkout, to resolve by hand
-pwsh fork/fork.ps1 install         # install the newest fork build when T3 Code quits
+pwsh fork/fork.ps1 restart         # quit T3 once this thread's turn ends, install, reopen, report
+pwsh fork/fork.ps1 restart -WhenIdle            # the same, once no agent has worked for 10 minutes
+pwsh fork/fork.ps1 restart -WhenIdle -Probe     # what it would do and what is busy, without doing it
+pwsh fork/fork.ps1 restart -Cancel
+pwsh fork/fork.ps1 install         # install the newest fork build when T3 Code quits (switching over)
 pwsh fork/fork.ps1 install -Version 0.0.43-fork.20260929.1   # roll back to an older build
 pwsh fork/fork.ps1 task install    # (re)register the daily task; task run starts it now
+pwsh fork/test-restart.ps1         # tests the install and restart logic on a windowless stand-in app
 ```
 
-Logs, state and builds live in `%LOCALAPPDATA%\t3code-fork` (`logs\`, `state.json`, `release\`).
+Logs, state and builds live in `%LOCALAPPDATA%\t3code-fork` (`logs\`, `state.json`, `release\`,
+`restart.json` while a restart is armed, `config.json`).
 
 ## When the sync reports a conflict
 
@@ -86,16 +93,73 @@ pwsh fork/fork.ps1 sync
 
 If upstream now does what a patch did, drop the patch side in the resolution.
 
+## Getting a new build into T3
+
+Fork builds from `0.0.45-fork.20260929.4` on update themselves (patch `8f9acc360f`): T3 checks
+15 seconds after it starts and every 4 minutes, downloads a new build in the background, and
+when T3 quits it runs that installer silently and reopens on the new build. Its own **Update**
+button still installs at once. So normally nothing needs doing: quit T3 when convenient.
+
+For a restart at a chosen moment, use `restart`, not `install`:
+
+- `pwsh fork/fork.ps1 restart` quits T3 as soon as the calling thread's turn ends (so its reply
+  is saved), installs the newest fork build, reopens T3, checks the installed build and sends the
+  result to that thread. From a plain terminal it restarts in a few seconds and only shows a
+  notification.
+- `pwsh fork/fork.ps1 restart -WhenIdle` waits until no thread is mid-turn and no agent tool has
+  run for 10 minutes (background jobs of idle threads count as work; MCP servers, npx and bare
+  shells do not), shows a notification, looks once more a minute later, then does the same.
+  `-Ignore <regex>` (or `idleIgnore` in `config.json`) names background processes that should
+  not hold it up; `-GiveUpAt <time>` (default 12 hours; 30 minutes without `-WhenIdle`) ends the
+  wait with a message to the thread. `-Thread <id>` reports to another thread. `-Probe` shows
+  what is busy and what it would do. `-Force` restarts even when T3 already runs the newest build.
+
+Every restart snapshots the database first and runs as the one-shot task "T3 Code fork restart"
+(through `wscript`, so no console window flashes), because anything started from a T3 terminal
+dies with T3. It replaces a waiting `install` task, so only one of them is ever armed. Log:
+`%LOCALAPPDATA%\t3code-fork\logs\restart-*.log`. Thread states and messages go through
+agent-kit's `t3` CLI (`config.json` `t3Cli`, or `T3_CLI`, else
+`%USERPROFILE%\Workspaces\Centio\agent-kit\bin\t3.mjs`); `-WhenIdle` needs it.
+
+### Never two installers
+
+When T3 quits with a downloaded update, it starts its own installer, and a waiting `install` or
+`restart` would start a second one. Both now watch for T3's installer (it runs from the updater's
+cache, `%LOCALAPPDATA%\t3code-updater`) in the 5 seconds after T3 quits. If it runs, they wait
+for it to finish and install their build on top only if T3 installed something older (or the
+build asked for is an older one, a rollback). A rollback lasts until T3's next quit, when it
+installs the newest build again; set `T3CODE_DISABLE_AUTO_UPDATE=1` for T3 to stay on it.
+
+### Why the wait watches the main process
+
+The install waiter used to look for "no T3 process" every 5 seconds. On 2026-09-30 T3 quit and
+was reopened 2 seconds later, so the waiter never saw a moment without T3 and skipped the
+install. It now blocks on the handle of T3's main process (the `T3 Code (Alpha).exe` without
+`--type=` whose parent is not T3), so a quit is always seen. A T3 reopened before the install is
+closed again, and a T3 opened while the installer runs is restarted afterwards on the new files.
+
 ## Switching the installed app to the fork, and back
 
 The official app updates from pingdotgg. `pwsh fork/fork.ps1 install` switches it once:
 
 1. Snapshots the live T3 database (`~/.t3/userdata/state.sqlite`, read-only `VACUUM INTO`) to
    `%LOCALAPPDATA%\t3code-fork\backups` (only the newest snapshot is kept).
-2. Waits for T3 Code to quit (a one-shot task, so it survives T3 closing), installs silently and
-   reopens T3 Code. Every running agent session ends when T3 Code quits.
+2. Waits for T3 Code to quit (the one-shot task "T3 Code fork install", so it survives T3
+   closing), installs silently and reopens T3 Code. Every running agent session ends when T3
+   Code quits.
 
-After that the app updates from this fork's releases like any other update.
+After that the app updates from this fork's releases like any other update. `install` is also
+the way to roll back (`-Version`); for a newer build, `restart` does the same and more.
+
+## Testing the install and restart logic
+
+`pwsh fork/test-restart.ps1` runs the waiter and the restart runner against a stand-in app in a
+temp folder, never the real T3: the quit-and-reopen race, T3's own installer at quit, T3 opened
+during the install, T3 not running, and a restart with and without an install. Everything it
+starts is windowless (a stub started with `CreateNoWindow` that "closes" through a file), and a
+watcher fails the run and stops every test process if any of them owns a visible window or the
+keyboard focus. `-ProveOnly` runs just that check with one stand-in. It runs on Adam's desktop,
+so keep it that way: no console installers, no windowed stand-ins, no `pwsh -WindowStyle Hidden`.
 
 Fork builds track upstream `main`, which is ahead of the latest stable release, so the app
 migrates the database forward the way a nightly does. To go back to the official app, install the
