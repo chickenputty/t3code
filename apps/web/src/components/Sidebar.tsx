@@ -1658,17 +1658,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               hover so the tail stays scannable when you're hunting. */}
             <span
               className={cn(
-                "shrink-0 transition-opacity",
+                "flex shrink-0 items-center gap-1 transition-opacity",
                 variantAction !== "settle" &&
                   (!props.isActive || variantAction === "unsettle") &&
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.leadingEmoji ? (
-                <ThreadTopicEmoji emoji={props.leadingEmoji} />
-              ) : props.project ? (
-                <ProjectFavicon project={props.project} className="size-4" />
-              ) : null}
+              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
             </span>
             {statusOnly ? null : draftIndicator}
             {title}
@@ -1832,11 +1829,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.leadingEmoji ? (
-                <ThreadTopicEmoji emoji={props.leadingEmoji} />
-              ) : props.project ? (
+              {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
+              {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
               {props.projectDisplayName ? (
                 <span
                   className={cn(
@@ -2765,9 +2761,7 @@ export default function Sidebar() {
   );
   const displayedActiveThreads = activeArrangement.threads;
   const threadRowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
-  const showGroupedThreadEmoji = useClientSettings(
-    (settings) => settings.sidebarGroupedThreadEmoji,
-  );
+  const showThreadEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4842,13 +4836,9 @@ export default function Sidebar() {
                             thread={thread}
                             variant={rowVariant}
                             statusSlim={threadRowDensity === "slim"}
-                            // Fork: grouped rows trade the project icon for a topic emoji.
+                            // Fork: a topic emoji beside the project icon, on every row.
                             leadingEmoji={
-                              section === "active" &&
-                              activeArrangement.groups !== null &&
-                              showGroupedThreadEmoji
-                                ? threadEmojiForTitle(thread.title)
-                                : null
+                              showThreadEmoji ? threadEmojiForTitle(thread.title) : null
                             }
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={

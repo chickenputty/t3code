@@ -229,10 +229,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar density compact slim height card thread list rows"],
   },
   {
-    id: "sidebar-grouped-thread-emoji",
-    title: "Topic emoji in project groups",
+    id: "sidebar-thread-emoji",
+    title: "Topic emoji",
     to: "/settings/appearance",
-    searchTerms: ["sidebar emoji icon project group thread topic"],
+    searchTerms: ["sidebar emoji icon thread topic rows"],
   },
   {
     id: "environment-identification",

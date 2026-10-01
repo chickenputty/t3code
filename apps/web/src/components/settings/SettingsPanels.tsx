@@ -41,7 +41,6 @@ import {
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
-  type SidebarThreadRowDensity,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
 } from "@t3tools/contracts/settings";
@@ -58,6 +57,7 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
+import { SIDEBAR_THREAD_ROW_DENSITY_LABELS } from "../sidebar/sidebarArrangement";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -178,12 +178,6 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
   artwork: "Artwork",
   pill: "Version pill",
   none: "None",
-};
-
-const SIDEBAR_THREAD_ROW_DENSITY_LABELS: Record<SidebarThreadRowDensity, string> = {
-  comfortable: "Comfortable",
-  compact: "Compact",
-  slim: "Slim",
 };
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
@@ -569,8 +563,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadRowDensity !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity
         ? ["Thread rows"]
         : []),
-      ...(settings.sidebarGroupedThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji
-        ? ["Topic emoji in project groups"]
+      ...(settings.sidebarThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji
+        ? ["Topic emoji"]
         : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
@@ -699,7 +693,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.sidebarThreadRowDensity,
-      settings.sidebarGroupedThreadEmoji,
+      settings.sidebarThreadEmoji,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
@@ -796,7 +790,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
-      sidebarGroupedThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji,
+      sidebarThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1405,16 +1399,15 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("sidebar-grouped-thread-emoji")}
-          description="When the sidebar is grouped by project, rows show an emoji for their topic instead of the project icon their group already shows."
+          {...searchableSetting("sidebar-thread-emoji")}
+          description="Thread rows show an emoji for their topic, read from the title, next to the project icon."
           resetAction={
-            settings.sidebarGroupedThreadEmoji !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji ? (
+            settings.sidebarThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji ? (
               <SettingResetButton
                 label="topic emoji"
                 onClick={() =>
                   updateSettings({
-                    sidebarGroupedThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarGroupedThreadEmoji,
+                    sidebarThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji,
                   })
                 }
               />
@@ -1422,11 +1415,11 @@ export function AppearanceSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.sidebarGroupedThreadEmoji}
+              checked={settings.sidebarThreadEmoji}
               onCheckedChange={(checked) =>
-                updateSettings({ sidebarGroupedThreadEmoji: Boolean(checked) })
+                updateSettings({ sidebarThreadEmoji: Boolean(checked) })
               }
-              aria-label="Show topic emoji in project groups"
+              aria-label="Show topic emoji on thread rows"
             />
           }
         />

@@ -486,8 +486,8 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadRowDensity: SidebarThreadRowDensity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_ROW_DENSITY)),
   ),
-  // Fork: rows inside a project group show a topic emoji instead of the project icon.
-  sidebarGroupedThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: every thread row shows an emoji for its topic next to the project icon.
+  sidebarThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -1683,7 +1683,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
-  sidebarGroupedThreadEmoji: Schema.optionalKey(Schema.Boolean),
+  sidebarThreadEmoji: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),

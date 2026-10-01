@@ -1,33 +1,39 @@
 /**
- * Fork (chickenputty/t3code): the sidebar header's group-by-project toggle and
- * sort menu, and the header row each project group opens with.
+ * Fork (chickenputty/t3code): the sidebar header's view menu (group by project,
+ * topic emoji, sort, thread row height), and the header row each project group
+ * opens with.
  */
+import { SidebarThreadRowDensity } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
-  ArrowUpDownIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   EyeIcon,
-  ListTreeIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
-  MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
 import {
+  SIDEBAR_THREAD_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_SORT_DIRECTION_LABELS,
   SIDEBAR_THREAD_SORT_FIELDS,
   SIDEBAR_THREAD_SORT_LABELS,
@@ -36,73 +42,120 @@ import {
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { useSidebarViewStore } from "./sidebarViewStore";
 
+/** A submenu's current choice, right-aligned before its chevron. */
+function MenuSubValue(props: { children: ReactNode }) {
+  return (
+    <span className="flex-1 ps-4 text-end text-muted-foreground text-xs">{props.children}</span>
+  );
+}
+
 export function SidebarViewControls() {
   const groupByProject = useSidebarViewStore((state) => state.groupByProject);
   const toggleGroupByProject = useSidebarViewStore((state) => state.toggleGroupByProject);
   const sort = useSidebarViewStore((state) => state.sort);
   const setSortField = useSidebarViewStore((state) => state.setSortField);
   const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
+  const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
+  const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
+  const updateSettings = useUpdateClientSettings();
   const directionLabels =
     sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
-  const sortLabel =
+  const sortSummary =
     directionLabels === null
-      ? "Sort threads"
-      : `Sort threads: ${SIDEBAR_THREAD_SORT_LABELS[sort.field]}, ${directionLabels[sort.reversed ? 1 : 0].toLowerCase()}`;
+      ? SIDEBAR_THREAD_SORT_LABELS.manual
+      : `${SIDEBAR_THREAD_SORT_LABELS[sort.field]}, ${directionLabels[sort.reversed ? 1 : 0].toLowerCase()}`;
 
   return (
-    <>
-      <SidebarHeaderIconButton
-        label={groupByProject ? "Stop grouping by project" : "Group by project"}
-        aria-pressed={groupByProject}
-        // A pressed button reads like a selected row: the menu button's own active style.
-        data-active={groupByProject}
-        onClick={toggleGroupByProject}
+    <Menu>
+      <MenuTrigger
+        render={
+          <SidebarHeaderIconButton
+            label="View options"
+            // Lit while the list is regrouped or resorted, so a changed order never surprises.
+            data-active={groupByProject || sort.field !== "manual"}
+          />
+        }
       >
-        <ListTreeIcon />
-      </SidebarHeaderIconButton>
-      <Menu>
-        <MenuTrigger
-          render={
-            <SidebarHeaderIconButton label={sortLabel} data-active={sort.field !== "manual"} />
-          }
+        <SlidersHorizontalIcon />
+      </MenuTrigger>
+      <MenuPopup align="end" side="bottom" className="min-w-56">
+        <MenuCheckboxItem
+          variant="switch"
+          checked={groupByProject}
+          onCheckedChange={(checked) => {
+            if (checked !== groupByProject) toggleGroupByProject();
+          }}
         >
-          <ArrowUpDownIcon />
-        </MenuTrigger>
-        <MenuPopup align="end" side="bottom" className="min-w-44">
-          <MenuGroup>
-            <MenuGroupLabel>Sort active threads</MenuGroupLabel>
+          Group by project
+        </MenuCheckboxItem>
+        <MenuCheckboxItem
+          variant="switch"
+          checked={showEmoji}
+          onCheckedChange={(checked) => updateSettings({ sidebarThreadEmoji: checked })}
+        >
+          Topic emoji
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger>
+            Sort
+            <MenuSubValue>{sortSummary}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-44">
+            <MenuGroup>
+              <MenuRadioGroup
+                value={sort.field}
+                onValueChange={(value) => setSortField(value as SidebarThreadSortField)}
+              >
+                {SIDEBAR_THREAD_SORT_FIELDS.map((field) => (
+                  <MenuRadioItem key={field} value={field}>
+                    {SIDEBAR_THREAD_SORT_LABELS[field]}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+            {directionLabels === null ? (
+              <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
+                Drag threads to arrange them.
+              </p>
+            ) : (
+              <>
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuRadioGroup
+                    value={sort.reversed ? "reversed" : "natural"}
+                    onValueChange={(value) => setSortReversed(value === "reversed")}
+                  >
+                    <MenuRadioItem value="natural">{directionLabels[0]}</MenuRadioItem>
+                    <MenuRadioItem value="reversed">{directionLabels[1]}</MenuRadioItem>
+                  </MenuRadioGroup>
+                </MenuGroup>
+              </>
+            )}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger>
+            Thread rows
+            <MenuSubValue>{SIDEBAR_THREAD_ROW_DENSITY_LABELS[rowDensity]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-40">
             <MenuRadioGroup
-              value={sort.field}
-              onValueChange={(value) => setSortField(value as SidebarThreadSortField)}
+              value={rowDensity}
+              onValueChange={(value) =>
+                updateSettings({ sidebarThreadRowDensity: value as SidebarThreadRowDensity })
+              }
             >
-              {SIDEBAR_THREAD_SORT_FIELDS.map((field) => (
-                <MenuRadioItem key={field} value={field}>
-                  {SIDEBAR_THREAD_SORT_LABELS[field]}
+              {SidebarThreadRowDensity.literals.map((density) => (
+                <MenuRadioItem key={density} value={density}>
+                  {SIDEBAR_THREAD_ROW_DENSITY_LABELS[density]}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
-          </MenuGroup>
-          {directionLabels === null ? (
-            <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
-              Drag threads to arrange them.
-            </p>
-          ) : (
-            <>
-              <MenuSeparator />
-              <MenuGroup>
-                <MenuRadioGroup
-                  value={sort.reversed ? "reversed" : "natural"}
-                  onValueChange={(value) => setSortReversed(value === "reversed")}
-                >
-                  <MenuRadioItem value="natural">{directionLabels[0]}</MenuRadioItem>
-                  <MenuRadioItem value="reversed">{directionLabels[1]}</MenuRadioItem>
-                </MenuRadioGroup>
-              </MenuGroup>
-            </>
-          )}
-        </MenuPopup>
-      </Menu>
-    </>
+          </MenuSubPopup>
+        </MenuSub>
+      </MenuPopup>
+    </Menu>
   );
 }
 
