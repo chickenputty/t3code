@@ -1430,7 +1430,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("sidebar-project-icons")}
-          description="Thread rows show their project's icon. Project headers always do."
+          description="Thread rows show their project's icon. When grouped by project, the header shows it instead and rows leave it out."
           resetAction={
             settings.sidebarProjectIcons !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons ? (
               <SettingResetButton
@@ -1455,7 +1455,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("sidebar-project-icon-style")}
-          description="How the sidebar draws a project that has no icon of its own: its initials, or a folder in the project's colour. Favicons and custom icons stay."
+          description="How a thread row draws a project that has no icon of its own: its initials, or a folder in the project's colour. Favicons and custom icons stay. Project headers are always a folder in the project's colour."
           resetAction={
             settings.sidebarProjectIconStyle !==
             DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle ? (

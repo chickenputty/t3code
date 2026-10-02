@@ -121,7 +121,7 @@ describe("arrangeSidebarActiveThreads", () => {
       ? null
       : { key: entry.projectId, label: entry.projectId === "vault" ? "Pet Vault" : "flux" };
 
-  it("groups projects A to Z, keeps the sort inside each, and hides collapsed rows", () => {
+  it("orders groups by their first thread, keeps the sort inside each, and hides collapsed rows", () => {
     const threads = [
       thread("vault-old", { projectId: "vault", latestTurn: turn(1) }),
       thread("unknown", { projectId: "missing" }),
@@ -138,8 +138,8 @@ describe("arrangeSidebarActiveThreads", () => {
     expect(
       arranged.groups?.map((group) => [group.label, ids(group.threads), group.collapsed]),
     ).toEqual([
-      ["flux", ["flux-a"], true],
       ["Pet Vault", ["vault-new", "vault-old"], false],
+      ["flux", ["flux-a"], true],
       ["Other", ["unknown"], false],
     ]);
     expect(ids(arranged.threads)).toEqual(["vault-new", "vault-old", "unknown"]);

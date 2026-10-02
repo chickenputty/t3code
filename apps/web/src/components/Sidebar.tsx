@@ -42,6 +42,7 @@ import {
   type ProjectIconOverride,
   type ScopedThreadRef,
   type ThreadId,
+  type ProjectIconColor,
   type SidebarThreadIndent,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -218,6 +219,8 @@ import {
 import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ProjectMonogramStyleContext } from "./ProjectMonogram";
+import { deriveProjectIdentity } from "../projectIdentity";
+import { projectIconColorClassName } from "../projectIconColors";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -367,15 +370,22 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+/** Fork: a project's colour: its own icon's colour, else the colour its initials get. */
+function projectAccentColor(project: ProjectFaviconProject): ProjectIconColor {
+  const icon = project.projectIcon;
+  if (icon?.kind === "monogram" || icon?.kind === "lucide") return icon.color;
+  return deriveProjectIdentity(project.title).color;
+}
+
 /** Fork: the "Indent" setting as a start margin on a grouped thread row. */
 function threadIndentClassName(indent: SidebarThreadIndent | undefined): string | undefined {
   switch (indent) {
     case "small":
-      return "ms-2";
+      return "ms-3";
     case "medium":
-      return "ms-4";
+      return "ms-5";
     case "large":
-      return "ms-6";
+      return "ms-8";
     default:
       return undefined;
   }
@@ -1052,7 +1062,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   leadingEmoji?: string | null;
   // Fork: the "Project icons" setting turned off hides the row's project icon.
   hideProjectIcon?: boolean;
-  // Fork: how far the row sits in under its project header (grouped view only).
+  // Fork: the row sits under a project header (Mitchell, PR #1), so it drops the project
+  // icon and name the header already shows, and indents by the "Indent" setting.
+  grouped?: boolean;
   indent?: SidebarThreadIndent;
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
@@ -1729,7 +1741,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project && !props.hideProjectIcon ? (
+              {props.project && !props.hideProjectIcon && !props.grouped ? (
                 <ProjectFavicon project={props.project} className="size-4" />
               ) : null}
               {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
@@ -1898,11 +1910,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project && !props.hideProjectIcon ? (
+              {props.project && !props.hideProjectIcon && !props.grouped ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
-              {props.projectDisplayName ? (
+              {props.projectDisplayName && !props.grouped ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
@@ -5062,6 +5074,7 @@ export default function Sidebar() {
                               showThreadEmoji ? threadEmojiForTitle(thread.title) : null
                             }
                             hideProjectIcon={!showProjectIcons}
+                            grouped={indented}
                             indent={indented ? threadIndent : "none"}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
@@ -5246,10 +5259,10 @@ export default function Sidebar() {
                                   label={group.label}
                                   count={group.threads.length}
                                   collapsed={group.collapsed}
-                                  icon={
-                                    project === undefined ? null : (
-                                      <ProjectFavicon project={project} className="size-4" />
-                                    )
+                                  folderClassName={
+                                    project === undefined
+                                      ? undefined
+                                      : projectIconColorClassName(projectAccentColor(project))
                                   }
                                   onToggle={() => toggleProjectCollapsed(group.key)}
                                 />,

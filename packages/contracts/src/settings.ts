@@ -508,8 +508,9 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarProjectIconStyle: SidebarProjectIconStyle.pipe(
     Schema.withDecodingDefault(Effect.succeed("initials" as const)),
   ),
+  // Medium matches the tree indent Mitchell picked in PR #1.
   sidebarThreadIndent: SidebarThreadIndent.pipe(
-    Schema.withDecodingDefault(Effect.succeed("none" as const)),
+    Schema.withDecodingDefault(Effect.succeed("medium" as const)),
   ),
   // Fork: the sidebar search matches thread titles only, skipping message contents.
   sidebarSearchTitlesOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
