@@ -42,6 +42,7 @@ import {
   type ProjectIconOverride,
   type ScopedThreadRef,
   type ThreadId,
+  type SidebarThreadIndent,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -216,6 +217,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
+import { ProjectMonogramStyleContext } from "./ProjectMonogram";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -363,6 +365,20 @@ const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
+}
+
+/** Fork: the "Indent" setting as a start margin on a grouped thread row. */
+function threadIndentClassName(indent: SidebarThreadIndent | undefined): string | undefined {
+  switch (indent) {
+    case "small":
+      return "ms-2";
+    case "medium":
+      return "ms-4";
+    case "large":
+      return "ms-6";
+    default:
+      return undefined;
+  }
 }
 
 function SidebarThreadTooltip({
@@ -1032,8 +1048,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Fork: the "Slim" thread row setting. Slim rows shrink to 28px, and live
   // rows keep only the project icon, the title and a status icon.
   statusSlim?: boolean;
-  // Fork: a topic emoji shown instead of the project icon inside a project group.
+  // Fork: a topic emoji shown beside the project icon.
   leadingEmoji?: string | null;
+  // Fork: the "Project icons" setting turned off hides the row's project icon.
+  hideProjectIcon?: boolean;
+  // Fork: how far the row sits in under its project header (grouped view only).
+  indent?: SidebarThreadIndent;
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
@@ -1668,6 +1688,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className={cn(
           // Matches the row height so unrendered rows never shift the list when they paint.
           "list-none [content-visibility:auto]",
+          threadIndentClassName(props.indent),
           props.statusSlim
             ? "[contain-intrinsic-size:auto_28px]"
             : "[contain-intrinsic-size:auto_36px]",
@@ -1708,7 +1729,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.project && !props.hideProjectIcon ? (
+                <ProjectFavicon project={props.project} className="size-4" />
+              ) : null}
               {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
             </span>
             {statusOnly ? null : draftIndicator}
@@ -1848,6 +1871,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        threadIndentClassName(props.indent),
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1874,7 +1898,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.project && !props.hideProjectIcon ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
@@ -2838,6 +2862,9 @@ export default function Sidebar() {
   const displayedActiveThreads = activeArrangement.threads;
   const threadRowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const showThreadEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
+  const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
+  const projectIconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
+  const threadIndent = useClientSettings((settings) => settings.sidebarThreadIndent);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4732,7 +4759,7 @@ export default function Sidebar() {
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
-    <>
+    <ProjectMonogramStyleContext.Provider value={projectIconStyle}>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="min-h-full"
@@ -5008,6 +5035,7 @@ export default function Sidebar() {
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         sortable?: SortableThreadRowBag,
+                        indented = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -5033,6 +5061,8 @@ export default function Sidebar() {
                             leadingEmoji={
                               showThreadEmoji ? threadEmojiForTitle(thread.title) : null
                             }
+                            hideProjectIcon={!showProjectIcons}
+                            indent={indented ? threadIndent : "none"}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"
@@ -5123,6 +5153,7 @@ export default function Sidebar() {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        indented = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -5140,7 +5171,7 @@ export default function Sidebar() {
                               threadListArranged
                             }
                           >
-                            {(bag) => renderThreadRowInner(thread, section, bag)}
+                            {(bag) => renderThreadRowInner(thread, section, bag, indented)}
                           </SortableThreadRow>
                         );
                       };
@@ -5225,7 +5256,7 @@ export default function Sidebar() {
                               );
                               if (group.collapsed) continue;
                               for (const thread of group.threads) {
-                                items.push(renderThreadRow(thread, "active"));
+                                items.push(renderThreadRow(thread, "active", true));
                               }
                             }
                             break;
@@ -5357,6 +5388,6 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
-    </>
+    </ProjectMonogramStyleContext.Provider>
   );
 }

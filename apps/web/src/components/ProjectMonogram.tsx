@@ -1,8 +1,14 @@
-import type { ProjectIconColor } from "@t3tools/contracts";
+import type { ProjectIconColor, SidebarProjectIconStyle } from "@t3tools/contracts";
+import { FolderIcon } from "lucide-react";
+import { createContext, useContext } from "react";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+// Fork: the sidebar's "Icon style" setting. Inside its provider a project's
+// initials tile is drawn as a folder in the same colour instead.
+export const ProjectMonogramStyleContext = createContext<SidebarProjectIconStyle>("initials");
 
 export function ProjectMonogram({
   text,
@@ -13,6 +19,21 @@ export function ProjectMonogram({
   readonly color: ProjectIconColor;
   readonly className?: string | undefined;
 }) {
+  const style = useContext(ProjectMonogramStyleContext);
+  if (style === "folder") {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex size-4 shrink-0 items-center justify-center",
+          projectIconColorClassName(color),
+          className,
+        )}
+      >
+        <FolderIcon className="size-full" fill="currentColor" fillOpacity={0.25} />
+      </span>
+    );
+  }
   // Wrapped like the emoji and Lucide branches so the monogram sits where an
   // <img> favicon would. Menu items, buttons and the like pull every bare svg
   // in with [&_svg]:-mx-0.5 to trim the padding stroke icons carry, and this

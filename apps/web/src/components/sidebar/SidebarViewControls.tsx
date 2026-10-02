@@ -1,9 +1,13 @@
 /**
- * Fork (chickenputty/t3code): the sidebar header's view menu (group by project,
- * topic emoji, sort, thread row height), and the header row each project group
- * opens with.
+ * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
+ * and its indent, project icons and their style, topic emoji, sort, thread row
+ * height), and the header row each project group opens with.
  */
-import { SidebarThreadRowDensity } from "@t3tools/contracts";
+import {
+  SidebarProjectIconStyle,
+  SidebarThreadIndent,
+  SidebarThreadRowDensity,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   ChevronDownIcon,
@@ -35,6 +39,8 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import {
+  SIDEBAR_PROJECT_ICON_STYLE_LABELS,
+  SIDEBAR_THREAD_INDENT_LABELS,
   SIDEBAR_THREAD_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_SORT_DIRECTION_LABELS,
   SIDEBAR_THREAD_SORT_FIELDS,
@@ -59,6 +65,9 @@ export function SidebarViewControls() {
   const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
   const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
+  const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
+  const iconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
+  const indent = useClientSettings((settings) => settings.sidebarThreadIndent);
   const updateSettings = useUpdateClientSettings();
   const directionLabels =
     sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
@@ -90,6 +99,55 @@ export function SidebarViewControls() {
         >
           Group by project
         </MenuCheckboxItem>
+        <MenuSub>
+          {/* Only grouped rows have a project header to sit in from. */}
+          <MenuSubTrigger disabled={!groupByProject}>
+            Indent
+            <MenuSubValue>{SIDEBAR_THREAD_INDENT_LABELS[indent]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-36">
+            <MenuRadioGroup
+              value={indent}
+              onValueChange={(value) =>
+                updateSettings({ sidebarThreadIndent: value as SidebarThreadIndent })
+              }
+            >
+              {SidebarThreadIndent.literals.map((option) => (
+                <MenuRadioItem key={option} value={option}>
+                  {SIDEBAR_THREAD_INDENT_LABELS[option]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuCheckboxItem
+          variant="switch"
+          checked={showProjectIcons}
+          onCheckedChange={(checked) => updateSettings({ sidebarProjectIcons: checked })}
+        >
+          Project icons
+        </MenuCheckboxItem>
+        <MenuSub>
+          <MenuSubTrigger>
+            Icon style
+            <MenuSubValue>{SIDEBAR_PROJECT_ICON_STYLE_LABELS[iconStyle]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-36">
+            <MenuRadioGroup
+              value={iconStyle}
+              onValueChange={(value) =>
+                updateSettings({ sidebarProjectIconStyle: value as SidebarProjectIconStyle })
+              }
+            >
+              {SidebarProjectIconStyle.literals.map((option) => (
+                <MenuRadioItem key={option} value={option}>
+                  {SIDEBAR_PROJECT_ICON_STYLE_LABELS[option]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
         <MenuCheckboxItem
           variant="switch"
           checked={showEmoji}

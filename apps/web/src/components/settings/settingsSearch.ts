@@ -229,6 +229,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar density compact slim height card thread list rows"],
   },
   {
+    id: "sidebar-project-icons",
+    title: "Project icons",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar project icon favicon thread rows hide show"],
+  },
+  {
+    id: "sidebar-project-icon-style",
+    title: "Project icon style",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar project icon initials monogram folder colour color"],
+  },
+  {
+    id: "sidebar-thread-indent",
+    title: "Thread indent",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar indent indentation group project threads nested"],
+  },
+  {
     id: "sidebar-thread-emoji",
     title: "Topic emoji",
     to: "/settings/appearance",

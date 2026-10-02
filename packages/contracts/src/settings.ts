@@ -69,6 +69,15 @@ export const SidebarThreadRowDensity = Schema.Literals(["comfortable", "compact"
 export type SidebarThreadRowDensity = typeof SidebarThreadRowDensity.Type;
 const DEFAULT_SIDEBAR_THREAD_ROW_DENSITY: SidebarThreadRowDensity = "comfortable";
 
+// Fork: how a project without its own icon is drawn in the sidebar: its
+// initials on a tinted tile, or a folder in the project's colour.
+export const SidebarProjectIconStyle = Schema.Literals(["initials", "folder"]);
+export type SidebarProjectIconStyle = typeof SidebarProjectIconStyle.Type;
+
+// Fork: how far thread rows sit in from their project header when grouped.
+export const SidebarThreadIndent = Schema.Literals(["none", "small", "medium", "large"]);
+export type SidebarThreadIndent = typeof SidebarThreadIndent.Type;
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -494,6 +503,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   // Fork: every thread row shows an emoji for its topic next to the project icon.
   sidebarThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: thread rows show their project's icon (project headers always do).
+  sidebarProjectIcons: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarProjectIconStyle: SidebarProjectIconStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed("initials" as const)),
+  ),
+  sidebarThreadIndent: SidebarThreadIndent.pipe(
+    Schema.withDecodingDefault(Effect.succeed("none" as const)),
+  ),
   // Fork: the sidebar search matches thread titles only, skipping message contents.
   sidebarSearchTitlesOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
@@ -1693,6 +1710,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
   sidebarThreadEmoji: Schema.optionalKey(Schema.Boolean),
+  sidebarProjectIcons: Schema.optionalKey(Schema.Boolean),
+  sidebarProjectIconStyle: Schema.optionalKey(SidebarProjectIconStyle),
+  sidebarThreadIndent: Schema.optionalKey(SidebarThreadIndent),
   sidebarSearchTitlesOnly: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
