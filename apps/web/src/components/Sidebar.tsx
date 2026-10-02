@@ -1662,6 +1662,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-thread-key={threadKey}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1841,6 +1842,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-thread-key={threadKey}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -3176,13 +3178,55 @@ export default function Sidebar() {
     setThreadSearchQuery("");
     setActiveSearchResultIndex(0);
   }, []);
+  // Fork: a thread picked from search is scrolled into view, centred, once the
+  // list renders again; a collapsed project group holding it opens first.
+  const [revealThreadKey, setRevealThreadKey] = useState<string | null>(null);
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
+      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+      const groupKey = logicalProjectByProjectKey.get(
+        `${thread.environmentId}:${thread.projectId}`,
+      )?.projectKey;
+      if (
+        sidebarGroupByProject &&
+        groupKey !== undefined &&
+        collapsedProjectKeys.includes(groupKey)
+      ) {
+        toggleProjectCollapsed(groupKey);
+      }
+      setRevealThreadKey(scopedThreadKey(threadRef));
       clearThreadSearch();
-      navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
+      navigateToThread(threadRef);
     },
-    [clearThreadSearch, navigateToThread],
+    [
+      clearThreadSearch,
+      collapsedProjectKeys,
+      logicalProjectByProjectKey,
+      navigateToThread,
+      sidebarGroupByProject,
+      toggleProjectCollapsed,
+    ],
   );
+  useEffect(() => {
+    if (revealThreadKey === null || isSearchingThreads) return;
+    let attempts = 0;
+    let frame = 0;
+    const reveal = () => {
+      const row = document.querySelector<HTMLElement>(
+        `[data-thread-key="${globalThis.CSS.escape(revealThreadKey)}"]`,
+      );
+      if (row !== null) {
+        row.scrollIntoView({ block: "center" });
+        setRevealThreadKey(null);
+        return;
+      }
+      // The row lands a frame or two after the search clears; give up after ~1 s.
+      if (++attempts < 60) frame = requestAnimationFrame(reveal);
+      else setRevealThreadKey(null);
+    };
+    frame = requestAnimationFrame(reveal);
+    return () => cancelAnimationFrame(frame);
+  }, [isSearchingThreads, revealThreadKey]);
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
       // IME composition (Japanese/Chinese input) uses the same keys; committing
