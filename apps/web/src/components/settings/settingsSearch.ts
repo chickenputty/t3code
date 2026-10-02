@@ -235,6 +235,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar emoji icon thread topic rows"],
   },
   {
+    id: "sidebar-search-titles-only",
+    title: "Search titles only",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar search thread titles names messages contents"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

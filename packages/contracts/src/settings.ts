@@ -488,6 +488,8 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   // Fork: every thread row shows an emoji for its topic next to the project icon.
   sidebarThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: the sidebar search matches thread titles only, skipping message contents.
+  sidebarSearchTitlesOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -1684,6 +1686,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
   sidebarThreadEmoji: Schema.optionalKey(Schema.Boolean),
+  sidebarSearchTitlesOnly: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),

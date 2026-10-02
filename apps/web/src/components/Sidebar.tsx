@@ -246,6 +246,7 @@ import {
 import {
   SidebarProjectGroupHeader,
   SidebarStatusGlyph,
+  SearchScopeToggle,
   SidebarViewControls,
   ThreadTopicEmoji,
 } from "./sidebar/SidebarViewControls";
@@ -2786,8 +2787,13 @@ export default function Sidebar() {
         .map((environment) => environment.environmentId),
     [environments],
   );
+  // Fork: titles-only search skips the message search (an empty query sends nothing).
+  const searchTitlesOnly = useClientSettings((settings) => settings.sidebarSearchTitlesOnly);
   // useThreadSearch owns the debounce and the two-character floor.
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    searchTitlesOnly ? "" : threadSearchQuery,
+  );
   const threadSearchMatchByKey = useMemo(
     () =>
       new Map(threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const)),
@@ -4564,7 +4570,12 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
-              viewControls={<SidebarViewControls />}
+              viewControls={
+                <>
+                  {isSearchingThreads ? <SearchScopeToggle /> : null}
+                  <SidebarViewControls />
+                </>
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}

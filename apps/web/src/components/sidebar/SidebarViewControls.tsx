@@ -11,9 +11,11 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   EyeIcon,
+  HeadingIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   SlidersHorizontalIcon,
+  TextSearchIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -156,6 +158,26 @@ export function SidebarViewControls() {
         </MenuSub>
       </MenuPopup>
     </Menu>
+  );
+}
+
+/** Shown beside the search box while searching: titles only, or titles and messages. */
+export function SearchScopeToggle() {
+  const titlesOnly = useClientSettings((settings) => settings.sidebarSearchTitlesOnly);
+  const updateSettings = useUpdateClientSettings();
+  return (
+    <SidebarHeaderIconButton
+      label={
+        titlesOnly
+          ? "Searching titles only (click to search messages too)"
+          : "Searching titles and messages (click to search titles only)"
+      }
+      aria-pressed={titlesOnly}
+      data-active={titlesOnly}
+      onClick={() => updateSettings({ sidebarSearchTitlesOnly: !titlesOnly })}
+    >
+      {titlesOnly ? <HeadingIcon /> : <TextSearchIcon />}
+    </SidebarHeaderIconButton>
   );
 }
 

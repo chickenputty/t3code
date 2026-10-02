@@ -566,6 +566,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji
         ? ["Topic emoji"]
         : []),
+      ...(settings.sidebarSearchTitlesOnly !== DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly
+        ? ["Search titles only"]
+        : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
@@ -694,6 +697,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.sidebarThreadRowDensity,
       settings.sidebarThreadEmoji,
+      settings.sidebarSearchTitlesOnly,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
@@ -791,6 +795,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
       sidebarThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji,
+      sidebarSearchTitlesOnly: DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1420,6 +1425,32 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ sidebarThreadEmoji: Boolean(checked) })
               }
               aria-label="Show topic emoji on thread rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-search-titles-only")}
+          description="The sidebar search matches thread titles only, not message contents. A button beside the search box flips it while you search."
+          resetAction={
+            settings.sidebarSearchTitlesOnly !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly ? (
+              <SettingResetButton
+                label="search titles only"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSearchTitlesOnly: DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSearchTitlesOnly}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSearchTitlesOnly: Boolean(checked) })
+              }
+              aria-label="Search thread titles only"
             />
           }
         />
