@@ -232,15 +232,14 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
     if (entry === undefined) byKey.set(ref.key, { ref, threads: [thread] });
     else entry.threads.push(thread);
   }
+  // Groups follow the sort too: a project sits where its first thread sorts, so under the
+  // activity sort the project you touched last is on top, and under the name sort the groups
+  // read A to Z. Threads whose project is not loaded yet trail the named groups.
   const groups = [...byKey.values()]
     .toSorted((left, right) => {
-      // Threads whose project is not loaded yet trail the named groups.
       if (left.ref === UNKNOWN_PROJECT_GROUP) return 1;
       if (right.ref === UNKNOWN_PROJECT_GROUP) return -1;
-      return (
-        nameCollator.compare(left.ref.label, right.ref.label) ||
-        left.ref.key.localeCompare(right.ref.key)
-      );
+      return 0;
     })
     .map((entry): SidebarActiveThreadGroup<T> => ({
       key: entry.ref.key,

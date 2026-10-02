@@ -992,6 +992,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   statusSlim?: boolean;
   // Fork: a topic emoji shown instead of the project icon inside a project group.
   leadingEmoji?: string | null;
+  // Fork: the row sits under a project header, so it indents and drops the project icon
+  // and name the header already shows.
+  grouped?: boolean;
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
@@ -1628,6 +1631,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           props.statusSlim
             ? "[contain-intrinsic-size:auto_28px]"
             : "[contain-intrinsic-size:auto_36px]",
+          props.grouped && "pl-5",
           sortable?.isDragging && "relative z-20",
         )}
       >
@@ -1657,17 +1661,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {accessibleTitle}
             {/* Settled history recedes: dimmed favicon at rest, restored on
               hover so the tail stays scannable when you're hunting. */}
-            <span
-              className={cn(
-                "flex shrink-0 items-center gap-1 transition-opacity",
-                variantAction !== "settle" &&
-                  (!props.isActive || variantAction === "unsettle") &&
-                  "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
-              )}
-            >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
-              {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
-            </span>
+            {(props.project && !props.grouped) || props.leadingEmoji ? (
+              <span
+                className={cn(
+                  "flex shrink-0 items-center gap-1 transition-opacity",
+                  variantAction !== "settle" &&
+                    (!props.isActive || variantAction === "unsettle") &&
+                    "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
+                )}
+              >
+                {props.project && !props.grouped ? (
+                  <ProjectFavicon project={props.project} className="size-4" />
+                ) : null}
+                {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
+              </span>
+            ) : null}
             {statusOnly ? null : draftIndicator}
             {title}
             {statusOnly ? null : pinIndicator}
@@ -1804,6 +1812,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        props.grouped && "pl-5",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1830,11 +1839,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.project && !props.grouped ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {props.leadingEmoji ? <ThreadTopicEmoji emoji={props.leadingEmoji} /> : null}
-              {props.projectDisplayName ? (
+              {props.projectDisplayName && !props.grouped ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
@@ -4824,6 +4833,7 @@ export default function Sidebar() {
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         sortable?: SortableThreadRowBag,
+                        grouped = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -4844,6 +4854,7 @@ export default function Sidebar() {
                             thread={thread}
                             variant={rowVariant}
                             statusSlim={threadRowDensity === "slim"}
+                            grouped={grouped}
                             // Fork: a topic emoji beside the project icon, on every row.
                             leadingEmoji={
                               showThreadEmoji ? threadEmojiForTitle(thread.title) : null
@@ -4938,6 +4949,7 @@ export default function Sidebar() {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        grouped = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -4954,7 +4966,7 @@ export default function Sidebar() {
                               threadListArranged
                             }
                           >
-                            {(bag) => renderThreadRowInner(thread, section, bag)}
+                            {(bag) => renderThreadRowInner(thread, section, bag, grouped)}
                           </SortableThreadRow>
                         );
                       };
@@ -5020,26 +5032,18 @@ export default function Sidebar() {
                             );
                             // Fork: the grouped active list, one project header per group.
                             for (const group of activeArrangement.groups ?? []) {
-                              const project = projectGroups.find(
-                                (candidate) => candidate.projectKey === group.key,
-                              );
                               items.push(
                                 <SidebarProjectGroupHeader
                                   key={`project-group:${group.key}`}
                                   label={group.label}
                                   count={group.threads.length}
                                   collapsed={group.collapsed}
-                                  icon={
-                                    project === undefined ? null : (
-                                      <ProjectFavicon project={project} className="size-4" />
-                                    )
-                                  }
                                   onToggle={() => toggleProjectCollapsed(group.key)}
                                 />,
                               );
                               if (group.collapsed) continue;
                               for (const thread of group.threads) {
-                                items.push(renderThreadRow(thread, "active"));
+                                items.push(renderThreadRow(thread, "active", true));
                               }
                             }
                             break;

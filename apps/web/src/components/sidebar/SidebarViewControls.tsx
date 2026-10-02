@@ -11,6 +11,8 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   EyeIcon,
+  FolderIcon,
+  FolderOpenIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   SlidersHorizontalIcon,
@@ -194,31 +196,38 @@ export function SidebarStatusGlyph(props: {
   }
 }
 
-/** Opens one project's group in the grouped active list; collapses it on click. */
+/**
+ * Opens one project's group in the grouped active list; collapses it on click. A folder that
+ * opens and closes, with the group's threads indented under it, so the tree reads at a glance.
+ */
 export function SidebarProjectGroupHeader(props: {
   label: string;
   count: number;
   collapsed: boolean;
-  icon: ReactNode;
   onToggle: () => void;
 }) {
+  const Folder = props.collapsed ? FolderIcon : FolderOpenIcon;
   return (
-    <li className="mx-0.5 list-none" data-testid="sidebar-project-group-header">
+    <li className="mx-0.5 mt-1 list-none first:mt-0" data-testid="sidebar-project-group-header">
       <button
         type="button"
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
-        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
-        <span className="flex size-4 shrink-0 items-center justify-center">{props.icon}</span>
-        <span className="min-w-0 truncate">{props.label}</span>
-        <span className="shrink-0 tabular-nums text-sidebar-muted-foreground/60">
-          {props.count}
-        </span>
-        <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/60" />
+        <Folder aria-hidden className="size-4 shrink-0 text-sidebar-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{props.label}</span>
+        {props.collapsed ? (
+          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground/70">
+            {props.count}
+          </span>
+        ) : null}
         <ChevronDownIcon
           aria-hidden
-          className={cn("size-3 shrink-0 transition-transform", props.collapsed && "-rotate-90")}
+          className={cn(
+            "size-3.5 shrink-0 text-sidebar-muted-foreground transition-transform",
+            props.collapsed && "-rotate-90",
+          )}
         />
       </button>
     </li>
