@@ -229,10 +229,34 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar density compact slim height card thread list rows"],
   },
   {
+    id: "sidebar-project-icons",
+    title: "Project icons",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar project icon favicon thread rows hide show"],
+  },
+  {
+    id: "sidebar-project-icon-style",
+    title: "Project icon style",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar project icon initials monogram folder colour color"],
+  },
+  {
+    id: "sidebar-thread-indent",
+    title: "Thread indent",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar indent indentation group project threads nested"],
+  },
+  {
     id: "sidebar-thread-emoji",
     title: "Topic emoji",
     to: "/settings/appearance",
     searchTerms: ["sidebar emoji icon thread topic rows"],
+  },
+  {
+    id: "sidebar-search-titles-only",
+    title: "Search titles only",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar search thread titles names messages contents"],
   },
   {
     id: "environment-identification",
@@ -284,6 +308,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
+  },
+  {
+    id: "working-shelf",
+    title: "Working section (beta)",
+    to: "/settings/general",
+    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "auto-settle-inactive-threads",

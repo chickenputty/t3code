@@ -6,7 +6,11 @@
  * without grouping hands the list back untouched, so upstream's drag order
  * stays the source of truth whenever the view is off.
  */
-import type { SidebarThreadRowDensity } from "@t3tools/contracts";
+import type {
+  SidebarProjectIconStyle,
+  SidebarThreadIndent,
+  SidebarThreadRowDensity,
+} from "@t3tools/contracts";
 
 import { hasUnseenCompletion, resolveSidebarThreadStatus } from "~/components/Sidebar.logic";
 import { parseTimestampDate } from "~/timestampFormat";
@@ -16,6 +20,18 @@ export const SIDEBAR_THREAD_ROW_DENSITY_LABELS: Record<SidebarThreadRowDensity, 
   comfortable: "Comfortable",
   compact: "Compact",
   slim: "Slim",
+};
+
+export const SIDEBAR_PROJECT_ICON_STYLE_LABELS: Record<SidebarProjectIconStyle, string> = {
+  initials: "Initials",
+  folder: "Folder",
+};
+
+export const SIDEBAR_THREAD_INDENT_LABELS: Record<SidebarThreadIndent, string> = {
+  none: "None",
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
 };
 
 export const SIDEBAR_THREAD_SORT_FIELDS = [

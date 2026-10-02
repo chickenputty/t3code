@@ -2460,6 +2460,18 @@ function useChatMarkdownState({
     },
     [environmentId, openInEditor],
   );
+  // Fork (chickenputty/t3code): an inline-code folder path opens in the file manager.
+  const openFolderInFileManager = useMemo(
+    () =>
+      canUseShellActions && revealInFileManagerLabel !== undefined && environmentId !== null
+        ? (folderPath: string) =>
+            openInEditor({
+              environmentId,
+              input: { cwd: folderPath, editor: "file-manager", reveal: false },
+            })
+        : null,
+    [canUseShellActions, environmentId, openInEditor, revealInFileManagerLabel],
+  );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
@@ -2753,6 +2765,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      openFolderInFileManager,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2784,6 +2797,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      openFolderInFileManager,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2810,6 +2824,59 @@ function useChatMarkdownState({
     localMediaPreview,
     setLocalMediaPreview,
   };
+}
+
+/**
+ * Fork (chickenputty/t3code): an absolute folder path written as inline code
+ * (it ends with a separator, as `C:\Games\Art\` does), or null.
+ */
+export function inlineCodeFolderPath(text: string): { path: string; name: string } | null {
+  const path = text.trim();
+  if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/]|\/)/.test(path)) return null;
+  if (!/[\\/]$/.test(path) || /[\r\n<>"|?*]/.test(path.slice(2))) return null;
+  const segments = path.split(/[\\/]+/).filter(Boolean);
+  const name = segments.at(-1) ?? path;
+  return { path, name };
+}
+
+function MarkdownFolderChip(props: {
+  readonly folder: { readonly path: string; readonly name: string };
+  readonly onOpen: ((path: string) => unknown) | null;
+}) {
+  const content = (
+    <>
+      <span aria-hidden>📁</span>
+      <span className="truncate">{props.folder.name}</span>
+    </>
+  );
+  const className =
+    "inline-flex max-w-full items-baseline gap-1 rounded-sm px-1 align-baseline font-medium";
+  const onOpen = props.onOpen;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          onOpen === null ? (
+            <span className={className} />
+          ) : (
+            <button
+              type="button"
+              className={cn(className, "cursor-pointer text-primary hover:underline")}
+              aria-label={`Open folder ${props.folder.name}`}
+              onClick={() => {
+                void onOpen(props.folder.path);
+              }}
+            />
+          )
+        }
+      >
+        {content}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {onOpen === null ? props.folder.path : `Open ${props.folder.path}`}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 const ChatMarkdownRendererContext = React.createContext<
@@ -3160,11 +3227,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      cwd,
+      imageBaseDir,
+      inlineCodeFileLinkMetaByText,
+      fileLinkChip,
+      openFolderInFileManager,
+    } = use(ChatMarkdownRendererContext);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
+      const folder = inlineCodeFolderPath(codeText);
+      if (folder !== null) {
+        return <MarkdownFolderChip folder={folder} onOpen={openFolderInFileManager} />;
+      }
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
         resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);

@@ -69,6 +69,15 @@ export const SidebarThreadRowDensity = Schema.Literals(["comfortable", "compact"
 export type SidebarThreadRowDensity = typeof SidebarThreadRowDensity.Type;
 const DEFAULT_SIDEBAR_THREAD_ROW_DENSITY: SidebarThreadRowDensity = "comfortable";
 
+// Fork: how a project without its own icon is drawn in the sidebar: its
+// initials on a tinted tile, or a folder in the project's colour.
+export const SidebarProjectIconStyle = Schema.Literals(["initials", "folder"]);
+export type SidebarProjectIconStyle = typeof SidebarProjectIconStyle.Type;
+
+// Fork: how far thread rows sit in from their project header when grouped.
+export const SidebarThreadIndent = Schema.Literals(["none", "small", "medium", "large"]);
+export type SidebarThreadIndent = typeof SidebarThreadIndent.Type;
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -467,6 +476,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Beta: working and monitoring threads fold into a Working shelf and return
+  // to the top of the inbox once they need the user. The inbox then orders by
+  // time, so manual placement there is ignored (and kept) while it is on.
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -488,6 +503,16 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   // Fork: every thread row shows an emoji for its topic next to the project icon.
   sidebarThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: thread rows show their project's icon (project headers always do).
+  sidebarProjectIcons: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarProjectIconStyle: SidebarProjectIconStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed("initials" as const)),
+  ),
+  sidebarThreadIndent: SidebarThreadIndent.pipe(
+    Schema.withDecodingDefault(Effect.succeed("none" as const)),
+  ),
+  // Fork: the sidebar search matches thread titles only, skipping message contents.
+  sidebarSearchTitlesOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -1675,6 +1700,7 @@ export const ClientSettingsPatch = Schema.Struct({
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
@@ -1684,6 +1710,10 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
   sidebarThreadEmoji: Schema.optionalKey(Schema.Boolean),
+  sidebarProjectIcons: Schema.optionalKey(Schema.Boolean),
+  sidebarProjectIconStyle: Schema.optionalKey(SidebarProjectIconStyle),
+  sidebarThreadIndent: Schema.optionalKey(SidebarThreadIndent),
+  sidebarSearchTitlesOnly: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),

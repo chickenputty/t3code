@@ -1,9 +1,13 @@
 /**
- * Fork (chickenputty/t3code): the sidebar header's view menu (group by project,
- * topic emoji, sort, thread row height), and the header row each project group
- * opens with.
+ * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
+ * and its indent, project icons and their style, topic emoji, sort, thread row
+ * height), and the header row each project group opens with.
  */
-import { SidebarThreadRowDensity } from "@t3tools/contracts";
+import {
+  SidebarProjectIconStyle,
+  SidebarThreadIndent,
+  SidebarThreadRowDensity,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   ChevronDownIcon,
@@ -11,11 +15,11 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   EyeIcon,
-  FolderIcon,
-  FolderOpenIcon,
+  HeadingIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   SlidersHorizontalIcon,
+  TextSearchIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -35,6 +39,8 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import {
+  SIDEBAR_PROJECT_ICON_STYLE_LABELS,
+  SIDEBAR_THREAD_INDENT_LABELS,
   SIDEBAR_THREAD_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_SORT_DIRECTION_LABELS,
   SIDEBAR_THREAD_SORT_FIELDS,
@@ -59,6 +65,9 @@ export function SidebarViewControls() {
   const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
   const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
+  const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
+  const iconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
+  const indent = useClientSettings((settings) => settings.sidebarThreadIndent);
   const updateSettings = useUpdateClientSettings();
   const directionLabels =
     sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
@@ -90,6 +99,55 @@ export function SidebarViewControls() {
         >
           Group by project
         </MenuCheckboxItem>
+        <MenuSub>
+          {/* Only grouped rows have a project header to sit in from. */}
+          <MenuSubTrigger disabled={!groupByProject}>
+            Indent
+            <MenuSubValue>{SIDEBAR_THREAD_INDENT_LABELS[indent]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-36">
+            <MenuRadioGroup
+              value={indent}
+              onValueChange={(value) =>
+                updateSettings({ sidebarThreadIndent: value as SidebarThreadIndent })
+              }
+            >
+              {SidebarThreadIndent.literals.map((option) => (
+                <MenuRadioItem key={option} value={option}>
+                  {SIDEBAR_THREAD_INDENT_LABELS[option]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuCheckboxItem
+          variant="switch"
+          checked={showProjectIcons}
+          onCheckedChange={(checked) => updateSettings({ sidebarProjectIcons: checked })}
+        >
+          Project icons
+        </MenuCheckboxItem>
+        <MenuSub>
+          <MenuSubTrigger>
+            Icon style
+            <MenuSubValue>{SIDEBAR_PROJECT_ICON_STYLE_LABELS[iconStyle]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-36">
+            <MenuRadioGroup
+              value={iconStyle}
+              onValueChange={(value) =>
+                updateSettings({ sidebarProjectIconStyle: value as SidebarProjectIconStyle })
+              }
+            >
+              {SidebarProjectIconStyle.literals.map((option) => (
+                <MenuRadioItem key={option} value={option}>
+                  {SIDEBAR_PROJECT_ICON_STYLE_LABELS[option]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
         <MenuCheckboxItem
           variant="switch"
           checked={showEmoji}
@@ -161,6 +219,26 @@ export function SidebarViewControls() {
   );
 }
 
+/** Shown beside the search box while searching: titles only, or titles and messages. */
+export function SearchScopeToggle() {
+  const titlesOnly = useClientSettings((settings) => settings.sidebarSearchTitlesOnly);
+  const updateSettings = useUpdateClientSettings();
+  return (
+    <SidebarHeaderIconButton
+      label={
+        titlesOnly
+          ? "Searching titles only (click to search messages too)"
+          : "Searching titles and messages (click to search titles only)"
+      }
+      aria-pressed={titlesOnly}
+      data-active={titlesOnly}
+      onClick={() => updateSettings({ sidebarSearchTitlesOnly: !titlesOnly })}
+    >
+      {titlesOnly ? <HeadingIcon /> : <TextSearchIcon />}
+    </SidebarHeaderIconButton>
+  );
+}
+
 /** A grouped row's topic emoji, sized to the project icon it stands in for. */
 export function ThreadTopicEmoji(props: { emoji: string }) {
   return (
@@ -196,38 +274,31 @@ export function SidebarStatusGlyph(props: {
   }
 }
 
-/**
- * Opens one project's group in the grouped active list; collapses it on click. A folder that
- * opens and closes, with the group's threads indented under it, so the tree reads at a glance.
- */
+/** Opens one project's group in the grouped active list; collapses it on click. */
 export function SidebarProjectGroupHeader(props: {
   label: string;
   count: number;
   collapsed: boolean;
+  icon: ReactNode;
   onToggle: () => void;
 }) {
-  const Folder = props.collapsed ? FolderIcon : FolderOpenIcon;
   return (
-    <li className="mx-0.5 mt-1 list-none first:mt-0" data-testid="sidebar-project-group-header">
+    <li className="mx-0.5 list-none" data-testid="sidebar-project-group-header">
       <button
         type="button"
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
-        className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
-        <Folder aria-hidden className="size-4 shrink-0 text-sidebar-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{props.label}</span>
-        {props.collapsed ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground/70">
-            {props.count}
-          </span>
-        ) : null}
+        <span className="flex size-4 shrink-0 items-center justify-center">{props.icon}</span>
+        <span className="min-w-0 truncate">{props.label}</span>
+        <span className="shrink-0 tabular-nums text-sidebar-muted-foreground/60">
+          {props.count}
+        </span>
+        <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/60" />
         <ChevronDownIcon
           aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 text-sidebar-muted-foreground transition-transform",
-            props.collapsed && "-rotate-90",
-          )}
+          className={cn("size-3 shrink-0 transition-transform", props.collapsed && "-rotate-90")}
         />
       </button>
     </li>

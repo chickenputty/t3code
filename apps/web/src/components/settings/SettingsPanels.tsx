@@ -57,7 +57,11 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
-import { SIDEBAR_THREAD_ROW_DENSITY_LABELS } from "../sidebar/sidebarArrangement";
+import {
+  SIDEBAR_PROJECT_ICON_STYLE_LABELS,
+  SIDEBAR_THREAD_INDENT_LABELS,
+  SIDEBAR_THREAD_ROW_DENSITY_LABELS,
+} from "../sidebar/sidebarArrangement";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -566,9 +570,25 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji
         ? ["Topic emoji"]
         : []),
+      ...(settings.sidebarProjectIcons !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons
+        ? ["Project icons"]
+        : []),
+      ...(settings.sidebarProjectIconStyle !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle
+        ? ["Project icon style"]
+        : []),
+      ...(settings.sidebarThreadIndent !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadIndent
+        ? ["Thread indent"]
+        : []),
+      ...(settings.sidebarSearchTitlesOnly !== DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly
+        ? ["Search titles only"]
+        : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
+        : []),
+      ...(settings.sidebarWorkingShelfEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
+        ? ["Working section"]
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
@@ -691,9 +711,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
+      settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.sidebarThreadRowDensity,
       settings.sidebarThreadEmoji,
+      settings.sidebarProjectIcons,
+      settings.sidebarProjectIconStyle,
+      settings.sidebarThreadIndent,
+      settings.sidebarSearchTitlesOnly,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
@@ -791,7 +816,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
       sidebarThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji,
+      sidebarProjectIcons: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons,
+      sidebarProjectIconStyle: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle,
+      sidebarThreadIndent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadIndent,
+      sidebarSearchTitlesOnly: DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
@@ -1399,6 +1429,115 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
+          {...searchableSetting("sidebar-project-icons")}
+          description="Thread rows show their project's icon. Project headers always do."
+          resetAction={
+            settings.sidebarProjectIcons !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons ? (
+              <SettingResetButton
+                label="project icons"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectIcons: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectIcons}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectIcons: Boolean(checked) })
+              }
+              aria-label="Show project icons on thread rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-project-icon-style")}
+          description="How the sidebar draws a project that has no icon of its own: its initials, or a folder in the project's colour. Favicons and custom icons stay."
+          resetAction={
+            settings.sidebarProjectIconStyle !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle ? (
+              <SettingResetButton
+                label="project icon style"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectIconStyle: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarProjectIconStyle}
+              onValueChange={(value) => {
+                if (typeof value === "string" && value in SIDEBAR_PROJECT_ICON_STYLE_LABELS) {
+                  updateSettings({
+                    sidebarProjectIconStyle:
+                      value as keyof typeof SIDEBAR_PROJECT_ICON_STYLE_LABELS,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Project icon style">
+                <SelectValue>
+                  {SIDEBAR_PROJECT_ICON_STYLE_LABELS[settings.sidebarProjectIconStyle]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(SIDEBAR_PROJECT_ICON_STYLE_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-thread-indent")}
+          description="How far threads sit in under their project header when the sidebar is grouped by project."
+          resetAction={
+            settings.sidebarThreadIndent !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadIndent ? (
+              <SettingResetButton
+                label="thread indent"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadIndent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadIndent,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadIndent}
+              onValueChange={(value) => {
+                if (typeof value === "string" && value in SIDEBAR_THREAD_INDENT_LABELS) {
+                  updateSettings({
+                    sidebarThreadIndent: value as keyof typeof SIDEBAR_THREAD_INDENT_LABELS,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Thread indent">
+                <SelectValue>
+                  {SIDEBAR_THREAD_INDENT_LABELS[settings.sidebarThreadIndent]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(SIDEBAR_THREAD_INDENT_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("sidebar-thread-emoji")}
           description="Thread rows show an emoji for their topic, read from the title, next to the project icon."
           resetAction={
@@ -1420,6 +1559,32 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ sidebarThreadEmoji: Boolean(checked) })
               }
               aria-label="Show topic emoji on thread rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-search-titles-only")}
+          description="The sidebar search matches thread titles only, not message contents. A button beside the search box flips it while you search."
+          resetAction={
+            settings.sidebarSearchTitlesOnly !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly ? (
+              <SettingResetButton
+                label="search titles only"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSearchTitlesOnly: DEFAULT_UNIFIED_SETTINGS.sidebarSearchTitlesOnly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSearchTitlesOnly}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSearchTitlesOnly: Boolean(checked) })
+              }
+              aria-label="Search thread titles only"
             />
           }
         />
@@ -2345,6 +2510,33 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("working-shelf")}
+          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          resetAction={
+            settings.sidebarWorkingShelfEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
+              <SettingResetButton
+                label="working section"
+                onClick={() =>
+                  updateSettings({
+                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarWorkingShelfEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
+              }
+              aria-label="Working section (beta)"
+            />
+          }
+        />
+
         {supportsAutoSettlement ? (
           <>
             <SettingsRow
@@ -2882,7 +3074,7 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
-          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first."
+          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
           status={
             !supportsRestartContinuation
               ? "All selected connected environments must support restart continuation."
