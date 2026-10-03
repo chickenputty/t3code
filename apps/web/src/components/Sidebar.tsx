@@ -1874,6 +1874,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const diff = latestTurnDiff(thread);
 
+  // Fork: with no project name on the first line (grouped rows, where the header
+  // shows it), the title moves up beside the icons and status, and the card loses a line.
+  const titleOnFirstLine = !(props.projectDisplayName && !props.grouped);
+  const titleWithStatus = (
+    <>
+      {title}
+      {isRegeneratingTitle ? (
+        <span role="status" className="sr-only">
+          Regenerating title
+        </span>
+      ) : null}
+    </>
+  );
   return (
     <li
       data-thread-item
@@ -1881,8 +1894,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        // Matches the h-[4.875rem] content box (h-[3.75rem] with the title on the
+        // first line); the py-0.5 padding is added on top.
+        "list-none py-0.5 [content-visibility:auto]",
+        titleOnFirstLine
+          ? "[contain-intrinsic-size:auto_60px]"
+          : "[contain-intrinsic-size:auto_78px]",
         threadIndentClassName(props.indent),
         sortable?.isDragging && "relative z-20",
       )}
@@ -1907,7 +1924,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           }
         >
           {accessibleTitle}
-          <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+          <div
+            className={cn(
+              "relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+              titleOnFirstLine ? "h-[3.75rem]" : "h-[4.875rem]",
+            )}
+          >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project && !props.hideProjectIcon && !props.grouped ? (
@@ -1923,6 +1945,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 >
                   {props.projectDisplayName}
                 </span>
+              ) : titleOnFirstLine ? (
+                titleWithStatus
               ) : (
                 <span className="flex-1" />
               )}
@@ -2063,15 +2087,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               )}
             </div>
-            <div className="mt-1 flex min-w-0">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  Regenerating title
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+            {titleOnFirstLine ? null : <div className="mt-1 flex min-w-0">{titleWithStatus}</div>}
+            <div
+              className={cn(
+                "flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+                titleOnFirstLine ? "mt-1" : "mt-0.5",
+              )}
+            >
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
