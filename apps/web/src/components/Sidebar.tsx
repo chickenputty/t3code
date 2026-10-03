@@ -2903,10 +2903,14 @@ export default function Sidebar() {
   // Fork: sort and group the active list (sidebar/sidebarArrangement.ts). With
   // manual order and no grouping the list passes through untouched.
   const sidebarGroupByProject = useSidebarViewStore((state) => state.groupByProject);
+  const sidebarPinsStayGrouped = useSidebarViewStore((state) => state.pinsStayGrouped);
   const sidebarThreadSort = useSidebarViewStore((state) => state.sort);
   const collapsedProjectKeys = useSidebarViewStore((state) => state.collapsedProjectKeys);
   const toggleProjectCollapsed = useSidebarViewStore((state) => state.toggleProjectCollapsed);
   const threadListArranged = sidebarGroupByProject || sidebarThreadSort.field !== "manual";
+  // "Pins stay grouped" only means anything while the folders are drawn: it folds
+  // the pinned block into the project groups instead of listing it on top.
+  const sidebarPinsInGroups = sidebarGroupByProject && sidebarPinsStayGrouped;
   // Only the status sort reads visits, so other views skip re-rendering on each one.
   const lastVisitedAtByThreadKey = useUiStateStore((state) =>
     sidebarThreadSort.field === "status" ? state.threadLastVisitedAtById : null,
@@ -2948,6 +2952,7 @@ export default function Sidebar() {
           return group === undefined ? null : { key: group.projectKey, label: group.displayName };
         },
         collapsedGroupKeys: new Set(collapsedProjectKeys),
+        pinnedThreads: sidebarPinsInGroups ? pinnedThreads : null,
       }),
     [
       activeThreads,
@@ -2955,6 +2960,8 @@ export default function Sidebar() {
       lastVisitedAtByThreadKey,
       logicalProjectByProjectKey,
       openedAtByThreadKey,
+      pinnedThreads,
+      sidebarPinsInGroups,
       sidebarGroupByProject,
       sidebarThreadSort,
       snoozeNow,
@@ -3138,7 +3145,8 @@ export default function Sidebar() {
 
   const orderedThreads = useMemo(
     () => [
-      ...pinnedThreads,
+      // Grouped pins already sit in displayedActiveThreads, at their group's top.
+      ...(sidebarPinsInGroups ? [] : pinnedThreads),
       ...displayedActiveThreads,
       ...visibleWorkingThreads,
       ...visibleSnoozedThreads,
@@ -3146,6 +3154,7 @@ export default function Sidebar() {
     ],
     [
       pinnedThreads,
+      sidebarPinsInGroups,
       displayedActiveThreads,
       visibleWorkingThreads,
       visibleSnoozedThreads,
@@ -3832,10 +3841,14 @@ export default function Sidebar() {
     ) {
       return [];
     }
-    const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
-    items.push(...pinnedRows);
-    items.push({ kind: "marker", marker: "pinned-divider" });
+    const items: SidebarListItem[] = [];
+    // With "Pins stay grouped" the pinned block is gone: its rows render inside
+    // their project group, so there is no pinned header or Active divider to drop on.
+    if (!sidebarPinsInGroups) {
+      items.push({ kind: "marker", marker: "pinned-header" });
+      items.push(...rowsOf(pinnedThreads, "pinned"));
+      items.push({ kind: "marker", marker: "pinned-divider" });
+    }
     const activeRows = rowsOf(displayedActiveThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
@@ -3858,6 +3871,7 @@ export default function Sidebar() {
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
+    sidebarPinsInGroups,
     snoozedThreads.length,
     visibleSnoozedThreads,
     visibleWorkingThreads,
