@@ -89,6 +89,8 @@ import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
+import type { Processor } from "unified";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
   artifactTemplateFromHastProperties,
@@ -490,6 +492,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -499,6 +502,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -611,52 +615,8 @@ type MarkdownAstNode = {
   data?: {
     hProperties?: Record<string, unknown>;
   };
-  position?: { start?: { offset?: number }; end?: { offset?: number } };
   children?: MarkdownAstNode[];
 };
-
-const DRIVE_LETTER_PREFIX_REGEX = /^[A-Za-z]:/;
-const ASCII_PUNCTUATION_REGEX = /^[!-/:-@[-`{-~]$/;
-
-/**
- * Fork (chickenputty/t3code): a drive path link, image or definition
- * destination as its author wrote it. CommonMark reads `\.` and `\_` as
- * escapes, so `C:\repo\.claude\x.png` parses as `C:\repo.claude\x.png` and
- * the file is not found. A drive path with no `\\` in it was never escaped
- * on purpose, so every backslash in it is a separator. Returns null when the
- * written form cannot be found or was escaped on purpose.
- */
-function writtenDriveDestination(source: string, node: MarkdownAstNode): string | null {
-  const url = node.url;
-  const start = node.position?.start?.offset;
-  const end = node.position?.end?.offset;
-  if (typeof url !== "string" || start === undefined || end === undefined) return null;
-  const written = source.slice(start, end);
-  const drive = url.slice(0, 2);
-  // The destination follows the label, so try the rightmost place it could start.
-  for (let from = written.lastIndexOf(drive); from >= 0;) {
-    let at = from;
-    let matched = 0;
-    while (matched < url.length && at < written.length) {
-      const next = written[at + 1] ?? "";
-      if (written[at] === "\\" && ASCII_PUNCTUATION_REGEX.test(next) && next === url[matched]) {
-        at += 2;
-      } else if (written[at] === url[matched]) {
-        at += 1;
-      } else {
-        break;
-      }
-      matched += 1;
-    }
-    if (matched === url.length) {
-      const destination = written.slice(from, at);
-      return destination.includes("\\\\") ? null : destination;
-    }
-    if (from === 0) break;
-    from = written.lastIndexOf(drive, from - 1);
-  }
-  return null;
-}
 
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
@@ -677,22 +637,50 @@ function remarkPreserveCodeMeta() {
   };
 }
 
+interface DestinationCompileContext {
+  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
+  resume(): string;
+  sliceSerialize(token: unknown): string;
+}
+
+function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
+  const decoded = this.resume();
+  const authored = this.sliceSerialize(token);
+  const node = this.stack.at(-1);
+  // Character references still need decoding, so those destinations keep the parsed URL.
+  // Fork: so does a drive path whose author escaped its backslashes on purpose
+  // (`C:\\Users\\me`), which would otherwise turn into `C://Users//me`.
+  const escapedOnPurpose = /^[A-Za-z]:/.test(authored) && authored.includes("\\\\");
+  if (node)
+    node.url =
+      isWindowsAbsolutePath(authored) && !authored.includes("&") && !escapedOnPurpose
+        ? authored
+        : decoded;
+}
+
+/**
+ * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link
+ * destination. Every backslash in a Windows path is a separator, so link, image, and
+ * definition destinations that are Windows paths keep the text as written.
+ */
+function remarkKeepWindowsPathDestinations(this: Processor) {
+  const data = this.data();
+  (data.fromMarkdownExtensions ??= []).push({
+    exit: {
+      resourceDestinationString: keepWindowsPathDestination,
+      definitionDestinationString: keepWindowsPathDestination,
+    },
+  });
+}
+
 /**
  * Preserve Windows drive links as allowed `file:` URLs before sanitization.
  * The same traversal tags inline code while it can still be distinguished
  * from fenced code. Code inside links stays untagged to avoid nested anchors.
  */
 function remarkNormalizeLinksAndTagInlineCode() {
-  return (tree: MarkdownAstNode, file: { value?: unknown }) => {
-    const source = String(file.value ?? "");
+  return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (
-        (node.type === "link" || node.type === "definition" || node.type === "image") &&
-        typeof node.url === "string" &&
-        DRIVE_LETTER_PREFIX_REGEX.test(node.url)
-      ) {
-        node.url = writtenDriveDestination(source, node) ?? node.url;
-      }
       if (
         (node.type === "link" || node.type === "definition") &&
         typeof node.url === "string" &&

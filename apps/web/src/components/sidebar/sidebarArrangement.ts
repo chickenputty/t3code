@@ -78,20 +78,22 @@ export type SidebarThreadDisplayStatus =
   | "approval"
   | "input"
   | "failed"
+  | "limited"
   | "woke"
   | "done"
   | "working"
-  | "monitoring"
+  | "waiting"
   | "idle";
 
 const DISPLAY_STATUS_RANK: Record<SidebarThreadDisplayStatus, number> = {
   approval: 0,
   input: 1,
   failed: 2,
+  limited: 2,
   woke: 3,
   done: 4,
   working: 5,
-  monitoring: 6,
+  waiting: 6,
   idle: 7,
 };
 
@@ -119,10 +121,7 @@ export function resolveSidebarThreadDisplayStatus(
   return "idle";
 }
 
-type ActivityThread = Pick<
-  SidebarThreadSummary,
-  "createdAt" | "latestUserMessageAt" | "latestTurn"
->;
+type ActivityThread = Pick<SidebarThreadSummary, "createdAt" | "latestUserMessageAt" | "latestRun">;
 
 /**
  * Latest activity: a message from the user or a turn starting or finishing.
@@ -132,9 +131,9 @@ function sidebarThreadLatestActivityMs(thread: ActivityThread): number {
   let latest = Number.NEGATIVE_INFINITY;
   for (const value of [
     thread.latestUserMessageAt,
-    thread.latestTurn?.requestedAt,
-    thread.latestTurn?.startedAt,
-    thread.latestTurn?.completedAt,
+    thread.latestRun?.requestedAt,
+    thread.latestRun?.startedAt,
+    thread.latestRun?.completedAt,
   ]) {
     if (value == null) continue;
     const ms = Date.parse(value);

@@ -255,13 +255,13 @@ export function ThreadTopicEmoji(props: { emoji: string }) {
 
 /** The card's status icons, alone: a slim row's whole status slot. */
 export function SidebarStatusGlyph(props: {
-  icon: "working" | "monitoring" | "approval" | "input" | "failed" | "woke" | "done";
+  icon: "working" | "waiting" | "approval" | "input" | "failed" | "woke" | "done";
 }) {
   const className = "size-4 shrink-0";
   switch (props.icon) {
     case "working":
       return <CircleDashedIcon aria-hidden className={className} />;
-    case "monitoring":
+    case "waiting":
       return <EyeIcon aria-hidden className={className} />;
     case "approval":
       return <ShieldQuestionIcon aria-hidden className={className} />;

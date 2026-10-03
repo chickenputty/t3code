@@ -25,12 +25,12 @@ function thread(id: string, overrides: Record<string, unknown> = {}): Fixture {
     projectId: "project",
     createdAt: at(0),
     latestUserMessageAt: null,
-    latestTurn: null,
+    latestRun: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     interactionMode: "default",
-    session: null,
+    runtime: null,
     backgroundLiveness: null,
     settledOverride: null,
     ...overrides,
@@ -55,7 +55,7 @@ describe("sortSidebarThreads", () => {
   it("orders by the latest message or turn, newest first, and reverses", () => {
     const threads = [
       thread("old-message", { latestUserMessageAt: at(5) }),
-      thread("recent-turn", { latestUserMessageAt: at(1), latestTurn: turn(20) }),
+      thread("recent-turn", { latestUserMessageAt: at(1), latestRun: turn(20) }),
       thread("never-run", { createdAt: at(10) }),
     ];
     const newest = sortSidebarThreads(threads, { field: "activity", reversed: false }, noStatus);
@@ -75,8 +75,8 @@ describe("sortSidebarThreads", () => {
     const threads = [
       thread("idle"),
       thread("working"),
-      thread("done-old", { latestTurn: turn(1) }),
-      thread("done-new", { latestTurn: turn(30) }),
+      thread("done-old", { latestRun: turn(1) }),
+      thread("done-new", { latestRun: turn(30) }),
       thread("approval"),
     ];
     const sorted = sortSidebarThreads(
@@ -123,10 +123,10 @@ describe("arrangeSidebarActiveThreads", () => {
 
   it("orders groups by their first thread, keeps the sort inside each, and hides collapsed rows", () => {
     const threads = [
-      thread("vault-old", { projectId: "vault", latestTurn: turn(1) }),
+      thread("vault-old", { projectId: "vault", latestRun: turn(1) }),
       thread("unknown", { projectId: "missing" }),
-      thread("flux-a", { projectId: "flux", latestTurn: turn(5) }),
-      thread("vault-new", { projectId: "vault", latestTurn: turn(40) }),
+      thread("flux-a", { projectId: "flux", latestRun: turn(5) }),
+      thread("vault-new", { projectId: "vault", latestRun: turn(40) }),
     ];
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: { field: "activity", reversed: false },
@@ -160,7 +160,7 @@ describe("arrangeSidebarActiveThreads", () => {
 });
 
 describe("resolveSidebarThreadDisplayStatus", () => {
-  const completed = { latestTurn: turn(10) };
+  const completed = { latestRun: turn(10) };
 
   it("shows a completion as done only when it came after the last visit", () => {
     expect(
@@ -187,7 +187,7 @@ describe("resolveSidebarThreadDisplayStatus", () => {
   it("lets live work and an unacknowledged wake outrank a completion", () => {
     expect(
       resolveSidebarThreadDisplayStatus(
-        thread("t", { ...completed, session: { status: "running" } }),
+        thread("t", { ...completed, runtime: { status: "running" } }),
         { lastVisitedAt: at(5), wokeAt: null },
       ),
     ).toBe("working");
