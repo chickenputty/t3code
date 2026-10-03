@@ -332,7 +332,9 @@ function Invoke-Sync {
 
     Use-BuildTools
     $out = Join-Path $ReleaseDir $ver
-    Invoke-Step 'vp install' $BuildDir { vp i }
+    # CI=true: when an upstream bump changes the store layout, pnpm wants to purge node_modules and
+    # asks first; with no terminal (the scheduled task) it aborts instead (seen 2026-10-03).
+    Invoke-Step 'vp install' $BuildDir { $env:CI = 'true'; try { vp i } finally { Remove-Item Env:CI -ErrorAction SilentlyContinue } }
     # Upstream CI already typechecks upstream main; this gate is for fork patches to the app itself.
     $patched = (Invoke-Git $BuildDir diff --name-only $up $candidate).Out -split "`n" |
       Where-Object { $_ -and -not $_.StartsWith('fork/') }
