@@ -1808,6 +1808,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         </span>
                       </span>
                     )
+                  ) : topStatus !== null && variantAction === "settle" ? (
+                    // Fork: a live Compact row shows its status (Working, Approval, Input,
+                    // Failed, Done) like a card does, instead of only the time label.
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 text-xs font-medium",
+                        topStatus.className,
+                      )}
+                    >
+                      <SidebarStatusGlyph icon={topStatus.icon} />
+                      <span role="status">{topStatus.label}</span>
+                      {status === "working" ? (
+                        <span aria-hidden>
+                          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                        </span>
+                      ) : null}
+                    </span>
                   ) : (
                     <span className="text-xs">
                       {variantAction === "unsettle"
