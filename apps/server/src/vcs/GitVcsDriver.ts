@@ -30,6 +30,7 @@ import {
   type VcsRemoveWorktreeInput,
   type VcsStatusInput,
   type VcsStatusResult,
+  type VcsWorkingChangesResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import {
@@ -323,6 +324,19 @@ export class GitVcsDriver extends Context.Service<
       body: string,
       options?: GitCommitOptions,
     ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
+    // Fork: the Source Control panel. Index and working tree listed apart, staged and
+    // unstaged by path, and a commit of what is staged without touching the index.
+    readonly workingChanges: (
+      cwd: string,
+    ) => Effect.Effect<VcsWorkingChangesResult, GitCommandError>;
+    readonly stagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,

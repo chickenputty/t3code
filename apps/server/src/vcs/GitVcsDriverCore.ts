@@ -25,9 +25,70 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
+  type VcsChangedFile,
+  type VcsChangedFileStatus,
   type VcsRef,
+  type VcsWorkingChangesResult,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
+
+const WORKING_CHANGE_LETTERS: ReadonlySet<string> = new Set(["M", "A", "D", "R", "C", "T"]);
+const UNMERGED_CODES: ReadonlySet<string> = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
+function workingChangeStatus(code: string): VcsChangedFileStatus | null {
+  return WORKING_CHANGE_LETTERS.has(code) ? (code as VcsChangedFileStatus) : null;
+}
+
+/**
+ * Parses `git status --porcelain=1 -z --branch`. Fork: feeds the Source Control panel.
+ * Records are NUL-terminated; a rename or copy (`R`/`C` in X) is followed by one more record
+ * holding the old path. The first record is `## <branch>...` when --branch is on.
+ */
+export function parseWorkingChanges(stdout: string): VcsWorkingChangesResult {
+  const records = stdout.split("\0");
+  const staged: VcsChangedFile[] = [];
+  const unstaged: VcsChangedFile[] = [];
+  const untracked: VcsChangedFile[] = [];
+  let refName: string | null = null;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? "";
+    if (record.length < 4) continue;
+    if (record.startsWith("## ")) {
+      const branch = record.slice(3);
+      if (branch.startsWith("No commits yet on ")) {
+        refName = branch.slice("No commits yet on ".length) || null;
+      } else if (!branch.startsWith("HEAD (")) {
+        refName = branch.split("...")[0] ?? null;
+      }
+      continue;
+    }
+    const code = record.slice(0, 2);
+    const path = record.slice(3);
+    if (path.length === 0) continue;
+    if (code === "??") {
+      untracked.push({ path, previousPath: null, status: "U" });
+      continue;
+    }
+    if (code === "!!") continue;
+    const x = code[0] ?? " ";
+    const y = code[1] ?? " ";
+    let previousPath: string | null = null;
+    if (x === "R" || x === "C") {
+      previousPath = records[index + 1] ?? null;
+      index += 1;
+    }
+    if (UNMERGED_CODES.has(code)) {
+      unstaged.push({ path, previousPath, status: "U" });
+      continue;
+    }
+    const stagedStatus = workingChangeStatus(x);
+    if (stagedStatus !== null) staged.push({ path, previousPath, status: stagedStatus });
+    const unstagedStatus = workingChangeStatus(y);
+    if (unstagedStatus !== null)
+      unstaged.push({ path, previousPath: null, status: unstagedStatus });
+  }
+  return { refName, staged, unstaged, untracked };
+}
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -2102,6 +2163,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
+  // Fork: Source Control panel. `git status --porcelain=1 -z --branch` lists each entry as
+  // `XY path` (X the index, Y the working tree) with a second record for a rename's old path.
+  const workingChanges: GitVcsDriver.GitVcsDriver["Service"]["workingChanges"] = Effect.fn(
+    "workingChanges",
+  )(function* (cwd) {
+    const stdout = yield* runGitStdout("GitVcsDriver.workingChanges.status", cwd, [
+      "status",
+      "--porcelain=1",
+      "-z",
+      "--branch",
+      "--untracked-files=all",
+    ]);
+    return parseWorkingChanges(stdout);
+  });
+
+  // `git status` reports paths from the repository root even when cwd is a subfolder (a
+  // project rooted below the repo), so stage and unstage address them the same way.
+  const topLevelPathspecs = (paths: readonly string[]) =>
+    paths.map((path) => `:(top,literal)${path}`);
+
+  const stagePaths: GitVcsDriver.GitVcsDriver["Service"]["stagePaths"] = Effect.fn("stagePaths")(
+    function* (cwd, paths) {
+      yield* runGit(
+        "GitVcsDriver.stagePaths.add",
+        cwd,
+        paths.length === 0 ? ["add", "-A"] : ["add", "-A", "--", ...topLevelPathspecs(paths)],
+      );
+    },
+  );
+
+  const unstagePaths: GitVcsDriver.GitVcsDriver["Service"]["unstagePaths"] = Effect.fn(
+    "unstagePaths",
+  )(function* (cwd, paths) {
+    // `git reset` works against an unborn HEAD too (it resets to the empty tree), which
+    // `git restore --staged` does not.
+    yield* runGit(
+      "GitVcsDriver.unstagePaths.reset",
+      cwd,
+      paths.length === 0 ? ["reset", "-q"] : ["reset", "-q", "--", ...topLevelPathspecs(paths)],
+    );
+  });
+
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
@@ -3813,6 +3916,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     prepareCommitContext,
     commit: (cwd, subject, body, options) =>
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
+    workingChanges,
+    stagePaths,
+    unstagePaths,
     pushCurrentBranch: (cwd, fallbackBranch, options) =>
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),

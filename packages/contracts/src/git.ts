@@ -198,6 +198,26 @@ export const VcsInitInput = Schema.Struct({
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 
+// Fork: the Source Control panel (index vs working tree, like an editor's SCM view).
+
+export const VcsWorkingChangesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsWorkingChangesInput = typeof VcsWorkingChangesInput.Type;
+
+export const VcsStagePathsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  /** Paths relative to cwd. Empty means every change. */
+  paths: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type VcsStagePathsInput = typeof VcsStagePathsInput.Type;
+
+export const VcsCommitStagedInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  message: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000)),
+});
+export type VcsCommitStagedInput = typeof VcsCommitStagedInput.Type;
+
 // RPC Results
 
 const VcsStatusChangeRequest = Schema.Struct({
@@ -318,6 +338,31 @@ export const VcsSwitchRefResult = Schema.Struct({
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type VcsSwitchRefResult = typeof VcsSwitchRefResult.Type;
+
+/** One letter per entry, as git status shows it: M A D R C T, U for untracked or unmerged. */
+export const VcsChangedFileStatus = Schema.Literals(["M", "A", "D", "R", "C", "T", "U"]);
+export type VcsChangedFileStatus = typeof VcsChangedFileStatus.Type;
+
+export const VcsChangedFile = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  /** The old path of a rename or copy. */
+  previousPath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  status: VcsChangedFileStatus,
+});
+export type VcsChangedFile = typeof VcsChangedFile.Type;
+
+export const VcsWorkingChangesResult = Schema.Struct({
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  staged: Schema.Array(VcsChangedFile),
+  unstaged: Schema.Array(VcsChangedFile),
+  untracked: Schema.Array(VcsChangedFile),
+});
+export type VcsWorkingChangesResult = typeof VcsWorkingChangesResult.Type;
+
+export const VcsCommitStagedResult = Schema.Struct({
+  commitSha: TrimmedNonEmptyStringSchema,
+});
+export type VcsCommitStagedResult = typeof VcsCommitStagedResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

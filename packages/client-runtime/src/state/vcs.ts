@@ -17,6 +17,7 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -278,21 +279,52 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:vcs:status",
+    idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+      subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        Stream.mapAccum(
+          () => null as VcsStatusResult | null,
+          (current, event) => {
+            const next = applyGitStatusStreamEvent(current, event);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+
   return {
     listRefs,
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
+    status,
+    // Fork: Source Control panel. Refetches whenever the status stream reports a local
+    // change, which every stage, unstage and commit handler triggers on the server.
+    workingChanges: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:working-changes",
+      tag: WS_METHODS.vcsWorkingChanges,
+      staleTimeMs: 5_000,
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
+      refreshTrigger: (target) =>
+        status({ environmentId: target.environmentId, input: { cwd: target.input.cwd } }),
+    }),
+    stage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stage",
+      tag: WS_METHODS.vcsStage,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    unstage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:unstage",
+      tag: WS_METHODS.vcsUnstage,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    commitStaged: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:commit-staged",
+      tag: WS_METHODS.vcsCommitStaged,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
     }),
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
