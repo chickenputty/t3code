@@ -21,6 +21,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   SlidersHorizontalIcon,
+  SquarePenIcon,
   TextSearchIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -50,6 +51,7 @@ import {
   type SidebarThreadSortField,
 } from "./sidebarArrangement";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useSidebarViewStore } from "./sidebarViewStore";
 
 /** A submenu's current choice, right-aligned before its chevron. */
@@ -277,48 +279,80 @@ export function SidebarStatusGlyph(props: {
 }
 
 /**
- * Opens one project's group in the grouped active list; collapses it on click. A folder in the
- * project's colour that opens and closes, with the group's threads indented under it, so the
- * tree reads at a glance (Mitchell, PR #1). The count shows only while collapsed.
+ * Opens one project's group in the grouped active list; collapses it on click (Mitchell, PR #1).
+ * The icon follows the view settings (a folder in the project's colour that opens and closes,
+ * or the project's own icon), the collapse arrow shows beside the name on hover, the count
+ * only while collapsed, and the button at the end starts a thread in the project.
  */
 export function SidebarProjectGroupHeader(props: {
   label: string;
   count: number;
   collapsed: boolean;
+  /** "folder" draws an open or closed folder; "project" draws `projectIcon`. */
+  iconStyle: "folder" | "project" | "none";
   /** Text colour classes for the folder, from the project's icon colour. */
   folderClassName?: string | undefined;
+  projectIcon?: ReactNode;
   onToggle: () => void;
+  onNewThread?: (() => void) | undefined;
 }) {
   const Folder = props.collapsed ? FolderIcon : FolderOpenIcon;
   return (
-    <li className="mx-0.5 mt-1 list-none first:mt-0" data-testid="sidebar-project-group-header">
+    <li
+      className="group/project-header mx-0.5 mt-1 flex list-none items-center first:mt-0"
+      data-testid="sidebar-project-group-header"
+    >
       <button
         type="button"
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
-        className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
-        <Folder
+        {props.iconStyle === "folder" ? (
+          <Folder
+            aria-hidden
+            className={cn(
+              "size-4 shrink-0",
+              props.folderClassName ?? "text-sidebar-muted-foreground",
+            )}
+          />
+        ) : props.iconStyle === "project" ? (
+          <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+            {props.projectIcon}
+          </span>
+        ) : null}
+        <span className="min-w-0 truncate">{props.label}</span>
+        <ChevronDownIcon
           aria-hidden
           className={cn(
-            "size-4 shrink-0",
-            props.folderClassName ?? "text-sidebar-muted-foreground",
+            "size-3.5 shrink-0 text-sidebar-muted-foreground opacity-0 transition-[opacity,transform] group-focus-within/project-header:opacity-100 group-hover/project-header:opacity-100",
+            props.collapsed && "-rotate-90",
           )}
         />
-        <span className="min-w-0 flex-1 truncate">{props.label}</span>
+        <span className="flex-1" />
         {props.collapsed ? (
           <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground/70">
             {props.count}
           </span>
         ) : null}
-        <ChevronDownIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 text-sidebar-muted-foreground transition-transform",
-            props.collapsed && "-rotate-90",
-          )}
-        />
       </button>
+      {props.onNewThread ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`New thread in ${props.label}`}
+                onClick={props.onNewThread}
+                className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              />
+            }
+          >
+            <SquarePenIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">New thread in {props.label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
     </li>
   );
 }

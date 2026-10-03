@@ -1892,6 +1892,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         </span>
                       </span>
                     )
+                  ) : variantAction === "settle" && topStatus !== null ? (
+                    // Fork: a live Compact row keeps its time and adds the status
+                    // glyph Slim shows, at the far right.
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="text-xs">{threadTimeLabel(thread)}</span>
+                      <span className={cn("inline-flex", topStatus.className)}>
+                        <SidebarStatusGlyph icon={topStatus.icon} />
+                        <span role="status" className="sr-only">
+                          {topStatus.label}
+                        </span>
+                      </span>
+                    </span>
                   ) : (
                     <span className="text-xs">
                       {variantAction === "unsettle"
@@ -5387,10 +5399,34 @@ export default function Sidebar() {
                                   label={group.label}
                                   count={group.threads.length}
                                   collapsed={group.collapsed}
+                                  // Fork: Project icons hides the header's icon; Icon style
+                                  // picks the coloured folder or the project's own icon.
+                                  iconStyle={
+                                    !showProjectIcons
+                                      ? "none"
+                                      : projectIconStyle === "folder" || project === undefined
+                                        ? "folder"
+                                        : "project"
+                                  }
                                   folderClassName={
                                     project === undefined
                                       ? undefined
                                       : projectIconColorClassName(projectAccentColor(project))
+                                  }
+                                  projectIcon={
+                                    project === undefined ? null : (
+                                      <ProjectFavicon project={project} className="size-4" />
+                                    )
+                                  }
+                                  onNewThread={
+                                    project === undefined
+                                      ? undefined
+                                      : () => {
+                                          if (isMobile) setOpenMobile(false);
+                                          void newThreadContext.handleNewThread(
+                                            scopeProjectRef(project.environmentId, project.id),
+                                          );
+                                        }
                                   }
                                   onToggle={() => toggleProjectCollapsed(group.key)}
                                 />,
