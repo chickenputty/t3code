@@ -670,6 +670,8 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+// Fork: the Source Control panel.
+const SourceControlPanel = lazy(() => import("./sourceControl/SourceControlPanel"));
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -5030,6 +5032,11 @@ export default function ChatView(props: ChatViewProps) {
   const openChangesFromThreadPanel = useCallback(() => {
     addDiffSurface();
   }, [addDiffSurface]);
+  // Fork: the Source Control panel follows the Diff gate.
+  const addSourceControlSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  }, [activeThreadRef, isGitRepo, isServerThread]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -10285,6 +10292,15 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
+    ) : renderedRightPanelSurface?.kind === "source-control" && activeThread && gitStatusCwd ? (
+      <Suspense fallback={null}>
+        <SourceControlPanel
+          key={activeThreadKey}
+          environmentId={activeThread.environmentId}
+          cwd={gitStatusCwd}
+          workspaceMutationId={workspaceMutationId}
+        />
+      </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
@@ -11199,6 +11215,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
+          onAddSourceControl={addSourceControlSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
@@ -11206,6 +11223,7 @@ export default function ChatView(props: ChatViewProps) {
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
+          sourceControlAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
@@ -11254,6 +11272,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
+            onAddSourceControl={addSourceControlSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
@@ -11261,6 +11280,7 @@ export default function ChatView(props: ChatViewProps) {
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
+            sourceControlAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}

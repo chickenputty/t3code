@@ -20,6 +20,7 @@ import {
   ChevronRight,
   FileDiff,
   Files,
+  GitBranch,
   Globe2,
   Plus,
   TerminalSquare,
@@ -119,6 +120,7 @@ interface RightPanelTabsProps {
   onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddSourceControl: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -126,6 +128,7 @@ interface RightPanelTabsProps {
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
+  sourceControlAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
@@ -155,6 +158,7 @@ const SURFACE_DISABLED_REASONS = {
   terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
+  sourceControl: "Source control is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
@@ -178,6 +182,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   terminal: "Available when a project is open.",
   files: "Available when a project is open.",
   diff: "Available for Git repositories.",
+  sourceControl: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
@@ -316,6 +321,7 @@ function RightPanelEmptyState(props: {
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddSourceControl: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -323,6 +329,7 @@ function RightPanelEmptyState(props: {
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
+  sourceControlAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
@@ -363,6 +370,14 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Source control",
+      icon: GitBranch,
+      shortcut: "G",
+      available: props.sourceControlAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.sourceControl,
+      onClick: props.onAddSourceControl,
     },
     {
       label: "Pull request",
@@ -581,6 +596,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "diff":
       return "Diff";
+    case "source-control":
+      return "Source control";
     case "files":
       return "Files";
     case "file":
@@ -656,6 +673,8 @@ function SurfaceIcon({
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
+    case "source-control":
+      return <GitBranch className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -864,6 +883,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Source control",
+      icon: GitBranch,
+      shortcut: "G",
+      available: props.sourceControlAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
+      onClick: props.onAddSourceControl,
     },
     {
       label: "Pull request",
@@ -1368,6 +1395,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
+            onAddSourceControl={props.onAddSourceControl}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
@@ -1375,6 +1403,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
+            sourceControlAvailable={props.sourceControlAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}

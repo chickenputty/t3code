@@ -3299,6 +3299,35 @@ const makeWsRpcLayer = (
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
+        // Fork: Source Control panel.
+        [WS_METHODS.vcsWorkingChanges]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsWorkingChanges, gitWorkflow.workingChanges(input.cwd), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsStage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsStage,
+            gitWorkflow
+              .stagePaths(input.cwd, input.paths)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsUnstage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsUnstage,
+            gitWorkflow
+              .unstagePaths(input.cwd, input.paths)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsCommitStaged]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsCommitStaged,
+            gitWorkflow
+              .commitStaged(input.cwd, input.message)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
         [WS_METHODS.vcsListRefs]: (input) =>
           observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
             "rpc.aggregate": "vcs",

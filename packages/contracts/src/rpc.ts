@@ -108,6 +108,11 @@ import {
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
   VcsInitInput,
+  VcsWorkingChangesInput,
+  VcsWorkingChangesResult,
+  VcsStagePathsInput,
+  VcsCommitStagedInput,
+  VcsCommitStagedResult,
   VcsListRefsInput,
   VcsListRefsResult,
   GitManagerServiceError,
@@ -388,6 +393,10 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsWorkingChanges: "vcs.workingChanges",
+  vcsStage: "vcs.stage",
+  vcsUnstage: "vcs.unstage",
+  vcsCommitStaged: "vcs.commitStaged",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
@@ -1313,6 +1322,29 @@ const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+// Fork: Source Control panel.
+const WsVcsWorkingChangesRpc = Rpc.make(WS_METHODS.vcsWorkingChanges, {
+  payload: VcsWorkingChangesInput,
+  success: VcsWorkingChangesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsStageRpc = Rpc.make(WS_METHODS.vcsStage, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsUnstageRpc = Rpc.make(WS_METHODS.vcsUnstage, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsCommitStagedRpc = Rpc.make(WS_METHODS.vcsCommitStaged, {
+  payload: VcsCommitStagedInput,
+  success: VcsCommitStagedResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
  * Not the persisted T3 Review model. Future review sessions should use
@@ -1808,6 +1840,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsWorkingChangesRpc,
+  WsVcsStageRpc,
+  WsVcsUnstageRpc,
+  WsVcsCommitStagedRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

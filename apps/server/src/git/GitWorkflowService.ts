@@ -26,6 +26,8 @@ import {
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusResult,
+  type VcsWorkingChangesResult,
+  type VcsCommitStagedResult,
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
@@ -54,6 +56,22 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    // Fork: Source Control panel.
+    readonly workingChanges: (
+      cwd: string,
+    ) => Effect.Effect<VcsWorkingChangesResult, GitCommandError>;
+    readonly stagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly commitStaged: (
+      cwd: string,
+      message: string,
+    ) => Effect.Effect<VcsCommitStagedResult, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -326,6 +344,27 @@ export const make = Effect.gen(function* () {
     pullCurrentBranch: (cwd) =>
       ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
+      ),
+    workingChanges: (cwd) =>
+      ensureGitCommand("GitWorkflowService.workingChanges", cwd).pipe(
+        Effect.andThen(git.workingChanges(cwd)),
+      ),
+    stagePaths: (cwd, paths) =>
+      ensureGitCommand("GitWorkflowService.stagePaths", cwd).pipe(
+        Effect.andThen(git.stagePaths(cwd, paths)),
+      ),
+    unstagePaths: (cwd, paths) =>
+      ensureGitCommand("GitWorkflowService.unstagePaths", cwd).pipe(
+        Effect.andThen(git.unstagePaths(cwd, paths)),
+      ),
+    commitStaged: (cwd, message) =>
+      ensureGitCommand("GitWorkflowService.commitStaged", cwd).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const [subject = message, ...rest] = message.split(/\r?\n/);
+            return git.commit(cwd, subject, rest.join("\n"));
+          }),
+        ),
       ),
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
