@@ -16,12 +16,15 @@ const STORAGE_KEY = "t3code:fork:sidebar-view:v1";
 
 interface PersistedSidebarView {
   readonly groupByProject: boolean;
+  /** Keep pins in their project group, on top, instead of above the folders. */
+  readonly pinsStayGrouped: boolean;
   readonly sort: SidebarThreadSort;
   readonly collapsedProjectKeys: readonly string[];
 }
 
 interface SidebarViewState extends PersistedSidebarView {
   readonly toggleGroupByProject: () => void;
+  readonly togglePinsStayGrouped: () => void;
   /** Picking a field starts it in its natural order; picking it again keeps the order. */
   readonly setSortField: (field: SidebarThreadSortField) => void;
   readonly setSortReversed: (reversed: boolean) => void;
@@ -30,6 +33,7 @@ interface SidebarViewState extends PersistedSidebarView {
 
 const DEFAULT_VIEW: PersistedSidebarView = {
   groupByProject: false,
+  pinsStayGrouped: false,
   sort: MANUAL_SIDEBAR_THREAD_SORT,
   collapsedProjectKeys: [],
 };
@@ -46,6 +50,7 @@ function readPersistedView(): PersistedSidebarView {
     const field = SIDEBAR_THREAD_SORT_FIELDS.find((candidate) => candidate === sort?.field);
     return {
       groupByProject: value.groupByProject === true,
+      pinsStayGrouped: value.pinsStayGrouped === true,
       sort:
         field === undefined
           ? MANUAL_SIDEBAR_THREAD_SORT
@@ -62,6 +67,7 @@ function readPersistedView(): PersistedSidebarView {
 export const useSidebarViewStore = create<SidebarViewState>((set) => ({
   ...readPersistedView(),
   toggleGroupByProject: () => set((state) => ({ groupByProject: !state.groupByProject })),
+  togglePinsStayGrouped: () => set((state) => ({ pinsStayGrouped: !state.pinsStayGrouped })),
   setSortField: (field) =>
     set((state) => (state.sort.field === field ? state : { sort: { field, reversed: false } })),
   setSortReversed: (reversed) =>
@@ -82,6 +88,7 @@ useSidebarViewStore.subscribe((state) => {
   if (typeof window === "undefined") return;
   const persisted: PersistedSidebarView = {
     groupByProject: state.groupByProject,
+    pinsStayGrouped: state.pinsStayGrouped,
     sort: state.sort,
     collapsedProjectKeys: state.collapsedProjectKeys,
   };

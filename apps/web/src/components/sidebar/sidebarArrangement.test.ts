@@ -145,6 +145,92 @@ describe("arrangeSidebarActiveThreads", () => {
     expect(ids(arranged.threads)).toEqual(["vault-new", "vault-old", "unknown"]);
   });
 
+  it("keeps pins in their project, above the sorted rows, in pin order", () => {
+    const threads = [
+      thread("flux-a", { projectId: "flux", latestRun: turn(30) }),
+      thread("vault-a", { projectId: "vault", latestRun: turn(20) }),
+      thread("flux-b", { projectId: "flux", latestRun: turn(10) }),
+    ];
+    const pinned = [
+      thread("flux-pin-low", { projectId: "flux", latestRun: turn(1) }),
+      thread("flux-pin-high", { projectId: "flux", latestRun: turn(2) }),
+    ];
+    const arranged = arrangeSidebarActiveThreads(threads, {
+      sort: { field: "activity", reversed: false },
+      groupByProject: true,
+      statusOf: noStatus,
+      groupOf,
+      collapsedGroupKeys: new Set(),
+      pinnedThreads: pinned,
+    });
+    expect(arranged.groups?.map((group) => [group.label, ids(group.threads)])).toEqual([
+      ["flux", ["flux-pin-low", "flux-pin-high", "flux-a", "flux-b"]],
+      ["Pet Vault", ["vault-a"]],
+    ]);
+    expect(ids(arranged.threads)).toEqual([
+      "flux-pin-low",
+      "flux-pin-high",
+      "flux-a",
+      "flux-b",
+      "vault-a",
+    ]);
+  });
+
+  it("gives a project whose only threads are pinned its own group, where the pin sorts", () => {
+    const threads = [thread("flux-a", { projectId: "flux", latestRun: turn(10) })];
+    const pinned = [thread("vault-pin", { projectId: "vault", latestRun: turn(40) })];
+    const arranged = arrangeSidebarActiveThreads(threads, {
+      sort: { field: "activity", reversed: false },
+      groupByProject: true,
+      statusOf: noStatus,
+      groupOf,
+      collapsedGroupKeys: new Set(),
+      pinnedThreads: pinned,
+    });
+    expect(arranged.groups?.map((group) => [group.label, ids(group.threads)])).toEqual([
+      ["Pet Vault", ["vault-pin"]],
+      ["flux", ["flux-a"]],
+    ]);
+  });
+
+  it("puts a pinned thread's project first under the manual order", () => {
+    const threads = [
+      thread("flux-a", { projectId: "flux" }),
+      thread("vault-a", { projectId: "vault" }),
+    ];
+    const pinned = [thread("vault-pin", { projectId: "vault" })];
+    const arranged = arrangeSidebarActiveThreads(threads, {
+      sort: MANUAL_SIDEBAR_THREAD_SORT,
+      groupByProject: true,
+      statusOf: noStatus,
+      groupOf,
+      collapsedGroupKeys: new Set(),
+      pinnedThreads: pinned,
+    });
+    expect(arranged.groups?.map((group) => [group.label, ids(group.threads)])).toEqual([
+      ["Pet Vault", ["vault-pin", "vault-a"]],
+      ["flux", ["flux-a"]],
+    ]);
+  });
+
+  it("hides a collapsed project's pins with its rows", () => {
+    const threads = [
+      thread("flux-a", { projectId: "flux" }),
+      thread("vault-a", { projectId: "vault" }),
+    ];
+    const pinned = [thread("flux-pin", { projectId: "flux" })];
+    const arranged = arrangeSidebarActiveThreads(threads, {
+      sort: MANUAL_SIDEBAR_THREAD_SORT,
+      groupByProject: true,
+      statusOf: noStatus,
+      groupOf,
+      collapsedGroupKeys: new Set(["flux"]),
+      pinnedThreads: pinned,
+    });
+    expect(ids(arranged.threads)).toEqual(["vault-a"]);
+    expect(arranged.groups?.find((group) => group.key === "flux")?.threads).toHaveLength(2);
+  });
+
   it("passes an ungrouped manual list straight through", () => {
     const threads = [thread("b"), thread("a")];
     const arranged = arrangeSidebarActiveThreads(threads, {

@@ -1,7 +1,7 @@
 /**
  * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
- * and its indent, project icons and their style, topic emoji, sort, thread row
- * height), and the header row each project group opens with.
+ * and its indent, pins stay grouped, project icons and their style, topic emoji,
+ * sort, thread row height), and the header row each project group opens with.
  */
 import {
   SidebarProjectIconStyle,
@@ -64,6 +64,8 @@ function MenuSubValue(props: { children: ReactNode }) {
 export function SidebarViewControls() {
   const groupByProject = useSidebarViewStore((state) => state.groupByProject);
   const toggleGroupByProject = useSidebarViewStore((state) => state.toggleGroupByProject);
+  const pinsStayGrouped = useSidebarViewStore((state) => state.pinsStayGrouped);
+  const togglePinsStayGrouped = useSidebarViewStore((state) => state.togglePinsStayGrouped);
   const sort = useSidebarViewStore((state) => state.sort);
   const setSortField = useSidebarViewStore((state) => state.setSortField);
   const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
@@ -102,6 +104,17 @@ export function SidebarViewControls() {
           }}
         >
           Group by project
+        </MenuCheckboxItem>
+        <MenuCheckboxItem
+          variant="switch"
+          checked={pinsStayGrouped}
+          // Pins can only stay in a folder the view actually draws.
+          disabled={!groupByProject}
+          onCheckedChange={(checked) => {
+            if (checked !== pinsStayGrouped) togglePinsStayGrouped();
+          }}
+        >
+          Pins stay grouped
         </MenuCheckboxItem>
         <MenuSub>
           {/* Only grouped rows have a project header to sit in from. */}

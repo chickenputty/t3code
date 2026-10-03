@@ -207,7 +207,7 @@ export type VcsWorkingChangesInput = typeof VcsWorkingChangesInput.Type;
 
 export const VcsStagePathsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  /** Paths relative to cwd. Empty means every change. */
+  /** Paths relative to the repo root, as `git status` reports them. Empty means every change. */
   paths: Schema.Array(TrimmedNonEmptyStringSchema),
 });
 export type VcsStagePathsInput = typeof VcsStagePathsInput.Type;
