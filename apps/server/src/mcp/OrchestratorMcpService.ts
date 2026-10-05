@@ -63,6 +63,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -81,7 +82,14 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
-const TASK_POLL_INTERVAL_MS = 50;
+// Events that can make a delegated task terminal: the parent's task record,
+// and the child's runs, nested tasks, and pending provider background work.
+const TASK_WAKE_EVENTS = [
+  { thread: "parent", eventType: "subagent.updated" },
+  { thread: "child", eventType: "run.updated" },
+  { thread: "child", eventType: "subagent.updated" },
+  { thread: "child", eventType: "provider-thread.updated" },
+] as const;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -212,6 +220,7 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    ...(task.webhook === undefined ? {} : { webhookUrl: task.webhook.url ?? task.webhook.path }),
   };
 }
 
@@ -995,6 +1004,30 @@ const make = Effect.gen(function* () {
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
+  /**
+   * Provider snapshots only re-probe while a client is in the foreground, so an
+   * unattended agent can see a provider as unavailable after it was fixed.
+   * Re-probe the requested instance once before refusing it.
+   */
+  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+    const instanceId =
+      input.target?.providerInstanceId ??
+      (input.target?.driverKind === undefined
+        ? input.parent.thread.modelSelection.instanceId
+        : undefined);
+    const resolved = resolveTarget(input);
+    if (instanceId === undefined) return resolved;
+    return resolved.pipe(
+      Effect.catchIf(
+        (error) => error.code === "provider_unavailable",
+        () =>
+          providerRegistry
+            .refreshInstance(instanceId)
+            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+      ),
+    );
+  };
+
   const resolveTarget = (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1273,14 +1306,39 @@ const make = Effect.gen(function* () {
       return response;
     });
 
+  // Re-read the task only when an event on the parent or child thread can
+  // change its status, instead of polling the projections every 50 ms.
   const waitForTask = (scope: McpThreadInvocationScope, taskId: NodeId, timeoutMs: number) =>
     Effect.gen(function* () {
-      while (true) {
-        const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
-        yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
-      }
-    }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
+      const streamError = (error: unknown) =>
+        failure(
+          "orchestration_error",
+          `Unable to watch delegated task ${taskId}: ${errorMessage(error)}`,
+        );
+      // Sequences are global, so one cursor taken before the first read
+      // replays anything either thread records after it.
+      const afterSequence = yield* threadManagement
+        .getThreadEventSequence(scope.thread.threadId)
+        .pipe(Effect.mapError(streamError));
+      const initial = yield* readTask(scope, taskId, false, true);
+      if (isTerminalTaskStatus(initial.status)) return Option.some(initial);
+      // One stream per event type, so transcript events never fill a buffer.
+      return yield* Stream.mergeAll(
+        TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
+          threadManagement.streamStoredEventsFrom({
+            threadId: thread === "parent" ? scope.thread.threadId : initial.childThreadId,
+            afterSequence,
+            eventType,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Stream.mapError(streamError),
+        Stream.mapEffect(() => readTask(scope, taskId, false, true)),
+        Stream.filter((result) => isTerminalTaskStatus(result.status)),
+        Stream.runHead,
+      );
+    }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
 
   /**
    * A scheduled task the caller may change: one whose modes are no broader
@@ -1518,7 +1576,7 @@ const make = Effect.gen(function* () {
           );
         }
         const providers = yield* loadProviders;
-        const target = yield* resolveTarget({
+        const target = yield* resolveTargetRechecking({
           parent,
           target: input.target,
           providers,
@@ -1662,43 +1720,60 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
-        // Published task results stay terminal. Later child-thread messages do not
-        // reopen the task, so cancelling it must not interrupt those separate runs.
+        // Cancelling stops the child thread the way Stop does, including work that came
+        // after a published result: follow-up runs, pull request watch wakes, and the
+        // tasks it delegated. The published result stays terminal.
+        const stopChild = Effect.gen(function* () {
+          const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
+          const reason = input.reason;
+          yield* threadManagement
+            .dispatch({
+              type: "thread.stop",
+              commandId,
+              threadId: current.childThreadId,
+              ...(reason === undefined ? {} : { reason }),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "task_not_cancellable",
+                  `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          // A retry with the same clientRequestId repeats only the stops that failed.
+          yield* threadManagement
+            .stopDelegatedTasks({ threadId: current.childThreadId, commandId, reason })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "task_not_cancellable",
+                  `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+        });
         if (isTerminalTaskStatus(current.status)) {
+          yield* stopChild;
           yield* disposeCompletionDelivery;
           return {
             taskId: input.taskId,
             status: current.status,
           } satisfies OrchestratorMcpTaskCancelResult;
         }
+        // A task waiting on its own delegates has work to stop below it. One with neither
+        // a running turn nor delegates (such as one awaiting a restart) keeps its delivery.
         const child = yield* loadProjection(current.childThreadId);
-        const activeRun = ThreadManagementService.latestActiveRun(child);
-        if (activeRun === undefined) {
+        if (
+          current.workState !== "waiting_for_children" &&
+          ThreadManagementService.latestActiveRun(child) === undefined
+        ) {
           return yield* failure(
             "task_not_cancellable",
             `Delegated task ${input.taskId} has no interruptible child run.`,
           );
         }
-        yield* threadManagement
-          .dispatch({
-            type: "run.interrupt",
-            commandId: stableCommandId({
-              scope,
-              requestKey: key,
-              operation: "cancel-task",
-            }),
-            threadId: current.childThreadId,
-            runId: activeRun.id,
-            ...(input.reason === undefined ? {} : { reason: input.reason }),
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Unable to interrupt delegated task ${input.taskId}: ${errorMessage(error)}`,
-              ),
-            ),
-          );
+        yield* stopChild;
         yield* disposeCompletionDelivery.pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("orchestrator-mcp.cancel-task.delivery-dispose-failed", {
@@ -1733,7 +1808,7 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTarget({
+              const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
                 providers,
