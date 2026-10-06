@@ -104,6 +104,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+import { WorkerProcessSpawner } from "../workerProcessSpawner.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -959,7 +960,9 @@ const collectOutput = Effect.fnUntraced(function* (
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Git runs about once a second; on Windows a blocking spawn would stall the server.
+  const commandSpawner =
+    (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
 
