@@ -171,6 +171,12 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
+  // Fork: getOrCreateRandom's secrets (the asset and session signing keys) never change once
+  // created, yet AssetAccess read the asset key from disk on every signed URL and every asset
+  // request (about 42 reads a second on a busy server, 2026-10-05). Keep each one in memory;
+  // set, create and remove through this store drop the cached copy.
+  const randomSecretCache = new Map<string, Uint8Array>();
+
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
@@ -188,6 +194,7 @@ export const make = Effect.gen(function* () {
     );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
+    randomSecretCache.delete(name);
     const secretPath = resolveSecretPath(name);
     return crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -225,6 +232,7 @@ export const make = Effect.gen(function* () {
   };
 
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
+    randomSecretCache.delete(name);
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -248,6 +256,16 @@ export const make = Effect.gen(function* () {
   };
 
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
+    Effect.suspend(() => {
+      const cached = randomSecretCache.get(name);
+      return cached === undefined
+        ? loadOrCreateRandom(name, bytes).pipe(
+            Effect.tap((secret) => Effect.sync(() => randomSecretCache.set(name, secret))),
+          )
+        : Effect.succeed(Uint8Array.from(cached));
+    }).pipe(Effect.withSpan("ServerSecretStore.getOrCreateRandom"));
+
+  const loadOrCreateRandom = (name: string, bytes: number) =>
     get(name).pipe(
       Effect.flatMap(
         Option.match({
@@ -286,11 +304,11 @@ export const make = Effect.gen(function* () {
             ),
         }),
       ),
-      Effect.withSpan("ServerSecretStore.getOrCreateRandom"),
     );
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
+    Effect.sync(() => randomSecretCache.delete(name)).pipe(
+      Effect.andThen(fileSystem.remove(resolveSecretPath(name))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.void

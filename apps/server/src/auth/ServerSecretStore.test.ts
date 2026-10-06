@@ -145,6 +145,24 @@ const makeConcurrentCreateSecretStoreLayer = () =>
     Layer.provideMerge(ConcurrentReadMissFileSystemLayer),
   );
 
+const makeCountingSecretStoreLayer = (reads: Ref.Ref<number>) =>
+  ServerSecretStore.layer.pipe(
+    Layer.provide(makeServerConfigLayer()),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...fileSystem,
+            readFile: (path) =>
+              Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(fileSystem.readFile(path))),
+          } satisfies FileSystem.FileSystem;
+        }),
+      ).pipe(Layer.provide(NodeServices.layer)),
+    ),
+  );
+
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
   it.effect("returns Option.none when a secret file does not exist", () =>
     Effect.gen(function* () {
@@ -165,6 +183,30 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
       assert.deepEqual(Array.from(second), Array.from(first));
     }).pipe(Effect.provide(makeServerSecretStoreLayer())),
+  );
+
+  it.effect("reads a random secret from disk once, and again after set or remove", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const first = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+        for (let i = 0; i < 5; i++) {
+          const again = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+          assert.deepEqual(Array.from(again), Array.from(first));
+        }
+        assert.equal(yield* Ref.get(reads), 1);
+
+        const replaced = Uint8Array.from({ length: 32 }, (_, i) => i);
+        yield* secretStore.set("asset-access-signing-key", replaced);
+        const afterSet = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+        assert.deepEqual(Array.from(afterSet), Array.from(replaced));
+
+        yield* secretStore.remove("asset-access-signing-key");
+        const regenerated = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+        assert.notDeepEqual(Array.from(regenerated), Array.from(replaced));
+      }).pipe(Effect.provide(makeCountingSecretStoreLayer(reads)));
+    }),
   );
 
   it.effect("returns the persisted secret when concurrent creators race", () =>
