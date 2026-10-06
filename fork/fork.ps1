@@ -52,7 +52,10 @@ param(
   # restart: print what would happen, without arming or quitting anything.
   [switch]$Probe,
   # restart: cancel the armed restart.
-  [switch]$Cancel
+  [switch]$Cancel,
+  # restart: also shrink the database (fork/compact-db.mjs) while T3 is closed. Restarts even when
+  # T3 already runs the newest build.
+  [switch]$Compact
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,7 +84,8 @@ if (-not $AppDir) { $AppDir = (Get-ItemProperty 'HKCU:\Software\e9197887-efb3-55
 if (-not $AppDir) { $AppDir = Join-Path $env:LOCALAPPDATA 'Programs\t3code' }
 $AppExe = Join-Path $AppDir 'T3 Code (Alpha).exe'
 $AppExeName = Split-Path $AppExe -Leaf
-$LiveDb = Join-Path $env:USERPROFILE '.t3\userdata\state.sqlite'
+# The V2 database T3 runs on. state.sqlite beside it is the V1 database that seeded it once.
+$LiveDb = $env:T3CODE_FORK_LIVE_DB ?? (Join-Path $env:USERPROFILE '.t3\userdata\statev2.sqlite')
 # T3's local HTTP API, for "is T3 back" when agent-kit's t3 CLI is not installed.
 $ApiPort = 3773
 # restart -WhenIdle: minutes with no agent work before T3 restarts, and how often it looks.
@@ -477,13 +481,34 @@ function Invoke-ManualMerge {
 function Backup-LiveDb {
   if ($SkipBackup -or -not (Test-Path $LiveDb)) { return }
   New-Item -ItemType Directory -Force $BackupDir | Out-Null
-  $dest = Join-Path $BackupDir "state-$Stamp.sqlite"
+  $dest = Join-Path $BackupDir "statev2-$Stamp.sqlite"
   Log "snapshotting $LiveDb to $dest (read-only VACUUM INTO)"
   $js = "const {DatabaseSync}=require('node:sqlite'); new DatabaseSync(process.argv[1],{readOnly:true}).exec(process.argv[2])"
   & node --no-warnings -e $js $LiveDb "VACUUM INTO '$($dest -replace "'", "''")'"
   if ($LASTEXITCODE -or -not (Test-Path $dest)) { throw "Backing up $LiveDb failed; nothing was installed." }
-  Get-ChildItem $BackupDir -Filter 'state-*.sqlite' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
+  Get-ChildItem $BackupDir -Filter 'state*-*.sqlite' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
     ForEach-Object { Remove-Item $_.FullName -Force }
+}
+
+function Invoke-CompactDb {
+  # Runs with T3 closed. T3's own installer may have started as it quit and reopened T3: let it
+  # finish, close T3 again, then compact. A failed compaction leaves the database as it was.
+  $until = (Get-Date).AddSeconds(5)
+  while (-not ($own = Get-AppInstallers | Select-Object -First 1) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 250 }
+  if ($own) {
+    Log 'T3 is installing its downloaded update first; compacting after it'
+    $p = Get-Process -Id $own.ProcessId -ErrorAction SilentlyContinue
+    if ($p -and -not $p.WaitForExit(600000)) { throw "T3's own installer was still running after 10 minutes." }
+    Start-Sleep -Seconds 5
+    if (Test-AppRunning) { Close-App 90 }
+  }
+  Clear-ForInstall (Get-Date)
+  Log "compacting $LiveDb"
+  $out = & node --no-warnings (Join-Path $PSScriptRoot 'compact-db.mjs') $LiveDb
+  Log "compaction: $out"
+  $r = "$out" | ConvertFrom-Json -ErrorAction SilentlyContinue
+  if ($r.ok) { return "the database went from $($r.mbBefore) MB to $($r.mbAfter) MB" }
+  "the database was not compacted ($($r.reason ?? $out))"
 }
 
 function Get-Installer([string]$Ver) {
@@ -706,6 +731,7 @@ function Register-OneShot([string]$Verb, [string]$Name, [string]$Arguments, [tim
   # with it). wscript starts pwsh with no window at all; pwsh -WindowStyle Hidden would still
   # flash a console and take the keyboard focus.
   Copy-Item $PSCommandPath (Join-Path $StateDir 'fork.ps1') -Force -ErrorAction SilentlyContinue
+  Copy-Item (Join-Path $PSScriptRoot 'compact-db.mjs') $StateDir -Force -ErrorAction SilentlyContinue
   $vbs = Get-OneShotScript $Verb
   Set-Content $vbs -Encoding ASCII -Value @(
     'Set sh = CreateObject("WScript.Shell")',
@@ -922,7 +948,8 @@ function Show-RestartProbe([string]$Exe, [string]$Ver, [string]$ThreadId, [datet
   $ign = Get-RestartIgnore
   $busy = Get-BusyReason $ign
   "Busy now    $($busy ? $busy : 'no: no thread mid-turn and no agent tool running')$($ign ? " (ignoring $($ign -join ', '))" : '')"
-  $what = if ($from -eq $Ver -and -not $Force) { "nothing: T3 already runs $Ver (-Force restarts it anyway)" }
+  "Compact     $($Compact ? "yes: shrink $LiveDb while T3 is closed" : 'no (-Compact shrinks the database while T3 is closed)')"
+  $what = if ($from -eq $Ver -and -not $Force -and -not $Compact) { "nothing: T3 already runs $Ver (-Force restarts it anyway)" }
     elseif ($WhenIdle) { "quit T3 once nothing has been busy for $((Read-Config).idleMinutes ?? 10) minutes (giving up at $($Until.ToString('yyyy-MM-dd HH:mm'))), install $Ver, reopen T3, check it, report" }
     else { "quit T3 once the thread's turn ends (giving up at $($Until.ToString('HH:mm'))), install $Ver, reopen T3, check it, report" }
   "Would do    $what"
@@ -953,6 +980,11 @@ function Invoke-RestartRun {
       Close-App 90
       $closedAt = Get-Date
     }
+    $compacted = $null
+    if ($req.compact) {
+      $compacted = Invoke-CompactDb
+      $closedAt = Get-Date
+    }
     [void](Complete-Install $req.installer $ver $closedAt -SkipIfCurrent)
     $back = Wait-AppBack 15
     $installed = Get-InstalledBuild
@@ -963,7 +995,7 @@ function Invoke-RestartRun {
     if ($threadId) { Start-Sleep -Seconds 30 }
     $at = (Get-Date).ToString('HH:mm')
     Send-Report $threadId ($ok -and $back ?
-      "T3 Code restarted at $at and runs $installed (was $from). Background jobs that threads had running ended with T3; re-arm any that are still needed. Log: $script:RunLog" :
+      "T3 Code restarted at $at and runs $installed (was $from)$($compacted ? "; $compacted" : ''). Background jobs that threads had running ended with T3; re-arm any that are still needed. Log: $script:RunLog" :
       "T3 Code restart at $at did not finish: T3 $($back ? 'is back' : 'did not come back') and its installed build reads $installed, not $ver. Log: $script:RunLog")
   } catch {
     Log "FAILED: $_"
@@ -991,7 +1023,7 @@ function Invoke-Restart {
   $until = $GiveUpAt ?? (Get-Date).AddHours($WhenIdle ? 12 : 0.5)
   if ($Probe) { Show-RestartProbe $exe $ver $threadId $until; return }
   $from = Get-InstalledBuild
-  if ($from -eq $ver -and -not $Force) { return "T3 already runs $ver, the newest fork build. -Force restarts it anyway." }
+  if ($from -eq $ver -and -not $Force -and -not $Compact) { return "T3 already runs $ver, the newest fork build. -Force restarts it anyway." }
   if ($WhenIdle -and -not (Get-T3Cli)) { throw "-WhenIdle needs agent-kit's t3 CLI to see thread states (config.json t3Cli, or T3_CLI)." }
 
   Backup-LiveDb
@@ -1001,6 +1033,7 @@ function Invoke-Restart {
   [ordered]@{
     version = $ver; installer = $exe; from = $from; armedAt = (Get-Date).ToString('o'); giveUpAt = $until.ToString('o')
     whenIdle = [bool]$WhenIdle; idleMinutes = $idleMinutes; ignore = @(Get-RestartIgnore); thread = $threadId
+    compact = [bool]$Compact
   } | ConvertTo-Json | Set-Content $RestartPath -Encoding UTF8
   Register-OneShot 'restart' $RestartTaskName 'restart -Now' (($until - (Get-Date)) + (New-TimeSpan -Hours 1)) "Restarts T3 Code into fork $ver. Cancel: fork.ps1 restart -Cancel. fork/README.md"
   $when = $WhenIdle ? "once no agent has worked for $idleMinutes minutes" : ($threadId ? 'as soon as this thread''s turn ends' : 'in a few seconds')

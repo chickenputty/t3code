@@ -70,6 +70,7 @@ pwsh fork/fork.ps1 restart         # quit T3 once this thread's turn ends, insta
 pwsh fork/fork.ps1 restart -WhenIdle            # the same, once no agent has worked for 10 minutes
 pwsh fork/fork.ps1 restart -WhenIdle -Probe     # what it would do and what is busy, without doing it
 pwsh fork/fork.ps1 restart -Cancel
+pwsh fork/fork.ps1 restart -WhenIdle -Compact    # also shrink the database while T3 is closed
 pwsh fork/fork.ps1 install         # install the newest fork build when T3 Code quits (switching over)
 pwsh fork/fork.ps1 install -Version 0.0.43-fork.20260929.1   # roll back to an older build
 pwsh fork/fork.ps1 task install    # (re)register the daily task; task run starts it now
@@ -142,7 +143,7 @@ closed again, and a T3 opened while the installer runs is restarted afterwards o
 
 The official app updates from pingdotgg. `pwsh fork/fork.ps1 install` switches it once:
 
-1. Snapshots the live T3 database (`~/.t3/userdata/state.sqlite`, read-only `VACUUM INTO`) to
+1. Snapshots the live T3 database (`~/.t3/userdata/statev2.sqlite`, read-only `VACUUM INTO`) to
    `%LOCALAPPDATA%\t3code-fork\backups` (only the newest snapshot is kept).
 2. Waits for T3 Code to quit (the one-shot task "T3 Code fork install", so it survives T3
    closing), installs silently and reopens T3 Code. Every running agent session ends when T3
@@ -150,6 +151,22 @@ The official app updates from pingdotgg. `pwsh fork/fork.ps1 install` switches i
 
 After that the app updates from this fork's releases like any other update. `install` is also
 the way to roll back (`-Version`); for a newer build, `restart` does the same and more.
+
+## Keeping T3 light
+
+- **Database.** Upstream never prunes `statev2.sqlite`: its `compactEventStore` exists but nothing
+  calls it, so the V1 history copied in at the V2 cutover stays forever (5 GB here by
+  2026-10-06, which stalled every query). `restart -Compact` runs `fork/compact-db.mjs` while T3 is
+  closed: it deletes what `compactEventStore` calls obsolete plus the V1 activity rows of imported
+  threads, then VACUUMs (5.1 GB to 0.8 GB, 90 s). The restart snapshots the database first.
+  `node fork/compact-db.mjs <db> --dry-run` counts what it would delete.
+- **Checkpoints.** Set `T3CODE_CHECKPOINT_SKIP` (user environment, `;`-separated folders) to stop
+  T3 checkpointing threads under those folders; each checkpoint runs `git add -A` over the whole
+  checkout. T3 reads it at start, so restart T3 after changing it.
+- **Patches** (in app code, marked `Fork:`): sidebar rows subscribe to git status as background
+  and refresh every 5 minutes instead of 30 s (`VcsStatusBroadcaster`); the PR discovery sweep runs
+  every 5 minutes instead of every minute (`ThreadPullRequestService`); PR lists in the thread
+  details and the linked-PR panel mount 10 rows at a time with "Show more".
 
 ## Testing the install and restart logic
 
