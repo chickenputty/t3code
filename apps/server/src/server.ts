@@ -99,6 +99,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
+import * as WorkerProcessSpawner from "./workerProcessSpawner.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -275,7 +276,8 @@ const HttpServerLive = Layer.unwrap(
   }),
 );
 
-const PlatformServicesLive = NodeServices.layer;
+// ProcessRunner spawns from a worker on Windows, where CreateProcess can stall the event loop.
+const PlatformServicesLive = Layer.provideMerge(WorkerProcessSpawner.layer, NodeServices.layer);
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 

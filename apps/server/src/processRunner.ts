@@ -11,6 +11,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { WorkerProcessSpawner } from "./workerProcessSpawner.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -411,7 +412,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawner = (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
 
   const run: ProcessRunner["Service"]["run"] = (input) =>
     finalizeRunProcess(runProcessCore(spawner, input), input);
