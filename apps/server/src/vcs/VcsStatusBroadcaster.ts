@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ import type {
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
+  VcsStatusSubscribeInput,
 } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -30,6 +32,8 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+// Fork: a cwd watched only by background subscribers (sidebar rows) refreshes this often at most.
+const BACKGROUND_VCS_STATUS_REFRESH_INTERVAL = Duration.minutes(5);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
@@ -137,6 +141,7 @@ interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
+  readonly foregroundCount: Ref.Ref<number>;
 }
 
 interface StreamStatusOptions {
@@ -201,7 +206,7 @@ export class VcsStatusBroadcaster extends Context.Service<
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly streamStatus: (
-      input: VcsStatusInput,
+      input: VcsStatusSubscribeInput,
       options?: StreamStatusOptions,
     ) => Stream.Stream<VcsStatusStreamEvent, GitManagerServiceError>;
   }
@@ -528,11 +533,13 @@ export const make = Effect.gen(function* () {
   const makeRemoteRefreshLoop = (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
+    foregroundCountRef: Ref.Ref<number>,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) => {
     return Effect.gen(function* () {
       const consecutiveFailuresRef = yield* Ref.make(0);
+      const lastRefreshAtRef = yield* Ref.make(yield* Clock.currentTimeMillis);
       const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
       const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
         const configuredInterval = yield* automaticRemoteRefreshInterval;
@@ -559,6 +566,18 @@ export const make = Effect.gen(function* () {
         if (!shouldRun) {
           return activeInterval;
         }
+        // Keep ticking at the active interval so a cwd that gains a foreground subscriber
+        // catches up within one tick, but refresh background-only cwds rarely.
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          !needsInitialRefresh &&
+          (yield* Ref.get(foregroundCountRef)) === 0 &&
+          now - (yield* Ref.get(lastRefreshAtRef)) <
+            Duration.toMillis(BACKGROUND_VCS_STATUS_REFRESH_INTERVAL)
+        ) {
+          return activeInterval;
+        }
+        yield* Ref.set(lastRefreshAtRef, now);
 
         const exit = yield* refreshRemoteStatus(cwd, {
           refreshUpstream: !Duration.isZero(configuredInterval),
@@ -612,17 +631,21 @@ export const make = Effect.gen(function* () {
   const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
     cwd: string,
     demandCwd: string,
+    foreground: boolean,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (existing) {
-        return Ref.update(existing.demandCwds, (demandCwds) => {
-          const next = new Map(demandCwds);
-          next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
-          return next;
-        }).pipe(
+        return Ref.update(existing.foregroundCount, (count) => count + (foreground ? 1 : 0)).pipe(
+          Effect.andThen(
+            Ref.update(existing.demandCwds, (demandCwds) => {
+              const next = new Map(demandCwds);
+              next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
+              return next;
+            }),
+          ),
           Effect.map(() => {
             const nextPollers = new Map(activePollers);
             nextPollers.set(cwd, {
@@ -634,11 +657,15 @@ export const make = Effect.gen(function* () {
         );
       }
 
-      return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
-        Effect.flatMap((demandCwds) =>
+      return Effect.all([
+        Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])),
+        Ref.make(foreground ? 1 : 0),
+      ]).pipe(
+        Effect.flatMap(([demandCwds, foregroundCount]) =>
           makeRemoteRefreshLoop(
             cwd,
             demandCwds,
+            foregroundCount,
             automaticRemoteRefreshInterval,
             refreshImmediately,
           ).pipe(
@@ -649,6 +676,7 @@ export const make = Effect.gen(function* () {
                 fiber,
                 subscriberCount: 1,
                 demandCwds,
+                foregroundCount,
               });
               return [undefined, nextPollers] as const;
             }),
@@ -661,6 +689,7 @@ export const make = Effect.gen(function* () {
   const releaseRemotePoller = Effect.fn("VcsStatusBroadcaster.releaseRemotePoller")(function* (
     cwd: string,
     demandCwd: string,
+    foreground: boolean,
   ) {
     const pollerToInterrupt = yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
@@ -669,16 +698,21 @@ export const make = Effect.gen(function* () {
       }
 
       if (existing.subscriberCount > 1) {
-        return Ref.update(existing.demandCwds, (demandCwds) => {
-          const nextDemandCwds = new Map(demandCwds);
-          const count = nextDemandCwds.get(demandCwd) ?? 0;
-          if (count <= 1) {
-            nextDemandCwds.delete(demandCwd);
-          } else {
-            nextDemandCwds.set(demandCwd, count - 1);
-          }
-          return nextDemandCwds;
-        }).pipe(
+        return Ref.update(existing.foregroundCount, (count) =>
+          Math.max(0, count - (foreground ? 1 : 0)),
+        ).pipe(
+          Effect.andThen(
+            Ref.update(existing.demandCwds, (demandCwds) => {
+              const nextDemandCwds = new Map(demandCwds);
+              const count = nextDemandCwds.get(demandCwd) ?? 0;
+              if (count <= 1) {
+                nextDemandCwds.delete(demandCwd);
+              } else {
+                nextDemandCwds.set(demandCwd, count - 1);
+              }
+              return nextDemandCwds;
+            }),
+          ),
           Effect.as([
             null,
             new Map(activePollers).set(cwd, {
@@ -708,15 +742,20 @@ export const make = Effect.gen(function* () {
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
+        const foreground = input.priority !== "background";
         yield* retainRemotePoller(
           cwd,
           input.cwd,
+          foreground,
           options?.automaticRemoteRefreshInterval ??
             Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
+        const release = releaseRemotePoller(cwd, input.cwd, foreground).pipe(
+          Effect.ignore,
+          Effect.asVoid,
+        );
 
         return Stream.concat(
           Stream.make({

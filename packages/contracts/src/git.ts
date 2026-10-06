@@ -111,6 +111,14 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+// Fork: sidebar rows subscribe as "background". The server refreshes a cwd that only background
+// subscribers watch on a slower interval than one an open thread is looking at.
+export const VcsStatusSubscribeInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  priority: Schema.optional(Schema.Literals(["background"])),
+});
+export type VcsStatusSubscribeInput = typeof VcsStatusSubscribeInput.Type;
+
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });

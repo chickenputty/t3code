@@ -853,6 +853,58 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())));
   });
 
+  it.effect("refreshes a cwd only background subscribers watch every 5 minutes", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      const options = { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) };
+      const watch = (input: { cwd: string; priority?: "background" }, scope: Scope.Scope) =>
+        Effect.gen(function* () {
+          const snapshot = yield* Deferred.make<void>();
+          yield* Stream.runForEach(broadcaster.streamStatus(input, options), (event) =>
+            event._tag === "snapshot" ? Deferred.succeed(snapshot, undefined) : Effect.void,
+          ).pipe(Effect.forkIn(scope));
+          yield* Deferred.await(snapshot);
+        });
+
+      const sidebar = yield* Scope.make();
+      yield* watch({ cwd: "/repo", priority: "background" }, sidebar);
+      assert.equal(state.remoteStatusCalls, 1);
+
+      yield* TestClock.adjust(Duration.minutes(4));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 1);
+
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 2);
+
+      // Opening the thread adds a foreground subscriber: back to every tick.
+      const open = yield* Scope.make();
+      yield* watch({ cwd: "/repo" }, open);
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 3);
+
+      // Closing it leaves the sidebar alone again.
+      yield* Scope.close(open, Exit.void);
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 3);
+
+      yield* Scope.close(sidebar, Exit.void);
+    }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())));
+  });
+
   // A push from a terminal moves ahead; a PR merged on the host moves ahead-of-default.
   it.effect.each([
     ["a push", { ...baseRemoteStatus, aheadCount: 1, aheadOfDefaultCount: 0 }],

@@ -128,6 +128,7 @@ import {
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
+  VcsStatusSubscribeInput,
 } from "./git.ts";
 import {
   ReviewDiffFileContentsInput,
@@ -1249,7 +1250,7 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
 });
 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
-  payload: VcsStatusInput,
+  payload: VcsStatusSubscribeInput,
   success: VcsStatusStreamEvent,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
   stream: true,

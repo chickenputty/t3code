@@ -397,7 +397,9 @@ export const make = Effect.gen(function* () {
         yield* Effect.gen(function* () {
           yield* worker.enqueue({ threadId: null, refresh: false });
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.delay("1 minute"));
+          // Fork: every 5 minutes, not every minute. Each pass runs git in every unsettled
+          // thread's checkout; a thread whose run just ended is refreshed by its events above.
+        }).pipe(Effect.repeat(Schedule.spaced("5 minutes")), Effect.delay("1 minute"));
       }).pipe(Effect.asVoid),
     );
   });
