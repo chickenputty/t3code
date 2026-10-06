@@ -11,7 +11,7 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
 } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -260,6 +260,9 @@ function LinkRow({
   );
 }
 
+// Fork: rows shown before "Show more", and how many each click adds.
+const LINK_ROWS_PAGE = 10;
+
 export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const configs = useServerConfigs();
   if (configs.get(threadRef.environmentId)?.environment.capabilities.threadPullRequests !== true) {
@@ -283,6 +286,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       .threadPullRequestWatch === true;
   const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
   const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
+  const [shownCount, setShownCount] = useState(LINK_ROWS_PAGE);
   const handleUnlink = useCallback(
     (link: ThreadPullRequestLink) => {
       void unlink({
@@ -346,7 +350,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col p-1.5">
-          {lines.map((line) => (
+          {lines.slice(0, shownCount).map((line) => (
             <LinkRow
               key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
               line={line}
@@ -355,6 +359,17 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               onSetWatching={supportsWatch ? handleSetWatching : null}
             />
           ))}
+          {lines.length > shownCount ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="mt-1 self-center text-muted-foreground"
+              onClick={() => setShownCount(shownCount + LINK_ROWS_PAGE)}
+            >
+              Show {Math.min(LINK_ROWS_PAGE, lines.length - shownCount)} more of{" "}
+              {lines.length - shownCount}
+            </Button>
+          ) : null}
         </div>
       </ScrollArea>
       <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">

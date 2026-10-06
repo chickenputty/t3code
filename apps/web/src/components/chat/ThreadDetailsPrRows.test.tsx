@@ -162,3 +162,32 @@ it("lets only watched pull requests stop their watch", () => {
     },
   });
 });
+
+it("mounts the other pull requests ten at a time", () => {
+  const many = Array.from({ length: 25 }, (_, index) =>
+    link(
+      100 + index,
+      `branch-${index}`,
+      "main",
+      `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+    ),
+  );
+  render(many, many[0]!);
+  expect(rows()).toHaveLength(1);
+  expect(toggleLabel()).toBe("Show 10 more of 24");
+
+  toggle();
+  expect(rows()).toHaveLength(11);
+  expect(toggleLabel()).toBe("Show 10 more of 14");
+
+  toggle();
+  expect(rows()).toHaveLength(21);
+  expect(toggleLabel()).toBe("Show 4 more");
+
+  toggle();
+  expect(rows()).toHaveLength(25);
+  expect(toggleLabel()).toBe("Show less");
+
+  toggle();
+  expect(rows()).toHaveLength(1);
+});

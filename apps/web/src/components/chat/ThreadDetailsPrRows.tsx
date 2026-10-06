@@ -20,6 +20,10 @@ import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadSta
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 
+// Fork: each row reads its PR's detail and checks from GitHub, so mount at most this many more
+// rows per "Show more".
+const PR_ROWS_PAGE = 10;
+
 function ThreadDetailsPrLinkRow({
   environmentId,
   link,
@@ -73,7 +77,7 @@ export function ThreadDetailsPrRows({
   currentLink: ThreadPullRequestLink | null;
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [shown, setShown] = useState(0);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   // Only watched links get the eye; the row hides it once the server records the stop.
   const stopWatching = (link: ThreadPullRequestLink | null) =>
@@ -102,28 +106,40 @@ export function ThreadDetailsPrRows({
   return (
     <>
       {currentRow}
-      {expanded
-        ? rest.map((link) => (
-            <ThreadDetailsPrLinkRow
-              key={threadPullRequestKeyOf(link)}
-              environmentId={row.environmentId}
-              link={link}
-              onOpen={(event) => onOpenLink(event, link.url)}
-              onActed={row.onActed}
-              onStopWatching={stopWatching(link)}
-            />
-          ))
+      {shown > 0
+        ? rest
+            .slice(0, shown)
+            .map((link) => (
+              <ThreadDetailsPrLinkRow
+                key={threadPullRequestKeyOf(link)}
+                environmentId={row.environmentId}
+                link={link}
+                onOpen={(event) => onOpenLink(event, link.url)}
+                onActed={row.onActed}
+                onStopWatching={stopWatching(link)}
+              />
+            ))
         : null}
       <ThreadDetailsControl
         variant="ghost"
         size="sm"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() =>
+          setShown(shown >= rest.length ? 0 : Math.min(rest.length, shown + PR_ROWS_PAGE))
+        }
         part="row"
         tone="muted"
         className="w-full active:scale-100"
       >
-        <MorphIcon aria-hidden className="size-4 shrink-0" icon={expanded ? Minus : Plus} />
-        {expanded ? "Show less" : `Show ${rest.length} more`}
+        <MorphIcon
+          aria-hidden
+          className="size-4 shrink-0"
+          icon={shown >= rest.length ? Minus : Plus}
+        />
+        {shown >= rest.length
+          ? "Show less"
+          : `Show ${Math.min(PR_ROWS_PAGE, rest.length - shown)} more${
+              rest.length - shown > PR_ROWS_PAGE ? ` of ${rest.length - shown}` : ""
+            }`}
       </ThreadDetailsControl>
     </>
   );
