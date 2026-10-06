@@ -5,6 +5,10 @@
  * shelf its wake order and the settled shelf its settle order. Manual order
  * without grouping hands the list back untouched, so upstream's drag order
  * stays the source of truth whenever the view is off.
+ *
+ * With grouping on, "Pins stay grouped" folds the pinned block into the project
+ * groups: a pin stays in its project and sorts to the top of it, instead of
+ * rendering above every folder.
  */
 import type {
   SidebarProjectIconStyle,
@@ -235,18 +239,44 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
     readonly openedAtOf?: (thread: T) => number | undefined;
     readonly groupOf: (thread: T) => SidebarProjectGroupRef | null;
     readonly collapsedGroupKeys: ReadonlySet<string>;
+    /**
+     * Pinned threads in the sidebar's pin order, to fold into their project
+     * group instead of a pinned block above the list ("Pins stay grouped").
+     * Null while that view is off. These are the same thread objects the pinned
+     * block renders, so a pin is recognized by identity.
+     */
+    readonly pinnedThreads?: readonly T[] | null;
   },
 ): SidebarActiveArrangement<T> {
   const sorted = sortSidebarThreads(threads, options.sort, options.statusOf, options.openedAtOf);
   if (!options.groupByProject) return { threads: sorted, groups: null };
 
+  const pins = options.pinnedThreads ?? [];
+  const pinRank = new Map<T, number>();
+  pins.forEach((thread, index) => pinRank.set(thread, index));
+  // Pins go through the sort with everything else, so a project whose only
+  // threads are pinned still lands where its thread sorts. Inside the group
+  // they are hoisted back above the sorted rows, in pin order.
+  const ordered =
+    pinRank.size === 0
+      ? sorted
+      : sortSidebarThreads(
+          [...pins, ...sorted.filter((thread) => !pinRank.has(thread))],
+          options.sort,
+          options.statusOf,
+          options.openedAtOf,
+        );
+
   const byKey = new Map<string, { ref: SidebarProjectGroupRef; threads: T[] }>();
-  for (const thread of sorted) {
+  for (const thread of ordered) {
     const ref = options.groupOf(thread) ?? UNKNOWN_PROJECT_GROUP;
     const entry = byKey.get(ref.key);
     if (entry === undefined) byKey.set(ref.key, { ref, threads: [thread] });
     else entry.threads.push(thread);
   }
+  const pinOrder = (left: T, right: T) =>
+    (pinRank.get(left) ?? Number.MAX_SAFE_INTEGER) -
+    (pinRank.get(right) ?? Number.MAX_SAFE_INTEGER);
   // Groups follow the sort too (Mitchell, PR #1): a project sits where its first thread
   // sorts, so under the activity sort the project you touched last is on top, and under the
   // name sort the groups read A to Z. Threads whose project is not loaded yet trail the
@@ -260,7 +290,8 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
     .map((entry): SidebarActiveThreadGroup<T> => ({
       key: entry.ref.key,
       label: entry.ref.label,
-      threads: entry.threads,
+      // A stable sort, so unpinned rows keep the sort's order behind the pins.
+      threads: pinRank.size === 0 ? entry.threads : [...entry.threads].sort(pinOrder),
       collapsed: options.collapsedGroupKeys.has(entry.ref.key),
     }));
   return {
