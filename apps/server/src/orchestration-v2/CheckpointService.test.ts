@@ -101,3 +101,15 @@ it.effect.each([false, true, "interrupt"] as const)(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it("skips checkpoints for folders under a T3CODE_CHECKPOINT_SKIP prefix", () => {
+  const skip = process.platform === "win32" ? ["c:/repos/big"] : ["/repos/big"];
+  const root = process.platform === "win32" ? "C:\\Repos\\Big" : "/repos/big";
+  const sep = process.platform === "win32" ? "\\" : "/";
+  assert.isTrue(CheckpointService.isCheckpointSkipped(root, skip));
+  assert.isTrue(
+    CheckpointService.isCheckpointSkipped(`${root}${sep}.claude${sep}worktrees${sep}a`, skip),
+  );
+  assert.isFalse(CheckpointService.isCheckpointSkipped(`${root}-other`, skip));
+  assert.isFalse(CheckpointService.isCheckpointSkipped(root, []));
+});

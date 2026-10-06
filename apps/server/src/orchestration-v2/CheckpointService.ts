@@ -10,6 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -239,6 +240,19 @@ function makeCheckpoint(input: {
   };
 }
 
+// Fork: T3CODE_CHECKPOINT_SKIP lists folders (separated by ";") whose threads get no git
+// checkpoints, as if they were not git repositories. Capturing one runs `git add -A` over the whole
+// checkout, which takes minutes in a large repository.
+const normalizeSkipPath = (value: string) => {
+  const slashed = value.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? slashed.toLowerCase() : slashed;
+};
+
+export const isCheckpointSkipped = (cwd: string, skip: ReadonlyArray<string>) => {
+  const path = normalizeSkipPath(cwd);
+  return skip.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+};
+
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
@@ -252,8 +266,18 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
+    const checkpointSkipSetting: string = yield* Effect.gen(function* () {
+      return yield* Config.String("T3CODE_CHECKPOINT_SKIP").pipe(Config.withDefault(""));
+    }).pipe(Effect.orElseSucceed(() => ""));
+    const checkpointSkip = checkpointSkipSetting
+      .split(";")
+      .map(normalizeSkipPath)
+      .filter((prefix) => prefix.length > 0);
+
     const isGitCheckpointable = (cwd: string) =>
-      checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+      isCheckpointSkipped(cwd, checkpointSkip)
+        ? Effect.succeed(false)
+        : checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
