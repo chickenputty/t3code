@@ -216,8 +216,18 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
-  const persistedTargets = yield* storage.list;
-  const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
+  // Fork: an unreadable saved catalog (e.g. desktop secure storage that can no longer decrypt
+  // it after a profile change, 2026-10-05) must not take the local environment down with it.
+  // Start without saved remotes; the catalog stays on disk because writes re-read and fail too.
+  const savedCatalog = yield* Effect.all([storage.list, storage.listDisabled]).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Could not read saved connections; starting without them.", {
+        error: error.message,
+      }).pipe(Effect.as([[], []] as const)),
+    ),
+  );
+  const persistedTargets: ReadonlyArray<ConnectionTarget> = savedCatalog[0];
+  const disabledEnvironmentIds = new Set<EnvironmentId>(savedCatalog[1]);
   const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
     target: ConnectionTarget,
   ) {

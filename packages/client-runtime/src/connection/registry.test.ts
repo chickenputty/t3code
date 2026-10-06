@@ -159,6 +159,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
     readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    readonly listError?: Persistence.ConnectionPersistenceError;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -197,8 +198,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     new Set(options?.initialDisabled ?? []),
   );
   const targetStore = Persistence.ConnectionTargetStore.of({
-    list: Ref.get(storedTargets),
-    listDisabled: Ref.get(storedDisabled).pipe(Effect.map((ids) => [...ids])),
+    list: options?.listError ? Effect.fail(options.listError) : Ref.get(storedTargets),
+    listDisabled: options?.listError
+      ? Effect.fail(options.listError)
+      : Ref.get(storedDisabled).pipe(Effect.map((ids) => [...ids])),
   });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
     register: (registration, routes) =>
@@ -1297,6 +1300,30 @@ describe("EnvironmentRegistry", () => {
           ),
         ).toEqual(BEARER_PROFILE);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("starts platform environments when the saved catalog cannot be read", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        listError: new Persistence.ConnectionPersistenceError({
+          operation: "list-targets",
+          message: "Desktop connection catalog protection failed during decrypt-catalog.",
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect((yield* SubscriptionRef.get(registry.entries)).has(RELAY_TARGET.environmentId)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(harness.layer));
     }),
   );
 
