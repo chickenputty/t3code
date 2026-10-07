@@ -7,7 +7,11 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
+import {
+  storageCleanupActivityAt,
+  storageCleanupSquashMerged,
+  storageCleanupThreadIdle,
+} from "./storageCleanup.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -98,6 +102,16 @@ describe("V2 storage cleanup eligibility", () => {
     expect(
       storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
     ).toBe(DateTime.toEpochMillis(runTime));
+  });
+
+  it("counts a squash-merged branch as merged only without commits after the merge", () => {
+    const mergedAt = "2026-06-09T12:00:00.000Z";
+    const merged = { state: "merged", mergedAt };
+    expect(storageCleanupSquashMerged(merged, Date.parse(mergedAt) - DAY_MS)).toBe(true);
+    expect(storageCleanupSquashMerged(merged, Date.parse(mergedAt) + 1_000)).toBe(false);
+    expect(storageCleanupSquashMerged({ state: "merged", mergedAt: null }, 0)).toBe(false);
+    expect(storageCleanupSquashMerged({ state: "closed", mergedAt }, 0)).toBe(false);
+    expect(storageCleanupSquashMerged(null, 0)).toBe(false);
   });
 
   function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {

@@ -106,6 +106,17 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
   );
 }
 
+// Fork: a squash or rebase merge never puts the branch head on the default branch. Such a
+// worktree counts as merged when its pull request merged and HEAD has no commit made after it.
+export function storageCleanupSquashMerged(
+  pullRequest: { readonly state: string; readonly mergedAt?: string | null } | null,
+  headCommittedAtMs: number,
+): boolean {
+  if (pullRequest?.state !== "merged" || pullRequest.mergedAt == null) return false;
+  const mergedAtMs = Date.parse(pullRequest.mergedAt);
+  return Number.isFinite(mergedAtMs) && headCommittedAtMs <= mergedAtMs;
+}
+
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
@@ -295,14 +306,26 @@ export const make = Effect.gen(function* () {
             args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
             allowNonZeroExit: true,
           });
-          if (ancestor.exitCode !== 0) return;
-          eligible = settings.worktreeUnchanged;
+          const integrated = ancestor.exitCode === 0;
+          eligible = integrated && settings.worktreeUnchanged;
           if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true },
             );
-            eligible = pullRequest?.state === "merged";
+            if (integrated) {
+              eligible = pullRequest?.state === "merged";
+            } else {
+              const committedAt = yield* git.execute({
+                operation: "StorageCleanup.headCommittedAt",
+                cwd: worktreePath,
+                args: ["log", "-1", "--format=%ct", head.commitSha],
+              });
+              eligible = storageCleanupSquashMerged(
+                pullRequest,
+                Number(committedAt.stdout.trim()) * 1_000,
+              );
+            }
           }
         }
         if (!eligible) return;
