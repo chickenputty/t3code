@@ -5,7 +5,11 @@
  * `shell.openInEditor` with the "file-manager" editor and no reveal flag: a
  * file opens in its default app and a folder opens in the file manager.
  */
-import { defaultOpenBlockedExtension, type ContextMenuItem } from "@t3tools/contracts";
+import {
+  defaultOpenBlockedExtension,
+  DIRECTORY_LAUNCH_EXTENSIONS,
+  type ContextMenuItem,
+} from "@t3tools/contracts";
 
 export type FileEntryKind = "file" | "directory";
 
@@ -42,11 +46,14 @@ export function parentDirectoryPath(path: string): string | null {
  * Whether "Open File"/"Open Folder" may launch `path`. Opening a script,
  * installer or shortcut with its default app runs it, so those are left to
  * "Open Parent Folder"; the server refuses them too. Folders only open in the
- * file manager, except macOS app bundles.
+ * file manager, except macOS bundles (.app, .pkg) that launch.
  */
 export function canOpenEntryWithDefaultApp(path: string, kind: FileEntryKind): boolean {
   const blocked = defaultOpenBlockedExtension(path);
-  return blocked === undefined || (kind === "directory" && blocked !== ".app");
+  return (
+    blocked === undefined ||
+    (kind === "directory" && !DIRECTORY_LAUNCH_EXTENSIONS.includes(blocked))
+  );
 }
 
 /**

@@ -385,12 +385,12 @@ it.each([
   {
     name: "a Windows path keeps its drive colon",
     input: { target: "C:/x", platform: "win32", command: "explorer" },
-    expected: { path: "C:/x", argument: "C:\\x" },
+    expected: { path: "C:\\x", argument: "C:\\x" },
   },
   {
     name: "a Windows drive root",
     input: { target: "C:/", platform: "win32", command: "explorer" },
-    expected: { path: "C:/", argument: "C:\\" },
+    expected: { path: "C:\\", argument: "C:\\" },
   },
   {
     name: "a Windows position suffix",
@@ -398,10 +398,20 @@ it.each([
     expected: { path: "D:\\repo\\src\\a.ts", argument: "D:\\repo\\src\\a.ts" },
   },
   {
+    name: "a Windows trailing dot segment",
+    input: { target: "C:/x/run.exe/.", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\x\\run.exe", argument: "C:\\x\\run.exe" },
+  },
+  {
+    name: "a Windows parent segment",
+    input: { target: "C:/x/run.exe/a/..", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\x\\run.exe", argument: "C:\\x\\run.exe" },
+  },
+  {
     name: "a UNC share path",
     input: { target: "//server/share/dir/file.png", platform: "win32", command: "explorer" },
     expected: {
-      path: "//server/share/dir/file.png",
+      path: "\\\\server\\share\\dir\\file.png",
       argument: "\\\\server\\share\\dir\\file.png",
     },
   },
@@ -417,6 +427,11 @@ it.each([
       path: "/home/me/repo/thumb.png",
       argument: "\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\thumb.png",
     },
+  },
+  {
+    name: "a macOS bundle with a trailing dot segment",
+    input: { target: "/Applications/Calculator.app/.", platform: "darwin", command: "open" },
+    expected: { path: "/Applications/Calculator.app", argument: "/Applications/Calculator.app" },
   },
   {
     name: "a POSIX name that really ends in :12",
@@ -439,7 +454,7 @@ it.each([
   );
 });
 
-it.effect("refuses to open executable file types with the default app on Windows", () =>
+it.effect("refuses executable types, dot segments and data streams on Windows", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -447,17 +462,30 @@ it.effect("refuses to open executable file types with the default app on Windows
     yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
 
     let spawnCount = 0;
+    const targets = [
+      "C:/Users/me/Downloads/run.exe",
+      "C:/x/setup.MSI.",
+      "C:/x/payload.js:3",
+      "C:/x/a.lnk",
+      "C:/x/run.exe/.",
+      "C:/x/run.exe/a/..",
+      "C:/x/run.exe::$DATA",
+      "C:/x/notes.txt:hidden.exe",
+      "C:/x/tool.jar",
+      "C:/x/setup.appinstaller",
+      // Only in this host's PATHEXT.
+      "C:/x/thing.foo",
+    ];
     const errors = yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      return yield* Effect.forEach(
-        ["C:/Users/me/Downloads/run.exe", "C:/x/setup.MSI.", "C:/x/payload.js:3", "C:/x/a.lnk"],
-        (cwd) => Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
+      return yield* Effect.forEach(targets, (cwd) =>
+        Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
       );
     }).pipe(
       Effect.provide(
         layerTest({
           platform: "win32",
-          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD;.FOO" },
           onSpawn: () => {
             spawnCount += 1;
           },
@@ -466,20 +494,65 @@ it.effect("refuses to open executable file types with the default app on Windows
     );
 
     assert.deepEqual(
-      errors.map((error) => [error._tag, "extension" in error ? error.extension : undefined]),
+      errors.map((error) => [error._tag, "reason" in error ? error.reason : undefined]),
       [
-        ["ExternalLauncherBlockedFileTypeError", ".exe"],
-        ["ExternalLauncherBlockedFileTypeError", ".msi"],
-        ["ExternalLauncherBlockedFileTypeError", ".js"],
-        ["ExternalLauncherBlockedFileTypeError", ".lnk"],
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.msi' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.js' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.lnk' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "a data stream path"],
+        ["ExternalLauncherBlockedFileTypeError", "a data stream path"],
+        ["ExternalLauncherBlockedFileTypeError", "'.jar' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.appinstaller' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.foo' files"],
       ],
     );
     assert.equal(spawnCount, 0);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("opens a real folder whose name looks executable on Windows", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+    const folders = ["x.com", "three.js", "bun.sh"].map((name) => path.join(binDir, name));
+    for (const folder of folders) yield* fileSystem.makeDirectory(folder);
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const folder of folders) {
+        // Forward slashes and a trailing slash, as web links send them.
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: `${folder.replaceAll("\\", "/")}/`,
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: (command) => {
+            spawned.push(command);
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      folders.map((folder) => [`${NodePath.win32.normalize(folder)}\\`]),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)(
-  "opens a folder whose name looks executable but refuses the same name as a file on Linux",
+  "opens executable-looking folders but refuses scripts, executables and links to them on Linux",
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -494,12 +567,19 @@ it.effect.skipIf(windowsHost)(
       yield* fileSystem.makeDirectory(folder);
       const script = path.join(binDir, "install.sh");
       yield* fileSystem.writeFileString(script, "#!/bin/sh\n");
+      const binary = path.join(binDir, "tool");
+      yield* fileSystem.writeFileString(binary, "#!/bin/sh\n");
+      yield* fileSystem.chmod(binary, 0o755);
+      const link = path.join(binDir, "readme.txt");
+      yield* fileSystem.symlink(script, link);
 
       const opened: ChildProcess.StandardCommand[] = [];
-      const scriptError = yield* Effect.gen(function* () {
+      const errors = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         yield* launcher.launchEditor({ editor: "file-manager", cwd: folder });
-        return yield* Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd: script }));
+        return yield* Effect.forEach([script, `${script}/.`, binary, link], (cwd) =>
+          Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
+        );
       }).pipe(
         Effect.provide(
           layerTest({
@@ -520,7 +600,10 @@ it.effect.skipIf(windowsHost)(
         opened.map((command) => command.args),
         [[folder]],
       );
-      assert.equal(scriptError._tag, "ExternalLauncherBlockedFileTypeError");
+      assert.deepEqual(
+        errors.map((error) => ("reason" in error ? error.reason : error._tag)),
+        ["'.sh' files", "'.sh' files", "an executable file", "'.sh' files"],
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

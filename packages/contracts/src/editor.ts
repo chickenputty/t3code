@@ -223,9 +223,11 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
 }
 
 /**
- * Extensions a plain file-manager open must refuse: the "default app" for
- * these is the shell or an installer, so opening one runs it. Chat file links
- * are model-authored, so "Open File" on a link must never execute code.
+ * Extensions a plain file-manager open refuses: the "default app" for these
+ * is a shell, interpreter, installer or launcher, so opening one runs it.
+ * Chat file links are model-authored, so this reduces the risk that "Open
+ * File" on a link executes code. The server adds the host's PATHEXT and, on
+ * POSIX, refuses any file with an execute bit.
  */
 export const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
   // Windows (and WSL, which opens through Explorer)
@@ -249,34 +251,90 @@ export const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
   ".hta",
   ".cpl",
   ".reg",
+  ".jar",
+  ".py",
+  ".pyw",
+  ".appref-ms",
+  ".application",
+  ".settingcontent-ms",
+  ".scf",
+  ".chm",
+  ".msix",
+  ".msixbundle",
+  ".appx",
+  ".appinstaller",
   // macOS
   ".app",
   ".command",
   ".sh",
+  ".terminal",
+  ".tool",
+  ".workflow",
+  ".pkg",
+  ".mpkg",
+  // Linux
+  ".desktop",
+  ".appimage",
 ];
 
-/** The blocked extension of `path` (lowercased), or undefined when it may be opened. */
-export function defaultOpenBlockedExtension(path: string): string | undefined {
-  const trimmed = path.replace(/[\\/]+$/, "");
-  // Windows ignores trailing dots and spaces, so `run.exe.` still runs.
-  const basename = trimmed
-    .slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1)
-    .replace(/[. ]+$/, "");
+/** Bundle extensions that launch even though they are directories (macOS). */
+export const DIRECTORY_LAUNCH_EXTENSIONS: ReadonlyArray<string> = [
+  ".app",
+  ".pkg",
+  ".mpkg",
+  ".workflow",
+];
+
+/**
+ * The name a path finally points at, after `.` and `..` segments, so
+ * `run.exe/.` and `run.exe/a/..` both end at `run.exe`.
+ */
+export function effectivePathBasename(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.at(-1) ?? "";
+}
+
+/** The lowercased extension of a path's effective name, ignoring Windows' trailing dots and spaces. */
+export function effectivePathExtension(path: string): string | undefined {
+  // Windows ignores trailing dots and spaces, so `run.exe.` still runs, and a
+  // `:stream` suffix names a data stream of the same file.
+  const basename = (effectivePathBasename(path).split(":")[0] ?? "").replace(/[. ]+$/, "");
   const dotIndex = basename.lastIndexOf(".");
   if (dotIndex <= 0) return undefined;
-  const extension = basename.slice(dotIndex).toLowerCase();
-  return DEFAULT_OPEN_BLOCKED_EXTENSIONS.includes(extension) ? extension : undefined;
+  return basename.slice(dotIndex).toLowerCase();
+}
+
+/** The blocked extension of `path` (lowercased), or undefined when it may be opened. */
+export function defaultOpenBlockedExtension(
+  path: string,
+  extraExtensions: ReadonlyArray<string> = [],
+): string | undefined {
+  const extension = effectivePathExtension(path);
+  if (extension === undefined) return undefined;
+  return DEFAULT_OPEN_BLOCKED_EXTENSIONS.includes(extension) ||
+    extraExtensions.some((extra) => extra.toLowerCase() === extension)
+    ? extension
+    : undefined;
 }
 
 export class ExternalLauncherBlockedFileTypeError extends Schema.TaggedError<ExternalLauncherBlockedFileTypeError>()(
   "ExternalLauncherBlockedFileTypeError",
   {
     target: Schema.String,
-    extension: Schema.String,
+    /** Why the default app could run code: "'.exe' files", "an executable file", ... */
+    reason: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Refusing to open '${this.target}': ${this.extension} files can run code. Open its parent folder instead.`;
+    return `Refusing to open '${this.target}' with its default app: ${this.reason} can run code. Open its parent folder instead.`;
   }
 }
 

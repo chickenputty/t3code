@@ -1359,6 +1359,17 @@ interface MarkdownFileLinkProps {
     | undefined;
 }
 
+/** Per-link actions a file chip receives, cached so the chip's memo holds. */
+type MarkdownFileChipActions = Pick<
+  MarkdownFileLinkProps,
+  | "onOpen"
+  | "onOpenMedia"
+  | "onOpenFile"
+  | "onOpenParentFolder"
+  | "resolveCopyPaths"
+  | "onOpenInBrowser"
+>;
+
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
 
 function pathParentSegments(path: string): string[] {
@@ -2834,6 +2845,60 @@ function useChatMarkdownState({
     },
     [resolveChipHostPath],
   );
+  // Chips re-render through a memo comparator, so each chip's action callbacks
+  // must keep their identity across renders. They depend only on the link and
+  // its media source, so they are cached per link until a dependency changes.
+  const chipActionsByLink = useMemo(
+    () => new Map<string, MarkdownFileChipActions>(),
+    [
+      canOpenWithFileManager,
+      canUseShellActions,
+      openMarkdownFileInEditor,
+      openMarkdownFileInPreview,
+      openMarkdownFileWithFileManager,
+      previewMarkdownMedia,
+      resolveMarkdownFileCopyPaths,
+      threadRef,
+    ],
+  );
+  const chipActionsFor = useCallback(
+    (fileLinkMeta: MarkdownFileLinkMeta, mediaPath: string, canPreviewMedia: boolean) => {
+      const key = `${fileLinkMeta.targetPath}\u0000${mediaPath}`;
+      const cached = chipActionsByLink.get(key);
+      if (cached) return cached;
+      const actions: MarkdownFileChipActions = {
+        onOpen: canUseShellActions ? () => openMarkdownFileInEditor(fileLinkMeta) : undefined,
+        onOpenMedia:
+          threadRef && canPreviewMedia
+            ? () => void previewMarkdownMedia(fileLinkMeta, mediaPath)
+            : undefined,
+        onOpenFile: canOpenWithFileManager
+          ? () => openMarkdownFileWithFileManager(fileLinkMeta, "file")
+          : undefined,
+        onOpenParentFolder: canOpenWithFileManager
+          ? () => openMarkdownFileWithFileManager(fileLinkMeta, "parent-folder")
+          : undefined,
+        resolveCopyPaths: () => resolveMarkdownFileCopyPaths(fileLinkMeta),
+        onOpenInBrowser:
+          threadRef && isPreviewSupportedInRuntime() && isBrowserPreviewFile(fileLinkMeta.filePath)
+            ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+            : undefined,
+      };
+      chipActionsByLink.set(key, actions);
+      return actions;
+    },
+    [
+      canOpenWithFileManager,
+      canUseShellActions,
+      chipActionsByLink,
+      openMarkdownFileInEditor,
+      openMarkdownFileInPreview,
+      openMarkdownFileWithFileManager,
+      previewMarkdownMedia,
+      resolveMarkdownFileCopyPaths,
+      threadRef,
+    ],
+  );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
@@ -2858,6 +2923,7 @@ function useChatMarkdownState({
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
         (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      const actions = chipActionsFor(fileLinkMeta, mediaPath, canPreviewMedia);
 
       return (
         <MarkdownFileLink
@@ -2871,51 +2937,27 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: () => openMarkdownFileInEditor(fileLinkMeta) } : {})}
+          {...(actions.onOpen ? { onOpen: actions.onOpen } : {})}
           onOpenInPanel={openFileInPanel}
-          onOpenMedia={
-            threadRef && canPreviewMedia
-              ? () => void previewMarkdownMedia(fileLinkMeta, mediaPath)
-              : undefined
-          }
+          onOpenMedia={actions.onOpenMedia}
           openInEditorMenuLabel={
             preferredEditor === null || preferredEditor === "file-manager"
               ? undefined
               : preferredEditorMenuLabel
           }
-          onOpenFile={
-            canOpenWithFileManager
-              ? () => openMarkdownFileWithFileManager(fileLinkMeta, "file")
-              : undefined
-          }
-          onOpenParentFolder={
-            canOpenWithFileManager
-              ? () => openMarkdownFileWithFileManager(fileLinkMeta, "parent-folder")
-              : undefined
-          }
-          resolveCopyPaths={() => resolveMarkdownFileCopyPaths(fileLinkMeta)}
-          onOpenInBrowser={
-            threadRef &&
-            isPreviewSupportedInRuntime() &&
-            isBrowserPreviewFile(fileLinkMeta.filePath)
-              ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
-              : undefined
-          }
+          onOpenFile={actions.onOpenFile}
+          onOpenParentFolder={actions.onOpenParentFolder}
+          resolveCopyPaths={actions.resolveCopyPaths}
+          onOpenInBrowser={actions.onOpenInBrowser}
         />
       );
     },
     [
-      canOpenWithFileManager,
-      canUseShellActions,
+      chipActionsFor,
       fileLinkParentSuffixByPath,
       openFileInPanel,
-      openMarkdownFileInEditor,
-      openMarkdownFileInPreview,
-      openMarkdownFileWithFileManager,
       preferredEditor,
       preferredEditorMenuLabel,
-      previewMarkdownMedia,
-      resolveMarkdownFileCopyPaths,
       resolvedTheme,
       threadRef,
     ],
