@@ -381,6 +381,149 @@ it.effect("opens a file with Windows separators and no editor position on Window
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.each([
+  {
+    name: "a Windows path keeps its drive colon",
+    input: { target: "C:/x", platform: "win32", command: "explorer" },
+    expected: { path: "C:/x", argument: "C:\\x" },
+  },
+  {
+    name: "a Windows drive root",
+    input: { target: "C:/", platform: "win32", command: "explorer" },
+    expected: { path: "C:/", argument: "C:\\" },
+  },
+  {
+    name: "a Windows position suffix",
+    input: { target: "D:\\repo\\src\\a.ts:7:2", platform: "win32", command: "explorer" },
+    expected: { path: "D:\\repo\\src\\a.ts", argument: "D:\\repo\\src\\a.ts" },
+  },
+  {
+    name: "a UNC share path",
+    input: { target: "//server/share/dir/file.png", platform: "win32", command: "explorer" },
+    expected: {
+      path: "//server/share/dir/file.png",
+      argument: "\\\\server\\share\\dir\\file.png",
+    },
+  },
+  {
+    name: "a WSL path opened through Explorer",
+    input: {
+      target: "/home/me/repo/thumb.png:3",
+      platform: "linux",
+      command: "explorer.exe",
+      wslDistroName: "Ubuntu",
+    },
+    expected: {
+      path: "/home/me/repo/thumb.png",
+      argument: "\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\thumb.png",
+    },
+  },
+  {
+    name: "a POSIX name that really ends in :12",
+    input: { target: "/notes/todo:12", platform: "linux", command: "xdg-open", targetExists: true },
+    expected: { path: "/notes/todo:12", argument: "/notes/todo:12" },
+  },
+  {
+    name: "a POSIX position suffix on a name that does not exist",
+    input: { target: "/repo/src/a.ts:12", platform: "darwin", command: "open" },
+    expected: { path: "/repo/src/a.ts", argument: "/repo/src/a.ts" },
+  },
+] as const)("resolves the plain file-manager open argument for $name", ({ input, expected }) => {
+  assert.deepEqual(
+    ExternalLauncher.resolveFileManagerOpenArgument({
+      wslDistroName: undefined,
+      targetExists: false,
+      ...input,
+    }),
+    expected,
+  );
+});
+
+it.effect("refuses to open executable file types with the default app on Windows", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+
+    let spawnCount = 0;
+    const errors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* Effect.forEach(
+        ["C:/Users/me/Downloads/run.exe", "C:/x/setup.MSI.", "C:/x/payload.js:3", "C:/x/a.lnk"],
+        (cwd) => Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: () => {
+            spawnCount += 1;
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      errors.map((error) => [error._tag, "extension" in error ? error.extension : undefined]),
+      [
+        ["ExternalLauncherBlockedFileTypeError", ".exe"],
+        ["ExternalLauncherBlockedFileTypeError", ".msi"],
+        ["ExternalLauncherBlockedFileTypeError", ".js"],
+        ["ExternalLauncherBlockedFileTypeError", ".lnk"],
+      ],
+    );
+    assert.equal(spawnCount, 0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "opens a folder whose name looks executable but refuses the same name as a file on Linux",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["xdg-open", "xdg-mime"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+      const folder = path.join(binDir, "socket.io.js");
+      yield* fileSystem.makeDirectory(folder);
+      const script = path.join(binDir, "install.sh");
+      yield* fileSystem.writeFileString(script, "#!/bin/sh\n");
+
+      const opened: ChildProcess.StandardCommand[] = [];
+      const scriptError = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "file-manager", cwd: folder });
+        return yield* Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd: script }));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, DISPLAY: ":0" },
+            onSpawn: (command) => {
+              if (command.command === "xdg-open") opened.push(command);
+            },
+            spawnResult: (command) =>
+              command.command === "xdg-mime"
+                ? { stdout: "org.gnome.Nautilus.desktop\n" }
+                : undefined,
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        opened.map((command) => command.args),
+        [[folder]],
+      );
+      assert.equal(scriptError._tag, "ExternalLauncherBlockedFileTypeError");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // Real-chain smoke check for the Explorer selection contract: runs the exact
 // PowerShell source the reveal launch encodes, against a stub that records
 // the raw argument tail it receives, and asserts a spaced path arrives as the

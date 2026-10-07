@@ -222,9 +222,68 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
   }
 }
 
+/**
+ * Extensions a plain file-manager open must refuse: the "default app" for
+ * these is the shell or an installer, so opening one runs it. Chat file links
+ * are model-authored, so "Open File" on a link must never execute code.
+ */
+export const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
+  // Windows (and WSL, which opens through Explorer)
+  ".exe",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".ps1",
+  ".vbs",
+  ".vbe",
+  ".js",
+  ".jse",
+  ".wsf",
+  ".wsh",
+  ".msi",
+  ".msc",
+  ".scr",
+  ".pif",
+  ".lnk",
+  ".url",
+  ".hta",
+  ".cpl",
+  ".reg",
+  // macOS
+  ".app",
+  ".command",
+  ".sh",
+];
+
+/** The blocked extension of `path` (lowercased), or undefined when it may be opened. */
+export function defaultOpenBlockedExtension(path: string): string | undefined {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  // Windows ignores trailing dots and spaces, so `run.exe.` still runs.
+  const basename = trimmed
+    .slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1)
+    .replace(/[. ]+$/, "");
+  const dotIndex = basename.lastIndexOf(".");
+  if (dotIndex <= 0) return undefined;
+  const extension = basename.slice(dotIndex).toLowerCase();
+  return DEFAULT_OPEN_BLOCKED_EXTENSIONS.includes(extension) ? extension : undefined;
+}
+
+export class ExternalLauncherBlockedFileTypeError extends Schema.TaggedError<ExternalLauncherBlockedFileTypeError>()(
+  "ExternalLauncherBlockedFileTypeError",
+  {
+    target: Schema.String,
+    extension: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Refusing to open '${this.target}': ${this.extension} files can run code. Open its parent folder instead.`;
+  }
+}
+
 export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  ExternalLauncherBlockedFileTypeError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,

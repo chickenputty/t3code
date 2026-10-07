@@ -7,7 +7,9 @@
  * @module ExternalLauncher
  */
 import {
+  defaultOpenBlockedExtension,
   EDITORS,
+  ExternalLauncherBlockedFileTypeError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -47,6 +49,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // ==============================
 
 export {
+  ExternalLauncherBlockedFileTypeError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -560,28 +563,74 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
-  const target = fileManagerOpenTarget(input.cwd);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const statTarget = (target: string) =>
+    fileSystem.stat(target).pipe(
+      Effect.map((info) => Option.some(info.type)),
+      Effect.orElseSucceed(() => Option.none<FileSystem.File.Type>()),
+    );
+  // Windows paths cannot contain a colon past the drive, so only POSIX hosts
+  // need to ask whether `notes:12` is a real name before treating it as a position.
+  const rawTargetType = platform === "win32" ? Option.none() : yield* statTarget(input.cwd);
+  const open = resolveFileManagerOpenArgument({
+    target: input.cwd,
+    platform,
+    command,
+    wslDistroName: env.WSL_DISTRO_NAME,
+    targetExists: Option.isSome(rawTargetType),
+  });
+  // Opening a file launches its default app, so a script or installer would
+  // run. Folders are only shown, except macOS app bundles, which launch.
+  const blockedExtension =
+    defaultOpenBlockedExtension(open.path) ?? defaultOpenBlockedExtension(input.cwd);
+  if (blockedExtension !== undefined) {
+    const targetType = open.path === input.cwd ? rawTargetType : yield* statTarget(open.path);
+    const isDirectory = Option.isSome(targetType) && targetType.value === "Directory";
+    if (!isDirectory || blockedExtension === ".app") {
+      return yield* new ExternalLauncherBlockedFileTypeError({
+        target: open.path,
+        extension: blockedExtension,
+      });
+    }
+  }
   return {
     editor: editorDef.id,
     target: input.cwd,
     command,
-    args:
-      command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
-        : [platform === "win32" ? normalizeWindowsFileManagerPath(target) : target],
+    args: [open.argument],
   };
 });
 
 /**
- * The path a plain file-manager open hands to the OS. Editor links carry a
- * `:line[:column]` suffix that names no file on disk, so it is dropped here.
- * Opening a file this way launches its default app; opening a folder shows it.
+ * The argument a plain file-manager open hands to the OS: `path` with an
+ * editor `:line[:column]` suffix dropped (on POSIX only when the full name is
+ * not itself a file), and `argument` in the form the launcher command parses.
+ * Explorer needs backslashes (it opens Documents for `C:/a/b.png`) and a WSL
+ * path needs its `\\wsl.localhost` UNC form.
+ *
+ * @internal Exported for tests.
  */
-function fileManagerOpenTarget(target: string): string {
-  return Option.match(parseTargetPathAndPosition(target), {
-    onNone: () => target,
-    onSome: ({ path }) => path,
-  });
+export function resolveFileManagerOpenArgument(input: {
+  readonly target: string;
+  readonly platform: NodeJS.Platform;
+  readonly command: string;
+  readonly wslDistroName: string | undefined;
+  readonly targetExists: boolean;
+}): { readonly path: string; readonly argument: string } {
+  const path =
+    input.platform !== "win32" && input.targetExists
+      ? input.target
+      : Option.match(parseTargetPathAndPosition(input.target), {
+          onNone: () => input.target,
+          onSome: (parsed) => parsed.path,
+        });
+  if (input.command === "explorer.exe" && input.wslDistroName !== undefined) {
+    return { path, argument: resolveWslFileManagerPath(path, input.wslDistroName) };
+  }
+  return {
+    path,
+    argument: input.platform === "win32" ? normalizeWindowsFileManagerPath(path) : path,
+  };
 }
 
 /**

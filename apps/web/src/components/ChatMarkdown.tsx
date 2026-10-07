@@ -49,10 +49,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import {
-  formatFilePathPosition,
-  inlineCodeFilePathCandidate,
-} from "@t3tools/client-runtime/markdown-links";
+import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -112,10 +109,6 @@ import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import {
-  revealInFileExplorerLabelForKind,
-  revealInFileExplorerLabelForOs,
-} from "./preview/fileExplorerLabel";
 import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
@@ -194,12 +187,17 @@ import {
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "../terminal-links";
+import { isAbsolutePath } from "../terminal-links";
 import {
   buildCopyPathMenuItems,
   buildFileOpenMenuItems,
   parentDirectoryPath,
 } from "../fileOpenMenu";
+import {
+  markdownFileEditorTarget,
+  MarkdownFileParentFolderUnavailableError,
+  resolveMarkdownFileHostPath,
+} from "../markdownFileHostPath";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
@@ -1355,6 +1353,10 @@ interface MarkdownFileLinkProps {
   onOpenFile?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   /** Opens the file's folder in the environment host's file manager. */
   onOpenParentFolder?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  /** The paths the copy actions write, resolved the same way as the open actions. */
+  resolveCopyPaths?:
+    | (() => Promise<{ readonly fullPath: string; readonly relativePath: string }>)
+    | undefined;
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
@@ -2099,6 +2101,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenMedia,
   onOpenFile,
   onOpenParentFolder,
+  resolveCopyPaths,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
@@ -2284,6 +2287,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             ...buildFileOpenMenuItems({
               kind: "file",
               canOpen: onOpenFile !== undefined && onOpenParentFolder !== undefined,
+              path: iconPath,
             }),
             ...buildCopyPathMenuItems({ canCopyFullPath: true }),
           ],
@@ -2314,12 +2318,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           );
           return;
         }
-        if (clicked === "copy-relative-path") {
-          handleCopy(displayPath, "Relative path");
-          return;
-        }
-        if (clicked === "copy-full-path") {
-          handleCopy(targetPath, "Full path");
+        if (clicked === "copy-relative-path" || clicked === "copy-full-path") {
+          const paths = resolveCopyPaths
+            ? await resolveCopyPaths()
+            : { fullPath: targetPath, relativePath: displayPath };
+          if (clicked === "copy-relative-path") {
+            handleCopy(paths.relativePath, "Relative path");
+          } else {
+            handleCopy(paths.fullPath, "Full path");
+          }
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2333,12 +2340,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
+      iconPath,
       onOpenFile,
       onOpenInBrowser,
       onOpenMedia,
       onOpenParentFolder,
       onOpen,
       openInEditorMenuLabel,
+      resolveCopyPaths,
       runFileManagerAction,
       targetPath,
     ],
@@ -2451,7 +2460,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onOpenFile === next.onOpenFile &&
-    previous.onOpenParentFolder === next.onOpenParentFolder
+    previous.onOpenParentFolder === next.onOpenParentFolder &&
+    previous.resolveCopyPaths === next.resolveCopyPaths
   );
 }
 
@@ -2553,16 +2563,9 @@ function useChatMarkdownState({
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
-  const revealInFileManagerLabel =
-    environmentId !== null &&
-    serverConfig?.shellRevealInFileManager === true &&
-    serverConfig.availableEditors.includes("file-manager")
-      ? serverConfig.shellRevealInFileManagerKind === undefined
-        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
-      : undefined;
   // A file opens in its default app and a folder in the file manager, both
-  // through the file-manager editor on the environment host.
+  // through the file-manager editor on the environment host. File and folder
+  // chips share this one gate.
   const canOpenWithFileManager =
     canUseShellActions && environmentId !== null && availableEditors.includes("file-manager");
   const openPathWithFileManager = useCallback(
@@ -2583,15 +2586,8 @@ function useChatMarkdownState({
   );
   // Fork (chickenputty/t3code): an inline-code folder path opens in the file manager.
   const openFolderInFileManager = useMemo(
-    () =>
-      canUseShellActions && revealInFileManagerLabel !== undefined && environmentId !== null
-        ? (folderPath: string) =>
-            openInEditor({
-              environmentId,
-              input: { cwd: folderPath, editor: "file-manager", reveal: false },
-            })
-        : null,
-    [canUseShellActions, environmentId, openInEditor, revealInFileManagerLabel],
+    () => (canOpenWithFileManager ? openPathWithFileManager : null),
+    [canOpenWithFileManager, openPathWithFileManager],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -2784,55 +2780,59 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, threadRef],
   );
-  // A bare filename resolves against the workspace root, which is rarely where
-  // the file is (`thumb.png` written by a script in a subfolder), so every host
-  // action on a chip asks the index first, as the files panel does. Without
-  // this, preview reports the file missing and the file manager opens a
-  // fallback folder for the nonexistent root path.
-  const resolveMarkdownFileHostPath = useCallback(
-    async (fileLinkMeta: MarkdownFileLinkMeta): Promise<string> => {
-      const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-      const match = workspaceRelativePath
-        ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-        : null;
-      return match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-    },
+  // Every host action on a chip (preview, open in editor, open file, open
+  // parent folder, copy paths) resolves a bare filename through the workspace
+  // index first. Without it, preview reports the file missing and the file
+  // manager is handed a nonexistent path under the workspace root.
+  const resolveChipHostPath = useCallback(
+    (fileLinkMeta: MarkdownFileLinkMeta) =>
+      resolveMarkdownFileHostPath({
+        meta: fileLinkMeta,
+        cwd,
+        findWorkspaceMatch: findWorkspaceBasenameMatch,
+      }),
     [cwd, findWorkspaceBasenameMatch],
   );
   const openMarkdownFileInEditor = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
-      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
-      return openInPreferredEditor(
-        filePath === fileLinkMeta.filePath
-          ? fileLinkMeta.targetPath
-          : formatFilePathPosition({
-              path: filePath,
-              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            }),
-      );
+      const hostPath = await resolveChipHostPath(fileLinkMeta);
+      return openInPreferredEditor(markdownFileEditorTarget(fileLinkMeta, hostPath));
     },
-    [openInPreferredEditor, resolveMarkdownFileHostPath],
+    [openInPreferredEditor, resolveChipHostPath],
   );
   const openMarkdownFileWithFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta, target: "file" | "parent-folder") => {
-      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
-      return openPathWithFileManager(
-        target === "file" ? filePath : (parentDirectoryPath(filePath) ?? filePath),
-      );
+      const { absolutePath } = await resolveChipHostPath(fileLinkMeta);
+      const launchPath = target === "file" ? absolutePath : parentDirectoryPath(absolutePath);
+      if (launchPath === null) {
+        return AsyncResult.failure<void, MarkdownFileParentFolderUnavailableError>(
+          Cause.fail(new MarkdownFileParentFolderUnavailableError({ targetPath: absolutePath })),
+        );
+      }
+      return openPathWithFileManager(launchPath);
     },
-    [openPathWithFileManager, resolveMarkdownFileHostPath],
+    [openPathWithFileManager, resolveChipHostPath],
   );
   const previewMarkdownMedia = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta, mediaPath: string) => {
-      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
-      if (filePath === fileLinkMeta.filePath) {
+      const hostPath = await resolveChipHostPath(fileLinkMeta);
+      if (!hostPath.matched) {
         openMarkdownMedia(mediaPath, fileLinkMeta.filePath);
         return;
       }
-      openMarkdownMedia(filePath, filePath);
+      openMarkdownMedia(hostPath.absolutePath, hostPath.absolutePath);
     },
-    [openMarkdownMedia, resolveMarkdownFileHostPath],
+    [openMarkdownMedia, resolveChipHostPath],
+  );
+  const resolveMarkdownFileCopyPaths = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta) => {
+      const hostPath = await resolveChipHostPath(fileLinkMeta);
+      return {
+        fullPath: hostPath.absolutePath,
+        relativePath: hostPath.relativePath ?? fileLinkMeta.displayPath,
+      };
+    },
+    [resolveChipHostPath],
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
@@ -2893,6 +2893,7 @@ function useChatMarkdownState({
               ? () => openMarkdownFileWithFileManager(fileLinkMeta, "parent-folder")
               : undefined
           }
+          resolveCopyPaths={() => resolveMarkdownFileCopyPaths(fileLinkMeta)}
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
@@ -2914,6 +2915,7 @@ function useChatMarkdownState({
       preferredEditor,
       preferredEditorMenuLabel,
       previewMarkdownMedia,
+      resolveMarkdownFileCopyPaths,
       resolvedTheme,
       threadRef,
     ],

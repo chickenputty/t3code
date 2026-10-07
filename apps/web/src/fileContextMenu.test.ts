@@ -76,7 +76,7 @@ describe("resolveFileContextMenuRelativePath", () => {
 describe("buildFileContextMenuItems", () => {
   it("offers open file, parent folder, open with, then the copy actions for a file", () => {
     const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
+      absolutePath: "/workspace/project/src/index.ts",
       capabilities: {
         canOpenDefault: true,
         editorIds: ["vscode", "cursor", "file-manager"],
@@ -103,23 +103,38 @@ describe("buildFileContextMenuItems", () => {
     expect(openWith.children?.map((child) => child.id)).toEqual(["editor:vscode", "editor:cursor"]);
   });
 
-  it("offers open folder without a parent or editor entry for a folder", () => {
+  it("offers open folder and open with, but no parent entry, for a folder", () => {
     const items = buildFileContextMenuItems({
       kind: "directory",
-      hasAbsolutePath: true,
+      absolutePath: "/workspace/project/src",
       capabilities: { canOpenDefault: true, editorIds: ["vscode", "file-manager"] },
     });
 
     expect(items.map((item) => item.label)).toEqual([
       "Open Folder",
+      "Open with",
       "Copy relative path",
       "Copy full path",
     ]);
   });
 
+  it("keeps the parent folder but not open file for an executable file", () => {
+    const items = buildFileContextMenuItems({
+      absolutePath: "C:\\repo\\scripts\\deploy.ps1",
+      capabilities: { canOpenDefault: true, editorIds: ["vscode", "file-manager"] },
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "open-parent-folder",
+      "open-with",
+      "copy-relative-path",
+      "copy-full-path",
+    ]);
+  });
+
   it("keeps the copy actions when the environment cannot open files", () => {
     const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
+      absolutePath: "/workspace/project/src/index.ts",
       capabilities: { canOpenDefault: false, editorIds: [] },
     });
 
@@ -130,7 +145,7 @@ describe("buildFileContextMenuItems", () => {
   it("offers only the relative copy when the path cannot be resolved", () => {
     expect(
       buildFileContextMenuItems({
-        hasAbsolutePath: false,
+        absolutePath: null,
         capabilities: { canOpenDefault: true, editorIds: ["vscode"] },
       }).map((item) => item.id),
     ).toEqual(["copy-relative-path"]);

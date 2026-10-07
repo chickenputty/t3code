@@ -5,7 +5,7 @@
  * `shell.openInEditor` with the "file-manager" editor and no reveal flag: a
  * file opens in its default app and a folder opens in the file manager.
  */
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { defaultOpenBlockedExtension, type ContextMenuItem } from "@t3tools/contracts";
 
 export type FileEntryKind = "file" | "directory";
 
@@ -38,20 +38,36 @@ export function parentDirectoryPath(path: string): string | null {
   return parent;
 }
 
-/** "Open File"/"Open Folder" plus "Open Parent Folder" (files only). */
+/**
+ * Whether "Open File"/"Open Folder" may launch `path`. Opening a script,
+ * installer or shortcut with its default app runs it, so those are left to
+ * "Open Parent Folder"; the server refuses them too. Folders only open in the
+ * file manager, except macOS app bundles.
+ */
+export function canOpenEntryWithDefaultApp(path: string, kind: FileEntryKind): boolean {
+  const blocked = defaultOpenBlockedExtension(path);
+  return blocked === undefined || (kind === "directory" && blocked !== ".app");
+}
+
+/**
+ * "Open File"/"Open Folder" plus "Open Parent Folder" for a file that has a
+ * parent. `path` is the absolute host path when it is known.
+ */
 export function buildFileOpenMenuItems(input: {
   readonly kind: FileEntryKind;
   readonly canOpen: boolean;
+  readonly path: string;
 }): ContextMenuItem<FileOpenMenuAction>[] {
   if (!input.canOpen) return [];
-  const items: ContextMenuItem<FileOpenMenuAction>[] = [
-    {
+  const items: ContextMenuItem<FileOpenMenuAction>[] = [];
+  if (canOpenEntryWithDefaultApp(input.path, input.kind)) {
+    items.push({
       id: "open-file",
       label: openEntryLabel(input.kind),
       icon: input.kind === "directory" ? "folder" : "pencil",
-    },
-  ];
-  if (input.kind === "file") {
+    });
+  }
+  if (input.kind === "file" && parentDirectoryPath(input.path) !== null) {
     items.push({ id: "open-parent-folder", label: OPEN_PARENT_FOLDER_LABEL, icon: "folder" });
   }
   return items;

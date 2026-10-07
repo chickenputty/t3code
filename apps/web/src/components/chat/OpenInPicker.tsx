@@ -19,6 +19,7 @@ import { useEnvironment } from "../../state/environments";
 import {
   openEntryLabel,
   OPEN_PARENT_FOLDER_LABEL,
+  canOpenEntryWithDefaultApp,
   parentDirectoryPath,
   type FileEntryKind,
 } from "../../fileOpenMenu";
@@ -256,9 +257,16 @@ export const OpenInPicker = memo(function OpenInPicker({
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
+  // A script or installer would run if launched with its default app, so the
+  // file manager entry is withheld for those (the server refuses them too).
+  const fileManagerBlocked =
+    openInCwd !== null && !canOpenEntryWithDefaultApp(openInCwd, openTarget);
   const options = useMemo(
-    () => resolveOpenInOptions(navigator.platform, effectiveEditors, openTarget),
-    [effectiveEditors, openTarget],
+    () =>
+      resolveOpenInOptions(navigator.platform, effectiveEditors, openTarget).filter(
+        (option) => !(fileManagerBlocked && option.value === "file-manager"),
+      ),
+    [effectiveEditors, fileManagerBlocked, openTarget],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
@@ -308,7 +316,10 @@ export const OpenInPicker = memo(function OpenInPicker({
   // The parent folder always opens in the file manager on the environment's
   // host, so it is offered only where that host is the one being looked at.
   const parentFolderPath =
-    openInCwd !== null && remote.mode === "local-exec" && effectiveEditors.includes("file-manager")
+    openTarget === "file" &&
+    openInCwd !== null &&
+    remote.mode === "local-exec" &&
+    effectiveEditors.includes("file-manager")
       ? parentDirectoryPath(openInCwd)
       : null;
   const openParentFolder = useCallback(() => {
@@ -429,7 +440,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         variant={isPanel ? "ghost" : "outline"}
         part="primary"
         panel={isPanel}
-        disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
+        disabled={!primaryOption || !openInCwd || remote.mode === "remote-unavailable"}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon ? (

@@ -17,6 +17,7 @@ import { resolveDiffPathForWorkspace } from "./diffFileActions";
 import {
   buildCopyPathMenuItems,
   buildFileOpenMenuItems,
+  canOpenEntryWithDefaultApp,
   parentDirectoryPath,
   type FileEntryKind,
   type FileOpenMenuAction,
@@ -87,24 +88,26 @@ export interface FileContextMenuCapabilities {
 
 /**
  * Menu items for a target: "Open File"/"Open Folder", "Open Parent Folder"
- * (files), an "Open with" submenu of detected editors (files), then the copy
- * actions. Open actions need a resolvable absolute path; copying the relative
- * path always works.
+ * (files), an "Open with" submenu of detected editors, then the copy actions.
+ * Open actions need a resolvable absolute path; copying the relative path
+ * always works.
  */
 export function buildFileContextMenuItems(input: {
   readonly kind?: FileEntryKind | undefined;
-  readonly hasAbsolutePath: boolean;
+  readonly absolutePath: string | null;
   readonly capabilities: FileContextMenuCapabilities;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {
   const kind = input.kind ?? "file";
+  const hasAbsolutePath = input.absolutePath !== null;
   const items: ContextMenuItem<FileContextMenuAction>[] = [
     ...buildFileOpenMenuItems({
       kind,
-      canOpen: input.hasAbsolutePath && input.capabilities.canOpenDefault,
+      canOpen: hasAbsolutePath && input.capabilities.canOpenDefault,
+      path: input.absolutePath ?? "",
     }),
   ];
   const editorIds = input.capabilities.editorIds.filter((id) => id !== "file-manager");
-  if (input.hasAbsolutePath && kind === "file" && editorIds.length > 0) {
+  if (hasAbsolutePath && editorIds.length > 0) {
     items.push({
       id: "open-with",
       label: "Open with",
@@ -114,7 +117,7 @@ export function buildFileContextMenuItems(input: {
       })),
     });
   }
-  const copyItems = buildCopyPathMenuItems({ canCopyFullPath: input.hasAbsolutePath });
+  const copyItems = buildCopyPathMenuItems({ canCopyFullPath: hasAbsolutePath });
   return [
     ...items,
     ...copyItems.map((item, index) =>
@@ -172,6 +175,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       let editor: EditorId = "file-manager";
       let failureTitle: string;
       if (action === "open-file") {
+        if (!canOpenEntryWithDefaultApp(absolutePath, target.kind ?? "file")) return;
         failureTitle =
           target.kind === "directory" ? "Could not open folder" : "Could not open file";
       } else if (action === "open-parent-folder") {
@@ -196,7 +200,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     const buildItems = (target: FileContextMenuTarget) =>
       buildFileContextMenuItems({
         kind: target.kind,
-        hasAbsolutePath: resolveFileContextMenuAbsolutePath(target) !== null,
+        absolutePath: resolveFileContextMenuAbsolutePath(target),
         capabilities,
       });
 

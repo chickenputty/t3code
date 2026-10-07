@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildFileOpenMenuItems, openEntryLabel, parentDirectoryPath } from "./fileOpenMenu";
+import {
+  buildFileOpenMenuItems,
+  canOpenEntryWithDefaultApp,
+  openEntryLabel,
+  parentDirectoryPath,
+} from "./fileOpenMenu";
 
 describe("parentDirectoryPath", () => {
   it.each([
@@ -27,12 +32,38 @@ describe("buildFileOpenMenuItems", () => {
   });
 
   it("adds the parent folder entry for files only", () => {
+    const labels = (input: Parameters<typeof buildFileOpenMenuItems>[0]) =>
+      buildFileOpenMenuItems(input).map((item) => item.label);
+    expect(labels({ kind: "file", canOpen: true, path: "/repo/a.png" })).toEqual([
+      "Open File",
+      "Open Parent Folder",
+    ]);
+    expect(labels({ kind: "directory", canOpen: true, path: "/repo/src" })).toEqual([
+      "Open Folder",
+    ]);
+    expect(labels({ kind: "file", canOpen: false, path: "/repo/a.png" })).toEqual([]);
+  });
+
+  it("hides open file for executable types but keeps the parent folder", () => {
+    const labels = (path: string, kind: "file" | "directory" = "file") =>
+      buildFileOpenMenuItems({ kind, canOpen: true, path }).map((item) => item.label);
+    expect(labels("C:\\Users\\me\\Downloads\\setup.exe")).toEqual(["Open Parent Folder"]);
+    expect(labels("/repo/scripts/install.sh")).toEqual(["Open Parent Folder"]);
+    expect(labels("/repo/node_modules/socket.io.js", "directory")).toEqual(["Open Folder"]);
+    expect(labels("/Applications/Calculator.app", "directory")).toEqual([]);
+  });
+
+  it("drops the parent folder entry when the path has no parent", () => {
     expect(
-      buildFileOpenMenuItems({ kind: "file", canOpen: true }).map((item) => item.label),
-    ).toEqual(["Open File", "Open Parent Folder"]);
-    expect(
-      buildFileOpenMenuItems({ kind: "directory", canOpen: true }).map((item) => item.label),
-    ).toEqual(["Open Folder"]);
-    expect(buildFileOpenMenuItems({ kind: "file", canOpen: false })).toEqual([]);
+      buildFileOpenMenuItems({ kind: "file", canOpen: true, path: "thumb.png" }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["open-file"]);
+  });
+
+  it("only blocks app bundles among folders", () => {
+    expect(canOpenEntryWithDefaultApp("/repo/lib.js", "directory")).toBe(true);
+    expect(canOpenEntryWithDefaultApp("/repo/lib.js", "file")).toBe(false);
+    expect(canOpenEntryWithDefaultApp("/Applications/Foo.app/", "directory")).toBe(false);
   });
 });
