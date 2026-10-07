@@ -78,6 +78,16 @@ describe("resolveOpenInOptions", () => {
     ]);
   });
 
+  it.each([
+    ["file", "Open File"],
+    ["directory", "Open Folder"],
+  ] as const)("words the file manager as the action for a %s target", (target, label) => {
+    expect(resolveOpenInOptions("Win32", ["vscode", "file-manager"], target)).toEqual([
+      expect.objectContaining({ value: "vscode", label: "VS Code" }),
+      expect.objectContaining({ value: "file-manager", label, Icon: FileExplorerIcon }),
+    ]);
+  });
+
   it("omits the file manager when unavailable or using remote editors", () => {
     expect(resolveOpenInOptions("MacIntel", ["vscode"])).toEqual([
       expect.objectContaining({ value: "vscode" }),

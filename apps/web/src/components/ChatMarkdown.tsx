@@ -49,7 +49,10 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  formatFilePathPosition,
+  inlineCodeFilePathCandidate,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -192,6 +195,11 @@ import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "../terminal-links";
+import {
+  buildCopyPathMenuItems,
+  buildFileOpenMenuItems,
+  parentDirectoryPath,
+} from "../fileOpenMenu";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
@@ -1338,13 +1346,15 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
-  openInEditorMenuLabel: string;
+  /** Menu label for `onOpen`; omitted when the preferred editor is the file
+      manager, which "Open File" already covers. */
+  openInEditorMenuLabel?: string | undefined;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
-  onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
-  /** Platform-specific menu label ("Reveal in Finder", ...); required for the
-      reveal item to show. */
-  revealLabel?: string | undefined;
+  /** Opens the file with its default app on the environment host. */
+  onOpenFile?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  /** Opens the file's folder in the environment host's file manager. */
+  onOpenParentFolder?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
@@ -2087,8 +2097,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
-  onReveal,
-  revealLabel,
+  onOpenFile,
+  onOpenParentFolder,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
@@ -2178,43 +2188,44 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   }, [onOpenInBrowser, targetPath]);
 
-  const handleRevealInFileManager = useCallback(() => {
-    if (!onReveal) {
-      return;
-    }
-    void (async () => {
-      try {
-        const result = await onReveal();
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-          return;
-        }
-        reportMarkdownActionFailure(
-          { operation: "reveal-file-in-file-manager", target: targetPath },
-          result.cause,
-        );
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to reveal file",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      } catch (cause) {
-        reportMarkdownActionFailure(
-          { operation: "reveal-file-in-file-manager", target: targetPath },
-          cause,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to reveal file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
-          }),
-        );
+  const runFileManagerAction = useCallback(
+    (
+      action: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined,
+      operation: string,
+      failureTitle: string,
+    ) => {
+      if (!action) {
+        return;
       }
-    })();
-  }, [onReveal, targetPath]);
+      void (async () => {
+        try {
+          const result = await action();
+          if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+            return;
+          }
+          reportMarkdownActionFailure({ operation, target: targetPath }, result.cause);
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: failureTitle,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        } catch (cause) {
+          reportMarkdownActionFailure({ operation, target: targetPath }, cause);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: failureTitle,
+              description: cause instanceof Error ? cause.message : "An error occurred.",
+            }),
+          );
+        }
+      })();
+    },
+    [targetPath],
+  );
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
@@ -2264,14 +2275,18 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         const clicked = await api.contextMenu.show(
           [
             ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
-            ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
+            ...(onOpen && openInEditorMenuLabel
+              ? ([{ id: "open", label: openInEditorMenuLabel }] as const)
+              : []),
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
-            ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-            { id: "copy-relative", label: "Copy relative path" },
-            { id: "copy-full", label: "Copy full path" },
-          ] as const,
+            ...buildFileOpenMenuItems({
+              kind: "file",
+              canOpen: onOpenFile !== undefined && onOpenParentFolder !== undefined,
+            }),
+            ...buildCopyPathMenuItems({ canCopyFullPath: true }),
+          ],
           position,
         );
 
@@ -2287,15 +2302,23 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           handleOpenInBrowser();
           return;
         }
-        if (clicked === "reveal") {
-          handleRevealInFileManager();
+        if (clicked === "open-file") {
+          runFileManagerAction(onOpenFile, "open-file-with-default-app", "Unable to open file");
           return;
         }
-        if (clicked === "copy-relative") {
+        if (clicked === "open-parent-folder") {
+          runFileManagerAction(
+            onOpenParentFolder,
+            "open-file-parent-folder",
+            "Unable to open parent folder",
+          );
+          return;
+        }
+        if (clicked === "copy-relative-path") {
           handleCopy(displayPath, "Relative path");
           return;
         }
-        if (clicked === "copy-full") {
+        if (clicked === "copy-full-path") {
           handleCopy(targetPath, "Full path");
         }
       } catch (cause) {
@@ -2310,13 +2333,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
-      handleRevealInFileManager,
+      onOpenFile,
       onOpenInBrowser,
       onOpenMedia,
+      onOpenParentFolder,
       onOpen,
-      onReveal,
       openInEditorMenuLabel,
-      revealLabel,
+      runFileManagerAction,
       targetPath,
     ],
   );
@@ -2427,8 +2450,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
-    previous.onReveal === next.onReveal &&
-    previous.revealLabel === next.revealLabel
+    previous.onOpenFile === next.onOpenFile &&
+    previous.onOpenParentFolder === next.onOpenParentFolder
   );
 }
 
@@ -2538,18 +2561,22 @@ function useChatMarkdownState({
         ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
         : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
       : undefined;
-  const revealFileInFileManager = useCallback(
-    (filePath: string) => {
+  // A file opens in its default app and a folder in the file manager, both
+  // through the file-manager editor on the environment host.
+  const canOpenWithFileManager =
+    canUseShellActions && environmentId !== null && availableEditors.includes("file-manager");
+  const openPathWithFileManager = useCallback(
+    (hostPath: string) => {
       if (environmentId === null) {
         return Promise.resolve(
           AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
-            Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: filePath })),
+            Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: hostPath })),
           ),
         );
       }
       return openInEditor({
         environmentId,
-        input: { cwd: filePath, editor: "file-manager", reveal: true },
+        input: { cwd: hostPath, editor: "file-manager" },
       });
     },
     [environmentId, openInEditor],
@@ -2757,16 +2784,55 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, threadRef],
   );
-  const revealMarkdownFileInFileManager = useCallback(
-    async (fileLinkMeta: MarkdownFileLinkMeta) => {
+  // A bare filename resolves against the workspace root, which is rarely where
+  // the file is (`thumb.png` written by a script in a subfolder), so every host
+  // action on a chip asks the index first, as the files panel does. Without
+  // this, preview reports the file missing and the file manager opens a
+  // fallback folder for the nonexistent root path.
+  const resolveMarkdownFileHostPath = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta): Promise<string> => {
       const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
       const match = workspaceRelativePath
         ? await findWorkspaceBasenameMatch(workspaceRelativePath)
         : null;
-      const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-      return revealFileInFileManager(filePath);
+      return match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
     },
-    [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
+    [cwd, findWorkspaceBasenameMatch],
+  );
+  const openMarkdownFileInEditor = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta) => {
+      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
+      return openInPreferredEditor(
+        filePath === fileLinkMeta.filePath
+          ? fileLinkMeta.targetPath
+          : formatFilePathPosition({
+              path: filePath,
+              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+            }),
+      );
+    },
+    [openInPreferredEditor, resolveMarkdownFileHostPath],
+  );
+  const openMarkdownFileWithFileManager = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta, target: "file" | "parent-folder") => {
+      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
+      return openPathWithFileManager(
+        target === "file" ? filePath : (parentDirectoryPath(filePath) ?? filePath),
+      );
+    },
+    [openPathWithFileManager, resolveMarkdownFileHostPath],
+  );
+  const previewMarkdownMedia = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta, mediaPath: string) => {
+      const filePath = await resolveMarkdownFileHostPath(fileLinkMeta);
+      if (filePath === fileLinkMeta.filePath) {
+        openMarkdownMedia(mediaPath, fileLinkMeta.filePath);
+        return;
+      }
+      openMarkdownMedia(filePath, filePath);
+    },
+    [openMarkdownMedia, resolveMarkdownFileHostPath],
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
@@ -2805,20 +2871,28 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canUseShellActions ? { onOpen: () => openMarkdownFileInEditor(fileLinkMeta) } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
+              ? () => void previewMarkdownMedia(fileLinkMeta, mediaPath)
               : undefined
           }
-          openInEditorMenuLabel={preferredEditorMenuLabel}
-          onReveal={
-            canUseShellActions && revealInFileManagerLabel !== undefined
-              ? () => revealMarkdownFileInFileManager(fileLinkMeta)
+          openInEditorMenuLabel={
+            preferredEditor === null || preferredEditor === "file-manager"
+              ? undefined
+              : preferredEditorMenuLabel
+          }
+          onOpenFile={
+            canOpenWithFileManager
+              ? () => openMarkdownFileWithFileManager(fileLinkMeta, "file")
               : undefined
           }
-          revealLabel={revealInFileManagerLabel}
+          onOpenParentFolder={
+            canOpenWithFileManager
+              ? () => openMarkdownFileWithFileManager(fileLinkMeta, "parent-folder")
+              : undefined
+          }
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
@@ -2830,16 +2904,17 @@ function useChatMarkdownState({
       );
     },
     [
+      canOpenWithFileManager,
       canUseShellActions,
       fileLinkParentSuffixByPath,
       openFileInPanel,
-      openInPreferredEditor,
+      openMarkdownFileInEditor,
       openMarkdownFileInPreview,
-      openMarkdownMedia,
+      openMarkdownFileWithFileManager,
+      preferredEditor,
       preferredEditorMenuLabel,
+      previewMarkdownMedia,
       resolvedTheme,
-      revealInFileManagerLabel,
-      revealMarkdownFileInFileManager,
       threadRef,
     ],
   );

@@ -560,16 +560,29 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
+  const target = fileManagerOpenTarget(input.cwd);
   return {
     editor: editorDef.id,
     target: input.cwd,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : [input.cwd],
+        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
+        : [platform === "win32" ? normalizeWindowsFileManagerPath(target) : target],
   };
 });
+
+/**
+ * The path a plain file-manager open hands to the OS. Editor links carry a
+ * `:line[:column]` suffix that names no file on disk, so it is dropped here.
+ * Opening a file this way launches its default app; opening a folder shows it.
+ */
+function fileManagerOpenTarget(target: string): string {
+  return Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: ({ path }) => path,
+  });
+}
 
 /**
  * PowerShell source that launches File Explorer with its raw selection
@@ -605,6 +618,8 @@ function fileExplorerRevealLaunch(
   };
 }
 
+// Explorer does not understand forward slashes: given `C:/a/b.png` it opens
+// the user's Documents folder instead of the file.
 function normalizeWindowsFileManagerPath(target: string): string {
   return target.replaceAll("/", "\\");
 }

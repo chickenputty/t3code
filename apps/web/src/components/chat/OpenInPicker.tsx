@@ -16,7 +16,18 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
+import {
+  openEntryLabel,
+  OPEN_PARENT_FOLDER_LABEL,
+  parentDirectoryPath,
+  type FileEntryKind,
+} from "../../fileOpenMenu";
+import {
+  ChevronDownIcon,
+  FolderClosedIcon,
+  FolderOpenIcon,
+  SquareArrowOutUpRightIcon,
+} from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
 import {
@@ -74,9 +85,15 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
+/**
+ * Editors to offer for a path. With an `openTarget`, the file manager entry is
+ * worded as the action it performs ("Open File" launches the default app,
+ * "Open Folder" shows the folder) instead of naming the file manager.
+ */
 export const resolveOpenInOptions = (
   platform: string,
   availableEditors: ReadonlyArray<EditorId>,
+  openTarget?: FileEntryKind,
 ) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
@@ -192,7 +209,13 @@ export const resolveOpenInOptions = (
   const availableEditorSet = new Set(availableEditors);
   return baseOptions
     .filter((option) => availableEditorSet.has(option.value))
-    .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+    .map((option) => ({
+      ...option,
+      label:
+        option.value === "file-manager" && openTarget !== undefined
+          ? openEntryLabel(openTarget)
+          : editorLabelForPlatform(option.value, platform),
+    }));
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
@@ -204,6 +227,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  openTarget = "directory",
   presentation = "toolbar",
   compact = false,
   enableShortcut = true,
@@ -213,6 +237,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  /** What `openInCwd` names; worded into the file manager entries. */
+  openTarget?: FileEntryKind;
   presentation?: "toolbar" | "menu";
   compact?: boolean;
   enableShortcut?: boolean;
@@ -231,8 +257,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
-    () => resolveOpenInOptions(navigator.platform, effectiveEditors),
-    [effectiveEditors],
+    () => resolveOpenInOptions(navigator.platform, effectiveEditors, openTarget),
+    [effectiveEditors, openTarget],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
@@ -279,6 +305,20 @@ export const OpenInPicker = memo(function OpenInPicker({
     ],
   );
 
+  // The parent folder always opens in the file manager on the environment's
+  // host, so it is offered only where that host is the one being looked at.
+  const parentFolderPath =
+    openInCwd !== null && remote.mode === "local-exec" && effectiveEditors.includes("file-manager")
+      ? parentDirectoryPath(openInCwd)
+      : null;
+  const openParentFolder = useCallback(() => {
+    if (parentFolderPath === null) return;
+    return openInEditorMutation({
+      environmentId,
+      input: { cwd: parentFolderPath, editor: "file-manager" },
+    });
+  }, [environmentId, openInEditorMutation, parentFolderPath]);
+
   const openFavoriteEditorShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
     [keybindings],
@@ -297,7 +337,11 @@ export const OpenInPicker = memo(function OpenInPicker({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
-  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
+  const primaryActionLabel =
+    primaryOption?.value === "file-manager"
+      ? primaryOption.label
+      : `Open in ${primaryOption?.label ?? "editor"}`;
+  const primaryLabel = isPanel ? primaryActionLabel : "Open";
 
   const editorItems = (
     <>
@@ -325,6 +369,15 @@ export const OpenInPicker = memo(function OpenInPicker({
               )}
             </MenuItem>
           ))}
+          {parentFolderPath !== null && (
+            <MenuItem
+              density={presentation === "menu" ? "touch" : "default"}
+              onClick={() => openParentFolder()}
+            >
+              <FolderOpenIcon aria-hidden="true" className="text-muted-foreground" />
+              <MenuItemLabel>{OPEN_PARENT_FOLDER_LABEL}</MenuItemLabel>
+            </MenuItem>
+          )}
           {remote.mode === "remote-links" && !remoteHintSeen && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
               Opens over SSH. Needs your key on {environmentLabel}
@@ -345,7 +398,7 @@ export const OpenInPicker = memo(function OpenInPicker({
             onClick={() => openInEditor(preferredEditor)}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
-            <MenuItemLabel>Open in {primaryOption.label}</MenuItemLabel>
+            <MenuItemLabel>{primaryActionLabel}</MenuItemLabel>
             {openFavoriteEditorShortcutLabel && (
               <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
             )}
