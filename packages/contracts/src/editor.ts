@@ -302,11 +302,24 @@ export function effectivePathBasename(path: string): string {
   return segments.at(-1) ?? "";
 }
 
-/** The lowercased extension of a path's effective name, ignoring Windows' trailing dots and spaces. */
-export function effectivePathExtension(path: string): string | undefined {
-  // Windows ignores trailing dots and spaces, so `run.exe.` still runs, and a
-  // `:stream` suffix names a data stream of the same file.
-  const basename = (effectivePathBasename(path).split(":")[0] ?? "").replace(/[. ]+$/, "");
+/** Path flavor: Windows names cannot hold a colon past the drive, POSIX names can. */
+export type OpenPathFlavor = "win32" | "posix";
+
+/** Guesses the flavor of a path whose host is unknown (a drive letter or backslash means Windows). */
+export function inferOpenPathFlavor(path: string): OpenPathFlavor {
+  return /^[a-zA-Z]:/.test(path) || path.includes("\\") ? "win32" : "posix";
+}
+
+/** The lowercased extension of a path's effective name, ignoring trailing dots and spaces. */
+export function effectivePathExtension(
+  path: string,
+  flavor: OpenPathFlavor = inferOpenPathFlavor(path),
+): string | undefined {
+  // Windows ignores trailing dots and spaces, so `run.exe.` still runs. On
+  // Windows a `:stream` suffix names a data stream of the same file; on POSIX
+  // a colon is an ordinary character, so `Evil:x.app` keeps its `.app`.
+  const name = effectivePathBasename(path);
+  const basename = (flavor === "win32" ? (name.split(":")[0] ?? "") : name).replace(/[. ]+$/, "");
   const dotIndex = basename.lastIndexOf(".");
   if (dotIndex <= 0) return undefined;
   return basename.slice(dotIndex).toLowerCase();
@@ -316,8 +329,9 @@ export function effectivePathExtension(path: string): string | undefined {
 export function defaultOpenBlockedExtension(
   path: string,
   extraExtensions: ReadonlyArray<string> = [],
+  flavor: OpenPathFlavor = inferOpenPathFlavor(path),
 ): string | undefined {
-  const extension = effectivePathExtension(path);
+  const extension = effectivePathExtension(path, flavor);
   if (extension === undefined) return undefined;
   return DEFAULT_OPEN_BLOCKED_EXTENSIONS.includes(extension) ||
     extraExtensions.some((extra) => extra.toLowerCase() === extension)
@@ -338,10 +352,22 @@ export class ExternalLauncherBlockedFileTypeError extends Schema.TaggedError<Ext
   }
 }
 
+export class ExternalLauncherTargetNotFoundError extends Schema.TaggedError<ExternalLauncherTargetNotFoundError>()(
+  "ExternalLauncherTargetNotFoundError",
+  {
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cannot open '${this.target}': it was not found.`;
+  }
+}
+
 export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,

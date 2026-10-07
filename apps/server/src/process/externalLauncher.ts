@@ -14,6 +14,7 @@ import {
   DIRECTORY_LAUNCH_EXTENSIONS,
   EDITORS,
   ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -54,6 +55,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export {
   ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -590,8 +592,13 @@ function pathExtExtensions(pathExt: string | undefined): ReadonlyArray<string> {
 }
 
 /** A Windows path with a colon past the drive names an alternate data stream. */
-function namesWindowsDataStream(path: string): boolean {
-  return path.replace(/^[a-zA-Z]:/, "").includes(":");
+/** @internal Exported for tests. */
+export function namesWindowsDataStream(path: string): boolean {
+  // `\\?\C:\x` and `\\.\C:\x` are device-namespace forms of an ordinary drive path.
+  return path
+    .replace(/^[\\/]{2}[?.][\\/]/, "")
+    .replace(/^[a-zA-Z]:/, "")
+    .includes(":");
 }
 
 /**
@@ -610,7 +617,7 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
     readonly env: NodeJS.ProcessEnv;
   }): Effect.fn.Return<
     { readonly path: string; readonly argument: string },
-    ExternalLauncherBlockedFileTypeError,
+    ExternalLauncherBlockedFileTypeError | ExternalLauncherTargetNotFoundError,
     FileSystem.FileSystem
   > {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -642,8 +649,9 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
     const info = yield* statPath(Option.getOrElse(realPath, () => open.path));
     const isDirectory = Option.isSome(info) && info.value.type === "Directory";
     const extraExtensions = input.platform === "win32" ? pathExtExtensions(input.env.PATHEXT) : [];
+    const flavor = input.platform === "win32" ? "win32" : "posix";
     for (const name of [open.path, ...Option.toArray(realPath)]) {
-      const extension = defaultOpenBlockedExtension(name, extraExtensions);
+      const extension = defaultOpenBlockedExtension(name, extraExtensions, flavor);
       if (
         extension !== undefined &&
         (!isDirectory || DIRECTORY_LAUNCH_EXTENSIONS.includes(extension))
@@ -661,6 +669,11 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
       (info.value.mode & 0o111) !== 0
     ) {
       return yield* refuse("an executable file");
+    }
+    // Explorer opens a fallback folder for a path it cannot find, and an
+    // extensionless name it cannot classify; refuse instead of guessing.
+    if (input.platform === "win32" && Option.isNone(info)) {
+      return yield* new ExternalLauncherTargetNotFoundError({ target: open.path });
     }
     return open;
   },

@@ -51,6 +51,21 @@ describe("defaultOpenBlockedExtension", () => {
     expect(defaultOpenBlockedExtension(path)).toBeUndefined();
   });
 
+  it.each([
+    ["/x/Evil:x.app", ".app"],
+    ["/x/a:b.terminal", ".terminal"],
+    ["/x/a:b.pkg", ".pkg"],
+  ])("keeps a POSIX colon as part of the name in %s", (path, extension) => {
+    expect(defaultOpenBlockedExtension(path)).toBe(extension);
+    expect(defaultOpenBlockedExtension(path, [], "posix")).toBe(extension);
+  });
+
+  it("strips a Windows data stream only for Windows paths", () => {
+    expect(defaultOpenBlockedExtension("C:/x/run.exe::$DATA", [], "win32")).toBe(".exe");
+    expect(defaultOpenBlockedExtension("/x/run.exe:stream", [], "posix")).toBeUndefined();
+    expect(defaultOpenBlockedExtension("/x/run.exe:stream", [], "win32")).toBe(".exe");
+  });
+
   it("adds extra extensions such as the host's PATHEXT", () => {
     expect(defaultOpenBlockedExtension("C:/x/thing.foo")).toBeUndefined();
     expect(defaultOpenBlockedExtension("C:/x/thing.foo", [".FOO"])).toBe(".foo");
