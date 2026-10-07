@@ -342,6 +342,323 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// The open guard stats the real Windows path, so these need a Windows host.
+it.effect.skipIf(!windowsHost)(
+  "opens a file with Windows separators and no editor position on Windows",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+      const media = path.join(binDir, "workspace with spaces", "media");
+      yield* fileSystem.makeDirectory(media, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(media, "thumb.png"), "");
+      yield* fileSystem.writeFileString(path.join(binDir, "index.ts"), "");
+      const forward = (value: string) => value.replaceAll("\\", "/");
+
+      const spawnedCommands: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        // Web file links arrive with forward slashes, and Explorer opens the
+        // Documents folder for a path it cannot parse.
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: forward(path.join(media, "thumb.png")),
+        });
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: `${forward(path.join(binDir, "index.ts"))}:12:4`,
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "win32",
+            env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+            onSpawn: (command) => {
+              spawnedCommands.push(command);
+            },
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        spawnedCommands.map((command) => command.args),
+        [[path.join(media, "thumb.png")], [path.join(binDir, "index.ts")]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!windowsHost)(
+  "refuses a missing Windows path instead of handing it to Explorer",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+
+      let spawnCount = 0;
+      const error = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* Effect.flip(
+          launcher.launchEditor({ editor: "file-manager", cwd: path.join(binDir, "Makefile") }),
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "win32",
+            env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+            onSpawn: () => {
+              spawnCount += 1;
+            },
+          }),
+        ),
+      );
+
+      assert.equal(error._tag, "ExternalLauncherTargetNotFoundError");
+      assert.equal(spawnCount, 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.each([
+  ["C:\\x\\a.png", false],
+  ["\\\\?\\C:\\x\\a.png", false],
+  ["\\\\.\\C:\\x\\a.png", false],
+  ["//?/C:/x/a.png", false],
+  ["\\\\server\\share\\a.png", false],
+  ["C:\\x\\run.exe::$DATA", true],
+  ["\\\\?\\C:\\x\\notes.txt:hidden", true],
+])("treats %s as a data stream path: %s", (path, expected) => {
+  assert.equal(ExternalLauncher.namesWindowsDataStream(path), expected);
+});
+
+it.each([
+  {
+    name: "a Windows path keeps its drive colon",
+    input: { target: "C:/x", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\x", argument: "C:\\x" },
+  },
+  {
+    name: "a Windows drive root",
+    input: { target: "C:/", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\", argument: "C:\\" },
+  },
+  {
+    name: "a Windows position suffix",
+    input: { target: "D:\\repo\\src\\a.ts:7:2", platform: "win32", command: "explorer" },
+    expected: { path: "D:\\repo\\src\\a.ts", argument: "D:\\repo\\src\\a.ts" },
+  },
+  {
+    name: "a Windows trailing dot segment",
+    input: { target: "C:/x/run.exe/.", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\x\\run.exe", argument: "C:\\x\\run.exe" },
+  },
+  {
+    name: "a Windows parent segment",
+    input: { target: "C:/x/run.exe/a/..", platform: "win32", command: "explorer" },
+    expected: { path: "C:\\x\\run.exe", argument: "C:\\x\\run.exe" },
+  },
+  {
+    name: "a UNC share path",
+    input: { target: "//server/share/dir/file.png", platform: "win32", command: "explorer" },
+    expected: {
+      path: "\\\\server\\share\\dir\\file.png",
+      argument: "\\\\server\\share\\dir\\file.png",
+    },
+  },
+  {
+    name: "a WSL path opened through Explorer",
+    input: {
+      target: "/home/me/repo/thumb.png:3",
+      platform: "linux",
+      command: "explorer.exe",
+      wslDistroName: "Ubuntu",
+    },
+    expected: {
+      path: "/home/me/repo/thumb.png",
+      argument: "\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\thumb.png",
+    },
+  },
+  {
+    name: "a macOS bundle with a trailing dot segment",
+    input: { target: "/Applications/Calculator.app/.", platform: "darwin", command: "open" },
+    expected: { path: "/Applications/Calculator.app", argument: "/Applications/Calculator.app" },
+  },
+  {
+    name: "a POSIX name that really ends in :12",
+    input: { target: "/notes/todo:12", platform: "linux", command: "xdg-open", targetExists: true },
+    expected: { path: "/notes/todo:12", argument: "/notes/todo:12" },
+  },
+  {
+    name: "a POSIX position suffix on a name that does not exist",
+    input: { target: "/repo/src/a.ts:12", platform: "darwin", command: "open" },
+    expected: { path: "/repo/src/a.ts", argument: "/repo/src/a.ts" },
+  },
+] as const)("resolves the plain file-manager open argument for $name", ({ input, expected }) => {
+  assert.deepEqual(
+    ExternalLauncher.resolveFileManagerOpenArgument({
+      wslDistroName: undefined,
+      targetExists: false,
+      ...input,
+    }),
+    expected,
+  );
+});
+
+it.effect("refuses executable types, dot segments and data streams on Windows", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+
+    let spawnCount = 0;
+    const targets = [
+      "C:/Users/me/Downloads/run.exe",
+      "C:/x/setup.MSI.",
+      "C:/x/payload.js:3",
+      "C:/x/a.lnk",
+      "C:/x/run.exe/.",
+      "C:/x/run.exe/a/..",
+      "C:/x/run.exe::$DATA",
+      "C:/x/notes.txt:hidden.exe",
+      "C:/x/tool.jar",
+      "C:/x/setup.appinstaller",
+      // Only in this host's PATHEXT.
+      "C:/x/thing.foo",
+    ];
+    const errors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* Effect.forEach(targets, (cwd) =>
+        Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD;.FOO" },
+          onSpawn: () => {
+            spawnCount += 1;
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      errors.map((error) => [error._tag, "reason" in error ? error.reason : undefined]),
+      [
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.msi' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.js' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.lnk' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.exe' files"],
+        ["ExternalLauncherBlockedFileTypeError", "a data stream path"],
+        ["ExternalLauncherBlockedFileTypeError", "a data stream path"],
+        ["ExternalLauncherBlockedFileTypeError", "'.jar' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.appinstaller' files"],
+        ["ExternalLauncherBlockedFileTypeError", "'.foo' files"],
+      ],
+    );
+    assert.equal(spawnCount, 0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!windowsHost)("opens a real folder whose name looks executable on Windows", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+    const folders = ["x.com", "three.js", "bun.sh"].map((name) => path.join(binDir, name));
+    for (const folder of folders) yield* fileSystem.makeDirectory(folder);
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const folder of folders) {
+        // Forward slashes and a trailing slash, as web links send them.
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: `${folder.replaceAll("\\", "/")}/`,
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: (command) => {
+            spawned.push(command);
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      folders.map((folder) => [`${NodePath.win32.normalize(folder)}\\`]),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "opens executable-looking folders but refuses scripts, executables and links to them on Linux",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["xdg-open", "xdg-mime"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+      const folder = path.join(binDir, "socket.io.js");
+      yield* fileSystem.makeDirectory(folder);
+      const script = path.join(binDir, "install.sh");
+      yield* fileSystem.writeFileString(script, "#!/bin/sh\n");
+      const binary = path.join(binDir, "tool");
+      yield* fileSystem.writeFileString(binary, "#!/bin/sh\n");
+      yield* fileSystem.chmod(binary, 0o755);
+      const link = path.join(binDir, "readme.txt");
+      yield* fileSystem.symlink(script, link);
+
+      const opened: ChildProcess.StandardCommand[] = [];
+      const errors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "file-manager", cwd: folder });
+        return yield* Effect.forEach([script, `${script}/.`, binary, link], (cwd) =>
+          Effect.flip(launcher.launchEditor({ editor: "file-manager", cwd })),
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, DISPLAY: ":0" },
+            onSpawn: (command) => {
+              if (command.command === "xdg-open") opened.push(command);
+            },
+            spawnResult: (command) =>
+              command.command === "xdg-mime"
+                ? { stdout: "org.gnome.Nautilus.desktop\n" }
+                : undefined,
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        opened.map((command) => command.args),
+        [[folder]],
+      );
+      assert.deepEqual(
+        errors.map((error) => ("reason" in error ? error.reason : error._tag)),
+        ["'.sh' files", "'.sh' files", "an executable file", "'.sh' files"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // Real-chain smoke check for the Explorer selection contract: runs the exact
 // PowerShell source the reveal launch encodes, against a stub that records
 // the raw argument tail it receives, and asserts a spaced path arrives as the

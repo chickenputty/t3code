@@ -2,18 +2,16 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as NodeAssert from "node:assert/strict";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildFileContextMenuItems, resolveFileContextMenuAbsolutePath } from "./fileContextMenu";
+import {
+  buildFileContextMenuItems,
+  resolveFileContextMenuAbsolutePath,
+  resolveFileContextMenuRelativePath,
+} from "./fileContextMenu";
 
 const BASE_TARGET = {
   environmentId: EnvironmentId.make("environment-local"),
   filePath: "src/index.ts",
   workspaceRoot: "/workspace/project",
-};
-
-const EMPTY_CAPABILITIES = {
-  revealLabel: undefined,
-  canOpenDefault: false,
-  editorIds: [],
 };
 
 describe("resolveFileContextMenuAbsolutePath", () => {
@@ -54,49 +52,102 @@ describe("resolveFileContextMenuAbsolutePath", () => {
   });
 });
 
+describe("resolveFileContextMenuRelativePath", () => {
+  it("copies the workspace-relative path, falling back to the path as shown", () => {
+    expect(
+      resolveFileContextMenuRelativePath({
+        ...BASE_TARGET,
+        workspaceRoot: "/workspace/project/packages/app",
+        repositoryRoot: "/workspace/project",
+        filePath: "packages/app/src/index.ts",
+      }),
+    ).toBe("src/index.ts");
+    expect(
+      resolveFileContextMenuRelativePath({
+        ...BASE_TARGET,
+        workspaceRoot: "/workspace/project/packages/app",
+        repositoryRoot: "/workspace/project",
+        filePath: "other/src/index.ts",
+      }),
+    ).toBe("other/src/index.ts");
+  });
+});
+
 describe("buildFileContextMenuItems", () => {
-  it("offers open, reveal, and an open-with submenu when all are available", () => {
+  it("offers open file, parent folder, open with, then the copy actions for a file", () => {
     const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
+      absolutePath: "/workspace/project/src/index.ts",
       capabilities: {
-        revealLabel: "Reveal in Finder",
         canOpenDefault: true,
         editorIds: ["vscode", "cursor", "file-manager"],
       },
     });
 
-    expect(items.map((item) => item.id)).toEqual(["open", "reveal-in-folder", "open-with"]);
-    expect(items[0]).toMatchObject({ label: "Open" });
-    expect(items[1]).toMatchObject({ label: "Reveal in Finder" });
+    expect(items.map((item) => item.id)).toEqual([
+      "open-file",
+      "open-parent-folder",
+      "open-with",
+      "copy-relative-path",
+      "copy-full-path",
+    ]);
+    expect(items.map((item) => item.label)).toEqual([
+      "Open File",
+      "Open Parent Folder",
+      "Open with",
+      "Copy relative path",
+      "Copy full path",
+    ]);
+    expect(items[3]).toMatchObject({ separatorBefore: true });
     const openWith = items[2];
     NodeAssert.ok(openWith);
     expect(openWith.children?.map((child) => child.id)).toEqual(["editor:vscode", "editor:cursor"]);
   });
 
-  it("offers only the reveal item when just reveal is enabled", () => {
+  it("offers open folder and open with, but no parent entry, for a folder", () => {
     const items = buildFileContextMenuItems({
-      hasAbsolutePath: true,
-      capabilities: {
-        revealLabel: "Reveal in File Explorer",
-        canOpenDefault: false,
-        editorIds: [],
-      },
+      kind: "directory",
+      absolutePath: "/workspace/project/src",
+      capabilities: { canOpenDefault: true, editorIds: ["vscode", "file-manager"] },
     });
 
-    expect(items.map((item) => item.id)).toEqual(["reveal-in-folder"]);
-    expect(items[0]).toMatchObject({ label: "Reveal in File Explorer" });
+    expect(items.map((item) => item.label)).toEqual([
+      "Open Folder",
+      "Open with",
+      "Copy relative path",
+      "Copy full path",
+    ]);
   });
 
-  it("offers nothing when the path cannot be resolved", () => {
+  it("keeps the parent folder but not open file for an executable file", () => {
+    const items = buildFileContextMenuItems({
+      absolutePath: "C:\\repo\\scripts\\deploy.ps1",
+      capabilities: { canOpenDefault: true, editorIds: ["vscode", "file-manager"] },
+    });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "open-parent-folder",
+      "open-with",
+      "copy-relative-path",
+      "copy-full-path",
+    ]);
+  });
+
+  it("keeps the copy actions when the environment cannot open files", () => {
+    const items = buildFileContextMenuItems({
+      absolutePath: "/workspace/project/src/index.ts",
+      capabilities: { canOpenDefault: false, editorIds: [] },
+    });
+
+    expect(items.map((item) => item.id)).toEqual(["copy-relative-path", "copy-full-path"]);
+    expect(items[0]?.separatorBefore).toBeUndefined();
+  });
+
+  it("offers only the relative copy when the path cannot be resolved", () => {
     expect(
       buildFileContextMenuItems({
-        hasAbsolutePath: false,
-        capabilities: {
-          revealLabel: "Reveal in Finder",
-          canOpenDefault: true,
-          editorIds: ["vscode"],
-        },
-      }),
-    ).toEqual([]);
+        absolutePath: null,
+        capabilities: { canOpenDefault: true, editorIds: ["vscode"] },
+      }).map((item) => item.id),
+    ).toEqual(["copy-relative-path"]);
   });
 });

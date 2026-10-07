@@ -3856,11 +3856,12 @@ function AssistantChangedFilesSectionInner({
         setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
       }
       onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
+      onFileContextMenu={(filePath, event, kind) =>
         onFileContextMenu(
           {
             environmentId: ctx.activeThreadEnvironmentId,
             filePath,
+            kind,
             workspaceRoot: ctx.workspaceRoot,
             repositoryRoot:
               thread?.worktreePath == null

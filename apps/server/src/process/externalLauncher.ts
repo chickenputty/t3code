@@ -6,8 +6,15 @@
  *
  * @module ExternalLauncher
  */
+// Normalizing for the target host (win32 vs posix) needs both flavors, which Effect Path does not expose.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import {
+  defaultOpenBlockedExtension,
+  DIRECTORY_LAUNCH_EXTENSIONS,
   EDITORS,
+  ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -47,6 +54,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // ==============================
 
 export {
+  ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
@@ -560,16 +569,153 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
+  const open = yield* resolveGuardedFileManagerOpen({
+    target: input.cwd,
+    platform,
+    command,
+    env,
+  });
   return {
     editor: editorDef.id,
     target: input.cwd,
     command,
-    args:
-      command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : [input.cwd],
+    args: [open.argument],
   };
 });
+
+/** Extensions Windows runs directly from the host's PATHEXT (`.COM;.EXE;...`). */
+function pathExtExtensions(pathExt: string | undefined): ReadonlyArray<string> {
+  return (pathExt ?? "")
+    .split(";")
+    .map((extension) => extension.trim().toLowerCase())
+    .filter((extension) => extension.startsWith("."));
+}
+
+/** A Windows path with a colon past the drive names an alternate data stream. */
+/** @internal Exported for tests. */
+export function namesWindowsDataStream(path: string): boolean {
+  // `\\?\C:\x` and `\\.\C:\x` are device-namespace forms of an ordinary drive path.
+  return path
+    .replace(/^[\\/]{2}[?.][\\/]/, "")
+    .replace(/^[a-zA-Z]:/, "")
+    .includes(":");
+}
+
+/**
+ * Opening a file with the file manager launches its default app, so a
+ * script, installer or launcher would run. This reduces that risk for
+ * model-authored chat links: it refuses blocked extensions (plus PATHEXT on
+ * Windows) on both the link name and its symlink target, data stream paths on
+ * Windows, and files with an execute bit where the opener honors it. Folders
+ * are only shown, except bundles that launch (`.app`, `.pkg`).
+ */
+const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuardedFileManagerOpen")(
+  function* (input: {
+    readonly target: string;
+    readonly platform: NodeJS.Platform;
+    readonly command: string;
+    readonly env: NodeJS.ProcessEnv;
+  }): Effect.fn.Return<
+    { readonly path: string; readonly argument: string },
+    ExternalLauncherBlockedFileTypeError | ExternalLauncherTargetNotFoundError,
+    FileSystem.FileSystem
+  > {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const statPath = (path: string) =>
+      fileSystem.stat(path).pipe(
+        Effect.map(Option.some),
+        Effect.orElseSucceed(() => Option.none<FileSystem.File.Info>()),
+      );
+    // Windows names cannot hold a colon past the drive, so only POSIX hosts
+    // ask whether `notes:12` is a real name before treating `:12` as a position.
+    const rawInfo = input.platform === "win32" ? Option.none() : yield* statPath(input.target);
+    const open = resolveFileManagerOpenArgument({
+      target: input.target,
+      platform: input.platform,
+      command: input.command,
+      wslDistroName: input.env.WSL_DISTRO_NAME,
+      targetExists: Option.isSome(rawInfo),
+    });
+    const refuse = (reason: string) =>
+      new ExternalLauncherBlockedFileTypeError({ target: open.path, reason });
+
+    if (input.platform === "win32" && namesWindowsDataStream(open.path)) {
+      return yield* refuse("a data stream path");
+    }
+    const realPath = yield* fileSystem.realPath(open.path).pipe(
+      Effect.map(Option.some),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    const info = yield* statPath(Option.getOrElse(realPath, () => open.path));
+    const isDirectory = Option.isSome(info) && info.value.type === "Directory";
+    const extraExtensions = input.platform === "win32" ? pathExtExtensions(input.env.PATHEXT) : [];
+    const flavor = input.platform === "win32" ? "win32" : "posix";
+    for (const name of [open.path, ...Option.toArray(realPath)]) {
+      const extension = defaultOpenBlockedExtension(name, extraExtensions, flavor);
+      if (
+        extension !== undefined &&
+        (!isDirectory || DIRECTORY_LAUNCH_EXTENSIONS.includes(extension))
+      ) {
+        return yield* refuse(`'${extension}' files`);
+      }
+    }
+    // Windows (and WSL through Explorer) choose the app by extension; macOS
+    // and Linux openers run a file whose execute bit is set.
+    if (
+      input.platform !== "win32" &&
+      input.command !== "explorer.exe" &&
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      (info.value.mode & 0o111) !== 0
+    ) {
+      return yield* refuse("an executable file");
+    }
+    // Explorer opens a fallback folder for a path it cannot find, and an
+    // extensionless name it cannot classify; refuse instead of guessing.
+    if (input.platform === "win32" && Option.isNone(info)) {
+      return yield* new ExternalLauncherTargetNotFoundError({ target: open.path });
+    }
+    return open;
+  },
+);
+
+/**
+ * The argument a plain file-manager open hands to the OS. `path` is the
+ * target normalized for the host (so `run.exe/.` and `run.exe/a/..` resolve
+ * to `run.exe` before any check), with an editor `:line[:column]` suffix
+ * dropped (on POSIX only when the full name is not itself a file).
+ * `argument` is the form the launcher parses: Explorer needs backslashes (it
+ * opens Documents for `C:/a/b.png`) and a WSL path needs its
+ * `\\wsl.localhost` UNC form.
+ *
+ * @internal Exported for tests.
+ */
+export function resolveFileManagerOpenArgument(input: {
+  readonly target: string;
+  readonly platform: NodeJS.Platform;
+  readonly command: string;
+  readonly wslDistroName: string | undefined;
+  readonly targetExists: boolean;
+}): { readonly path: string; readonly argument: string } {
+  const stripped =
+    input.platform !== "win32" && input.targetExists
+      ? input.target
+      : Option.match(parseTargetPathAndPosition(input.target), {
+          onNone: () => input.target,
+          onSome: (parsed) => parsed.path,
+        });
+  const path =
+    input.platform === "win32"
+      ? NodePath.win32.normalize(stripped)
+      : NodePath.posix.normalize(stripped);
+  if (input.command === "explorer.exe" && input.wslDistroName !== undefined) {
+    return { path, argument: resolveWslFileManagerPath(path, input.wslDistroName) };
+  }
+  return {
+    path,
+    argument: input.platform === "win32" ? normalizeWindowsFileManagerPath(path) : path,
+  };
+}
 
 /**
  * PowerShell source that launches File Explorer with its raw selection
@@ -605,6 +751,8 @@ function fileExplorerRevealLaunch(
   };
 }
 
+// Explorer does not understand forward slashes: given `C:/a/b.png` it opens
+// the user's Documents folder instead of the file.
 function normalizeWindowsFileManagerPath(target: string): string {
   return target.replaceAll("/", "\\");
 }

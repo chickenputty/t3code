@@ -222,9 +222,152 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
   }
 }
 
+/**
+ * Extensions a plain file-manager open refuses: the "default app" for these
+ * is a shell, interpreter, installer or launcher, so opening one runs it.
+ * Chat file links are model-authored, so this reduces the risk that "Open
+ * File" on a link executes code. The server adds the host's PATHEXT and, on
+ * POSIX, refuses any file with an execute bit.
+ */
+export const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
+  // Windows (and WSL, which opens through Explorer)
+  ".exe",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".ps1",
+  ".vbs",
+  ".vbe",
+  ".js",
+  ".jse",
+  ".wsf",
+  ".wsh",
+  ".msi",
+  ".msc",
+  ".scr",
+  ".pif",
+  ".lnk",
+  ".url",
+  ".hta",
+  ".cpl",
+  ".reg",
+  ".jar",
+  ".py",
+  ".pyw",
+  ".appref-ms",
+  ".application",
+  ".settingcontent-ms",
+  ".scf",
+  ".chm",
+  ".msix",
+  ".msixbundle",
+  ".appx",
+  ".appinstaller",
+  // macOS
+  ".app",
+  ".command",
+  ".sh",
+  ".terminal",
+  ".tool",
+  ".workflow",
+  ".pkg",
+  ".mpkg",
+  // Linux
+  ".desktop",
+  ".appimage",
+];
+
+/** Bundle extensions that launch even though they are directories (macOS). */
+export const DIRECTORY_LAUNCH_EXTENSIONS: ReadonlyArray<string> = [
+  ".app",
+  ".pkg",
+  ".mpkg",
+  ".workflow",
+];
+
+/**
+ * The name a path finally points at, after `.` and `..` segments, so
+ * `run.exe/.` and `run.exe/a/..` both end at `run.exe`.
+ */
+export function effectivePathBasename(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.at(-1) ?? "";
+}
+
+/** Path flavor: Windows names cannot hold a colon past the drive, POSIX names can. */
+export type OpenPathFlavor = "win32" | "posix";
+
+/** Guesses the flavor of a path whose host is unknown (a drive letter or backslash means Windows). */
+export function inferOpenPathFlavor(path: string): OpenPathFlavor {
+  return /^[a-zA-Z]:/.test(path) || path.includes("\\") ? "win32" : "posix";
+}
+
+/** The lowercased extension of a path's effective name, ignoring trailing dots and spaces. */
+export function effectivePathExtension(
+  path: string,
+  flavor: OpenPathFlavor = inferOpenPathFlavor(path),
+): string | undefined {
+  // Windows ignores trailing dots and spaces, so `run.exe.` still runs. On
+  // Windows a `:stream` suffix names a data stream of the same file; on POSIX
+  // a colon is an ordinary character, so `Evil:x.app` keeps its `.app`.
+  const name = effectivePathBasename(path);
+  const basename = (flavor === "win32" ? (name.split(":")[0] ?? "") : name).replace(/[. ]+$/, "");
+  const dotIndex = basename.lastIndexOf(".");
+  if (dotIndex <= 0) return undefined;
+  return basename.slice(dotIndex).toLowerCase();
+}
+
+/** The blocked extension of `path` (lowercased), or undefined when it may be opened. */
+export function defaultOpenBlockedExtension(
+  path: string,
+  extraExtensions: ReadonlyArray<string> = [],
+  flavor: OpenPathFlavor = inferOpenPathFlavor(path),
+): string | undefined {
+  const extension = effectivePathExtension(path, flavor);
+  if (extension === undefined) return undefined;
+  return DEFAULT_OPEN_BLOCKED_EXTENSIONS.includes(extension) ||
+    extraExtensions.some((extra) => extra.toLowerCase() === extension)
+    ? extension
+    : undefined;
+}
+
+export class ExternalLauncherBlockedFileTypeError extends Schema.TaggedError<ExternalLauncherBlockedFileTypeError>()(
+  "ExternalLauncherBlockedFileTypeError",
+  {
+    target: Schema.String,
+    /** Why the default app could run code: "'.exe' files", "an executable file", ... */
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Refusing to open '${this.target}' with its default app: ${this.reason} can run code. Open its parent folder instead.`;
+  }
+}
+
+export class ExternalLauncherTargetNotFoundError extends Schema.TaggedError<ExternalLauncherTargetNotFoundError>()(
+  "ExternalLauncherTargetNotFoundError",
+  {
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cannot open '${this.target}': it was not found.`;
+  }
+}
+
 export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  ExternalLauncherBlockedFileTypeError,
+  ExternalLauncherTargetNotFoundError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,

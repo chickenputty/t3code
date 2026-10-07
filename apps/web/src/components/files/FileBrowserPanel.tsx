@@ -160,7 +160,7 @@ export default function FileBrowserPanel({
     return () => document.removeEventListener("contextmenu", capturePointer, true);
   }, []);
 
-  /** Combines the file actions (open/reveal/open with) with the panel's own mention actions. */
+  /** Combines the file actions (open, open parent folder, open with, copy paths) with the panel's own mention actions. */
   const showEntryContextMenu = async (
     item: TreeContextMenuItem,
     context: TreeContextMenuOpenContext,
@@ -178,13 +178,19 @@ export default function FileBrowserPanel({
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
-    const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+    const fileTarget = {
+      environmentId,
+      filePath: relativePath,
+      workspaceRoot: cwd,
+      kind:
+        entryKindsRef.current.get(relativePath) ?? (item.path.endsWith("/") ? "directory" : "file"),
+    } as const;
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
     try {
       const clicked = await api.contextMenu.show(
         [
           ...fileMenuItems,
-          { id: "copy-mention", label: "Copy mention" },
+          { id: "copy-mention", label: "Copy mention", separatorBefore: fileMenuItems.length > 0 },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,

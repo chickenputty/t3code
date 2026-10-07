@@ -18,8 +18,12 @@ import { MorphIcon } from "~/components/MorphIcon";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
-/** Opens the OS-level context menu for a changed file (reveal in file manager, open in editor). */
-export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+/** Opens the context menu for a changed file or folder (open, open parent folder, copy paths). */
+export type ChangedFileContextMenuHandler = (
+  filePath: string,
+  event: MouseEvent,
+  kind: "file" | "directory",
+) => void;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;
@@ -181,6 +185,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
+            onContextMenu={
+              onFileContextMenu
+                ? (event) => {
+                    event.preventDefault();
+                    onFileContextMenu(node.path, event, "directory");
+                  }
+                : undefined
+            }
           >
             <ChevronRightIcon
               aria-hidden="true"
@@ -220,7 +232,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           onFileContextMenu
             ? (event) => {
                 event.preventDefault();
-                onFileContextMenu(node.path, event);
+                onFileContextMenu(node.path, event, "file");
               }
             : undefined
         }
