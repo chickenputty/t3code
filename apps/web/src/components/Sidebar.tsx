@@ -2978,10 +2978,13 @@ export default function Sidebar() {
         projectInfoOf: (key) => projectSortInfoByKey.get(key),
         statusOf: (thread) =>
           resolveSidebarThreadDisplayStatus(thread, {
-            lastVisitedAt:
+            // The same visit time the row reads, so the sort agrees with its label.
+            lastVisitedAt: resolveThreadLastVisitedAt(
+              thread.lastVisitedAt,
               lastVisitedAtByThreadKey?.[
                 scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
               ],
+            ),
             wokeAt: threadWokeAt(thread, { now: snoozeNow }),
           }),
         openedAtOf: (thread) =>
