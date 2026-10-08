@@ -63,6 +63,7 @@ import {
 import {
   SIDEBAR_PROJECT_ICON_STYLE_LABELS,
   SIDEBAR_THREAD_INDENT_LABELS,
+  SIDEBAR_PROJECT_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_ROW_DENSITY_LABELS,
 } from "../sidebar/sidebarArrangement";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -570,6 +571,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadRowDensity !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity
         ? ["Thread rows"]
         : []),
+      ...(settings.sidebarProjectRowDensity !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectRowDensity
+        ? ["Project rows"]
+        : []),
       ...(settings.sidebarThreadEmoji !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji
         ? ["Topic emoji"]
         : []),
@@ -734,6 +738,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.sidebarThreadRowDensity,
+      settings.sidebarProjectRowDensity,
       settings.sidebarThreadEmoji,
       settings.sidebarProjectIcons,
       settings.sidebarProjectIconStyle,
@@ -836,6 +841,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
+      sidebarProjectRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarProjectRowDensity,
       sidebarThreadEmoji: DEFAULT_UNIFIED_SETTINGS.sidebarThreadEmoji,
       sidebarProjectIcons: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIcons,
       sidebarProjectIconStyle: DEFAULT_UNIFIED_SETTINGS.sidebarProjectIconStyle,
@@ -1377,7 +1383,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("sidebar-thread-rows")}
-          description="How tall pinned and active threads are in the sidebar. Slim shows the project icon, the title and a status icon."
+          description="How tall pinned and active threads are in the sidebar. Slim keeps the project icon, the title, the PR, a status icon and the time."
           resetAction={
             settings.sidebarThreadRowDensity !==
             DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity ? (
@@ -1407,6 +1413,46 @@ export function AppearanceSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {Object.entries(SIDEBAR_THREAD_ROW_DENSITY_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-project-rows")}
+          description="How roomy the project headers are when the sidebar is grouped by project. Comfortable adds a divider between projects."
+          resetAction={
+            settings.sidebarProjectRowDensity !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectRowDensity ? (
+              <SettingResetButton
+                label="project rows"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarProjectRowDensity,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarProjectRowDensity}
+              onValueChange={(value) => {
+                if (value === "comfortable" || value === "compact" || value === "slim") {
+                  updateSettings({ sidebarProjectRowDensity: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Project rows">
+                <SelectValue>
+                  {SIDEBAR_PROJECT_ROW_DENSITY_LABELS[settings.sidebarProjectRowDensity]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(SIDEBAR_PROJECT_ROW_DENSITY_LABELS).map(([value, label]) => (
                   <SelectItem hideIndicator key={value} value={value}>
                     {label}
                   </SelectItem>
