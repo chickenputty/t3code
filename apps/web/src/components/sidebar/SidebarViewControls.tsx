@@ -357,6 +357,8 @@ export function SidebarStatusGlyph(props: {
 export function SidebarProjectGroupHeader(props: {
   label: string;
   density: SidebarProjectRowDensity;
+  /** The first group's header: no divider or top margin above it. */
+  first: boolean;
   count: number;
   collapsed: boolean;
   /** "folder" draws an open or closed folder; "project" draws `projectIcon`. */
@@ -371,13 +373,16 @@ export function SidebarProjectGroupHeader(props: {
   return (
     <li
       className={cn(
-        "group/project-header mx-0.5 flex list-none items-center first:mt-0",
-        // Comfortable draws a divider above every project but the first.
-        props.density === "comfortable"
-          ? "mt-2 border-t border-sidebar-border pt-2 first:border-t-0 first:pt-0"
-          : props.density === "compact"
-            ? "mt-1"
-            : "mt-0.5",
+        "group/project-header mx-0.5 flex list-none items-center",
+        // Comfortable draws a divider above every project but the first. Drop
+        // markers and pins share the list, so CSS first-child cannot tell.
+        props.first
+          ? null
+          : props.density === "comfortable"
+            ? "mt-2 border-t border-sidebar-border pt-2"
+            : props.density === "compact"
+              ? "mt-1"
+              : "mt-0.5",
       )}
       data-testid="sidebar-project-group-header"
     >

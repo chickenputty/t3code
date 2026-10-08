@@ -5576,7 +5576,9 @@ export default function Sidebar() {
                               />,
                             );
                             // Fork: the grouped active list, one project header per group.
-                            for (const group of activeArrangement.groups ?? []) {
+                            for (const [groupIndex, group] of (
+                              activeArrangement.groups ?? []
+                            ).entries()) {
                               const project = projectGroups.find(
                                 (candidate) => candidate.projectKey === group.key,
                               );
@@ -5585,6 +5587,7 @@ export default function Sidebar() {
                                   key={`project-group:${group.key}`}
                                   label={group.label}
                                   density={projectRowDensity}
+                                  first={groupIndex === 0}
                                   count={group.threads.length}
                                   collapsed={group.collapsed}
                                   // Fork: Project icons hides the header's icon; Icon style
