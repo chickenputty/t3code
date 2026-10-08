@@ -83,6 +83,32 @@ describe("WorkerProcessSpawner", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.live("keeps each child's input and output apart across the workers", () =>
+    Effect.gen(function* () {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const results = yield* Effect.forEach(
+        Array.from({ length: 12 }, (_, index) => index),
+        (index) =>
+          runner.run({
+            ...node(
+              `let s=''; process.stdin.on('data', d => s += d); process.stdin.on('end', () => { process.stdout.write(s + ':out'); process.stderr.write(s + ':err'); process.exit(${index}) })`,
+            ),
+            stdin: `child-${index}`,
+          }),
+        { concurrency: "unbounded" },
+      );
+      expect(results).toEqual(
+        results.map((_, index) =>
+          expect.objectContaining({
+            stdout: `child-${index}:out`,
+            stderr: `child-${index}:err`,
+            code: index,
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.live("kills the child when the run is interrupted", () =>
     Effect.gen(function* () {
       const runner = yield* ProcessRunner.ProcessRunner;

@@ -23,6 +23,10 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
  * loop: health checks time out and clients show "reconnecting". Spawning from
  * a worker confines the stall to that worker.
  *
+ * A worker also relays its children's output and exits, so a stalled spawn holds
+ * those back too. Spawns spread over a few workers, each going to the one with the
+ * fewest children, so one slow start does not queue every other git and gh call.
+ *
  * Only what ProcessRunner reads is supported: piped stdin, stdout, stderr and
  * the exit code of a standard command. The server provides it on Windows;
  * everywhere else ProcessRunner keeps the in-process spawner.
@@ -112,6 +116,8 @@ type WorkerMessage =
   | { readonly type: "stdin-done"; readonly id: number; readonly error?: WorkerError | undefined };
 
 interface ChildEntry {
+  /** The worker that spawned the child, which every later message for it goes to. */
+  readonly slot: Slot;
   readonly spawned: Deferred.Deferred<number, WorkerError>;
   readonly exited: Deferred.Deferred<readonly [code: number | null, signal: string | null]>;
   readonly stdinDone: Deferred.Deferred<void, WorkerError>;
@@ -122,6 +128,12 @@ interface ChildEntry {
 
 // Same errno mapping as @effect/platform-node's spawner, so callers that match
 // on reason tags (for example a missing `gh` as NotFound) behave the same.
+interface Slot {
+  worker: NodeWorkerThreads.Worker | undefined;
+  /** Children spawned here that have not been released. */
+  children: number;
+}
+
 const errnoTag = (code: string | undefined): PlatformError.SystemErrorTag => {
   switch (code) {
     case "ENOENT":
@@ -155,6 +167,9 @@ const toPlatformError = (
     cause: Object.assign(new Error(error.message), { code: error.code, syscall: error.syscall }),
   });
 
+/** Workers to spread spawns over; each is started on first use. */
+const WORKER_COUNT = 4;
+
 const unsupported = (feature: string) =>
   new Error(`WorkerProcessSpawner does not support ${feature}`);
 
@@ -165,19 +180,30 @@ export const make = Effect.gen(function* () {
   const hostEnv = yield* HostProcessEnvironment;
   const entries = new Map<number, ChildEntry>();
   let nextId = 0;
-  let worker: NodeWorkerThreads.Worker | undefined;
+  const slots: ReadonlyArray<Slot> = Array.from({ length: WORKER_COUNT }, () => ({
+    worker: undefined,
+    children: 0,
+  }));
 
-  const failAll = (reason: string) => {
+  const release = (id: number) => {
+    const entry = entries.get(id);
+    if (entry === undefined) return;
+    entries.delete(id);
+    entry.slot.children -= 1;
+  };
+
+  const failAll = (slot: Slot, reason: string) => {
     const error: WorkerError = { message: reason };
-    for (const entry of entries.values()) {
+    for (const [id, entry] of entries) {
+      if (entry.slot !== slot) continue;
       Deferred.doneUnsafe(entry.spawned, Effect.fail(error));
       Deferred.doneUnsafe(entry.exited, Effect.succeed([null, "SIGKILL"] as const));
       Deferred.doneUnsafe(entry.stdinDone, Effect.void);
       Deferred.doneUnsafe(entry.killed, Effect.void);
       Queue.endUnsafe(entry.stdout);
       Queue.endUnsafe(entry.stderr);
+      release(id);
     }
-    entries.clear();
   };
 
   const onMessage = (message: WorkerMessage) => {
@@ -215,32 +241,40 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  const getWorker = () => {
-    if (worker) return worker;
+  const workerOf = (slot: Slot) => {
+    if (slot.worker) return slot.worker;
     const created = new NodeWorkerThreads.Worker(WORKER_SOURCE, { eval: true });
     // Never keep the server alive just for an idle spawner.
     created.unref();
     created.on("message", onMessage);
     const lost = (reason: string) => {
-      if (worker === created) worker = undefined;
-      failAll(reason);
+      if (slot.worker === created) slot.worker = undefined;
+      failAll(slot, reason);
     };
     created.on("error", (error) => lost(`Process spawner worker failed: ${error.message}`));
     created.on("exit", (code) => lost(`Process spawner worker exited with code ${code}`));
-    worker = created;
+    slot.worker = created;
     return created;
   };
 
+  // The worker with the fewest children, so a slot stuck in a slow spawn stops taking more.
+  const leastBusy = () =>
+    slots.reduce((best, slot) => (slot.children < best.children ? slot : best));
+
   yield* Effect.addFinalizer(() =>
-    Effect.promise(async () => {
-      const current = worker;
-      worker = undefined;
-      if (current) await current.terminate();
-    }),
+    Effect.promise(() =>
+      Promise.all(
+        slots.map(async (slot) => {
+          const current = slot.worker;
+          slot.worker = undefined;
+          if (current) await current.terminate();
+        }),
+      ),
+    ),
   );
 
-  const post = (message: unknown, transfer?: ReadonlyArray<ArrayBuffer>) =>
-    getWorker().postMessage(message, transfer as ArrayBuffer[] | undefined);
+  const post = (slot: Slot, message: unknown, transfer?: ReadonlyArray<ArrayBuffer>) =>
+    workerOf(slot).postMessage(message, transfer as ArrayBuffer[] | undefined);
 
   // Kill the tree if still running, then wait up to a second for the exit, as
   // the in-process spawner does on Windows. The wait starts once taskkill has
@@ -248,7 +282,7 @@ export const make = Effect.gen(function* () {
   const terminate = (id: number, entry: ChildEntry, signal: NodeJS.Signals) =>
     Effect.gen(function* () {
       if (yield* Deferred.isDone(entry.exited)) return;
-      post({ type: "kill", id, signal });
+      post(entry.slot, { type: "kill", id, signal });
       yield* Deferred.await(entry.killed).pipe(Effect.timeoutOption(Duration.seconds(10)));
       yield* Deferred.await(entry.exited).pipe(Effect.timeoutOption(Duration.seconds(1)));
     });
@@ -277,6 +311,7 @@ export const make = Effect.gen(function* () {
 
     const id = nextId++;
     const entry: ChildEntry = {
+      slot: leastBusy(),
       spawned: yield* Deferred.make<number, WorkerError>(),
       exited: yield* Deferred.make<readonly [number | null, string | null]>(),
       stdinDone: yield* Deferred.make<void, WorkerError>(),
@@ -288,7 +323,8 @@ export const make = Effect.gen(function* () {
     const pid = yield* Effect.acquireRelease(
       Effect.suspend(() => {
         entries.set(id, entry);
-        post({
+        entry.slot.children += 1;
+        post(entry.slot, {
           type: "spawn",
           id,
           command: command.command,
@@ -304,13 +340,10 @@ export const make = Effect.gen(function* () {
         });
         return Deferred.await(entry.spawned).pipe(
           Effect.mapError((error) => toPlatformError("spawn", error, command)),
-          Effect.tapError(() => Effect.sync(() => entries.delete(id))),
+          Effect.tapError(() => Effect.sync(() => release(id))),
         );
       }),
-      () =>
-        terminate(id, entry, killSignal).pipe(
-          Effect.ensuring(Effect.sync(() => entries.delete(id))),
-        ),
+      () => terminate(id, entry, killSignal).pipe(Effect.ensuring(Effect.sync(() => release(id)))),
     );
 
     const exitCode = Effect.flatMap(Deferred.await(entry.exited), ([code, signal]) =>
@@ -328,12 +361,12 @@ export const make = Effect.gen(function* () {
     const stdin = Sink.forEach((chunk: Uint8Array) =>
       Effect.sync(() => {
         const bytes = chunk.slice();
-        post({ type: "stdin", id, chunk: bytes }, [bytes.buffer]);
+        post(entry.slot, { type: "stdin", id, chunk: bytes }, [bytes.buffer]);
       }),
     ).pipe(
       Sink.mapEffect(() =>
         Effect.suspend(() => {
-          post({ type: "stdin-end", id });
+          post(entry.slot, { type: "stdin-end", id });
           return Deferred.await(entry.stdinDone).pipe(
             Effect.mapError((error) => toPlatformError("stdin", error, command)),
           );
