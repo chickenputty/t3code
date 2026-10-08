@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   arrangeSidebarActiveThreads,
+  DEFAULT_SIDEBAR_PROJECT_SORT,
   MANUAL_SIDEBAR_THREAD_SORT,
   resolveSidebarThreadDisplayStatus,
   sortSidebarThreads,
@@ -131,6 +132,7 @@ describe("arrangeSidebarActiveThreads", () => {
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: { field: "activity", reversed: false },
       groupByProject: true,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(["flux"]),
@@ -158,6 +160,7 @@ describe("arrangeSidebarActiveThreads", () => {
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: { field: "activity", reversed: false },
       groupByProject: true,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(),
@@ -182,6 +185,7 @@ describe("arrangeSidebarActiveThreads", () => {
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: { field: "activity", reversed: false },
       groupByProject: true,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(),
@@ -202,6 +206,7 @@ describe("arrangeSidebarActiveThreads", () => {
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: MANUAL_SIDEBAR_THREAD_SORT,
       groupByProject: true,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(),
@@ -222,6 +227,7 @@ describe("arrangeSidebarActiveThreads", () => {
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: MANUAL_SIDEBAR_THREAD_SORT,
       groupByProject: true,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(["flux"]),
@@ -231,11 +237,54 @@ describe("arrangeSidebarActiveThreads", () => {
     expect(arranged.groups?.find((group) => group.key === "flux")?.threads).toHaveLength(2);
   });
 
+  it("orders groups by the project sort, apart from the thread sort", () => {
+    const threads = [
+      thread("vault-new", { projectId: "vault", latestRun: turn(40) }),
+      thread("flux-old", { projectId: "flux", latestRun: turn(1) }),
+      thread("unknown", { projectId: "missing" }),
+    ];
+    const arrange = (projectSort: { field: "manual" | "name" | "created"; reversed: boolean }) =>
+      arrangeSidebarActiveThreads(threads, {
+        sort: { field: "activity", reversed: false },
+        groupByProject: true,
+        projectSort,
+        projectInfoOf: (key) =>
+          key === "flux" ? { rank: 0, createdAt: at(30) } : { rank: 1, createdAt: at(10) },
+        statusOf: noStatus,
+        groupOf,
+        collapsedGroupKeys: new Set(),
+      }).groups?.map((group) => group.label);
+    expect(arrange({ field: "manual", reversed: false })).toEqual(["flux", "Pet Vault", "Other"]);
+    // Manual has no direction to flip.
+    expect(arrange({ field: "manual", reversed: true })).toEqual(["flux", "Pet Vault", "Other"]);
+    expect(arrange({ field: "name", reversed: false })).toEqual(["flux", "Pet Vault", "Other"]);
+    expect(arrange({ field: "name", reversed: true })).toEqual(["Pet Vault", "flux", "Other"]);
+    expect(arrange({ field: "created", reversed: false })).toEqual(["flux", "Pet Vault", "Other"]);
+  });
+
+  it("puts the project with the most urgent thread first under the status sort", () => {
+    const threads = [
+      thread("vault-a", { projectId: "vault", latestRun: turn(40) }),
+      thread("flux-idle", { projectId: "flux", latestRun: turn(1) }),
+      thread("flux-input", { projectId: "flux", latestRun: turn(2) }),
+    ];
+    const arranged = arrangeSidebarActiveThreads(threads, {
+      sort: { field: "activity", reversed: false },
+      groupByProject: true,
+      projectSort: { field: "status", reversed: false },
+      statusOf: (entry) => (entry.id === "flux-input" ? "input" : "idle"),
+      groupOf,
+      collapsedGroupKeys: new Set(),
+    });
+    expect(arranged.groups?.map((group) => group.label)).toEqual(["flux", "Pet Vault"]);
+  });
+
   it("passes an ungrouped manual list straight through", () => {
     const threads = [thread("b"), thread("a")];
     const arranged = arrangeSidebarActiveThreads(threads, {
       sort: MANUAL_SIDEBAR_THREAD_SORT,
       groupByProject: false,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
       statusOf: noStatus,
       groupOf,
       collapsedGroupKeys: new Set(),

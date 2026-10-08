@@ -274,6 +274,7 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import {
   arrangeSidebarActiveThreads,
   resolveSidebarThreadDisplayStatus,
+  type SidebarThreadSortField,
 } from "./sidebar/sidebarArrangement";
 import {
   SidebarProjectGroupHeader,
@@ -1117,7 +1118,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Settled rows un-settle, snoozed rows wake, and cards settle.
   variantAction: SidebarSweepAction;
   // Fork: the "Slim" thread row setting. Slim rows shrink to 28px, and live
-  // rows keep only the project icon, the title and a status icon.
+  // rows keep only the project icon, the title, the PR, a status icon and the time.
   statusSlim?: boolean;
   // Fork: a topic emoji shown beside the project icon.
   leadingEmoji?: string | null;
@@ -1794,7 +1795,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : null;
 
   if (variant === "slim") {
-    // Fork: a live row in the Slim setting shows only its icon, title and status.
+    // Fork: a live row in the Slim setting drops the draft, pin and terminal
+    // markers, keeping its icon, title, PR, status and time.
     const statusOnly = props.statusSlim === true && variantAction === "settle";
     return (
       <li
@@ -1863,7 +1865,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
-            {statusOnly ? null : prBadge}
+            {prBadge}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1909,26 +1911,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       />
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
-                  ) : statusOnly ? (
-                    topStatus === null ? null : (
-                      <span className={cn("inline-flex", topStatus.className)}>
-                        <SidebarStatusGlyph icon={topStatus.icon} />
-                        <span role="status" className="sr-only">
-                          {topStatus.label}
-                        </span>
-                      </span>
-                    )
                   ) : variantAction === "settle" && topStatus !== null ? (
-                    // Fork: a live Compact row keeps its time and adds the status
-                    // glyph Slim shows, at the far right.
+                    // Fork: a live Compact or Slim row shows its status glyph, then
+                    // its time, at the far right.
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="text-xs">{threadTimeLabel(thread)}</span>
                       <span className={cn("inline-flex", topStatus.className)}>
                         <SidebarStatusGlyph icon={topStatus.icon} />
                         <span role="status" className="sr-only">
                           {topStatus.label}
                         </span>
                       </span>
+                      <span className="text-xs">{threadTimeLabel(thread)}</span>
                     </span>
                   ) : (
                     <span className="text-xs">
@@ -1999,6 +1992,55 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }
 
   const diff = latestRunDiff(thread);
+  // Fork: the card's status sits before the branch on its last line; the top right
+  // always shows the time.
+  const cardStatus = topStatus ? (
+    isWokeStatus ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Dismiss Woke notification"
+              onClick={handleAcknowledgeWokeClick}
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+                topStatus.className,
+              )}
+            >
+              <AlarmClockIcon aria-hidden className="size-3.5 shrink-0" />
+              <span role="status">{topStatus.label}</span>
+            </button>
+          }
+        />
+        <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+      </Tooltip>
+    ) : (
+      <span
+        className={cn("inline-flex shrink-0 items-center gap-1 font-medium", topStatus.className)}
+      >
+        {topStatus.icon === "working" ? (
+          <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
+        ) : topStatus.icon === "input" ? (
+          <MessageCircleQuestionIcon aria-hidden className="size-3.5 shrink-0" />
+        ) : topStatus.icon === "approval" ? (
+          <ShieldQuestionIcon aria-hidden className="size-3.5 shrink-0" />
+        ) : topStatus.icon === "failed" ? (
+          <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+        ) : topStatus.icon === "done" ? (
+          <CircleCheckIcon aria-hidden className="size-3.5 shrink-0" />
+        ) : null}
+        {/* The label alone is the live region: a role="status" wrapper around
+            the ticking duration would make screen readers announce every second. */}
+        <span role="status">{topStatus.label}</span>
+        {status === "working" ? (
+          <span aria-hidden>
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          </span>
+        ) : null}
+      </span>
+    )
+  ) : null;
 
   // Fork: with no project name on the first line (grouped rows, where the header
   // shows it), the title moves up beside the icons and status, and the card loses a line.
@@ -2090,71 +2132,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     props.sweepAction !== null && "hidden",
                   )}
                 >
-                  {/* Read-only status labels yield to the hover actions. Woke is
-                    itself an action, so it stays pointer-enabled and visible
-                    while the other controls appear beside it. */}
+                  {/* The time yields to the hover actions. */}
                   <span
                     className={cn(
-                      isWokeStatus
-                        ? "pointer-events-auto"
-                        : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
+                      "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus ? (
-                      isWokeStatus ? (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <button
-                                type="button"
-                                aria-label="Dismiss Woke notification"
-                                onClick={handleAcknowledgeWokeClick}
-                                className={cn(
-                                  "inline-flex cursor-pointer items-center gap-1 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
-                                  topStatus.className,
-                                )}
-                              >
-                                <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                <span role="status">{topStatus.label}</span>
-                              </button>
-                            }
-                          />
-                          <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
-                        </Tooltip>
-                      ) : (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 font-medium",
-                            topStatus.className,
-                          )}
-                        >
-                          {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "input" ? (
-                            <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "approval" ? (
-                            <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "failed" ? (
-                            <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "done" ? (
-                            <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-                          ) : null}
-                          {/* The label alone is the live region: a role="status"
-                            wrapper around the ticking duration would make
-                            screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
-                          {status === "working" ? (
-                            <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-                            </span>
-                          ) : null}
-                        </span>
-                      )
-                    ) : (
-                      threadTimeLabel(thread)
-                    )}
+                    {threadTimeLabel(thread)}
                   </span>
                   {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span
@@ -2231,6 +2217,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
+              {cardStatus}
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
@@ -2942,19 +2929,34 @@ export default function Sidebar() {
   const sidebarGroupByProject = useSidebarViewStore((state) => state.groupByProject);
   const sidebarPinsStayGrouped = useSidebarViewStore((state) => state.pinsStayGrouped);
   const sidebarThreadSort = useSidebarViewStore((state) => state.sort);
+  const sidebarProjectSort = useSidebarViewStore((state) => state.projectSort);
   const collapsedProjectKeys = useSidebarViewStore((state) => state.collapsedProjectKeys);
   const toggleProjectCollapsed = useSidebarViewStore((state) => state.toggleProjectCollapsed);
   const threadListArranged = sidebarGroupByProject || sidebarThreadSort.field !== "manual";
   // "Pins stay grouped" only means anything while the folders are drawn: it folds
   // the pinned block into the project groups instead of listing it on top.
   const sidebarPinsInGroups = sidebarGroupByProject && sidebarPinsStayGrouped;
+  // Groups are only ordered by the project sort while they are drawn.
+  const sortsBy = (field: SidebarThreadSortField) =>
+    sidebarThreadSort.field === field ||
+    (sidebarGroupByProject && sidebarProjectSort.field === field);
   // Only the status sort reads visits, so other views skip re-rendering on each one.
   const lastVisitedAtByThreadKey = useUiStateStore((state) =>
-    sidebarThreadSort.field === "status" ? state.threadLastVisitedAtById : null,
+    sortsBy("status") ? state.threadLastVisitedAtById : null,
   );
   // Likewise only "Recently opened" reads when each thread was last opened.
   const openedAtByThreadKey = useThreadVisitsStore((state) =>
-    sidebarThreadSort.field === "opened" ? state.openedAt : null,
+    sortsBy("opened") ? state.openedAt : null,
+  );
+  // The manual and created project sorts read the project order and records.
+  const projectSortInfoByKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.map(
+          (group, rank) => [group.projectKey, { rank, createdAt: group.createdAt }] as const,
+        ),
+      ),
+    [projectGroups],
   );
   const logicalProjectByProjectKey = useMemo(
     () =>
@@ -2972,6 +2974,8 @@ export default function Sidebar() {
       arrangeSidebarActiveThreads(activeThreads, {
         sort: sidebarThreadSort,
         groupByProject: sidebarGroupByProject,
+        projectSort: sidebarProjectSort,
+        projectInfoOf: (key) => projectSortInfoByKey.get(key),
         statusOf: (thread) =>
           resolveSidebarThreadDisplayStatus(thread, {
             lastVisitedAt:
@@ -2998,14 +3002,17 @@ export default function Sidebar() {
       logicalProjectByProjectKey,
       openedAtByThreadKey,
       pinnedThreads,
+      projectSortInfoByKey,
       sidebarPinsInGroups,
       sidebarGroupByProject,
+      sidebarProjectSort,
       sidebarThreadSort,
       snoozeNow,
     ],
   );
   const displayedActiveThreads = activeArrangement.threads;
   const threadRowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
+  const projectRowDensity = useClientSettings((settings) => settings.sidebarProjectRowDensity);
   const showThreadEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
   const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
   const projectIconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
@@ -5577,6 +5584,7 @@ export default function Sidebar() {
                                 <SidebarProjectGroupHeader
                                   key={`project-group:${group.key}`}
                                   label={group.label}
+                                  density={projectRowDensity}
                                   count={group.threads.length}
                                   collapsed={group.collapsed}
                                   // Fork: Project icons hides the header's icon; Icon style
