@@ -36,6 +36,13 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
+/**
+ * Fork: an open pull request is read every minute only while a thread linking it is active
+ * (updated within `ACTIVE_THREAD_MS`, or watching it); otherwise every `IDLE_SYNC_INTERVAL_MS`.
+ * Each read starts a gh process, and most linked pull requests sit on threads nobody is using.
+ */
+const ACTIVE_THREAD_MS = 30 * 60 * 1_000;
+const IDLE_SYNC_INTERVAL_MS = 10 * 60 * 1_000;
 /** Shell commands that can merge or close a pull request without a merge notification. */
 const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
 
@@ -173,11 +180,22 @@ export const make = Effect.gen(function* () {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     if (entries.every((entry) => entry.link.snapshot?.state === "merged")) return false;
-    if (entries.some((entry) => entry.link.snapshot?.state === "open" && isUnsettled(entry.thread)))
-      return true;
-    // Closed requests can reopen on the host, including after the thread settles.
     const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    const open = entries.filter(
+      (entry) => entry.link.snapshot?.state === "open" && isUnsettled(entry.thread),
+    );
+    if (
+      open.some(
+        (entry) =>
+          entry.link.watch !== undefined ||
+          nowMs - DateTime.toEpochMillis(entry.thread.updatedAt) < ACTIVE_THREAD_MS,
+      )
+    ) {
+      return true;
+    }
+    // Closed requests can reopen on the host, including after the thread settles.
+    const interval = open.length > 0 ? IDLE_SYNC_INTERVAL_MS : SLOW_SYNC_INTERVAL_MS;
+    return last === undefined || nowMs - last >= interval;
   };
 
   const logSkipped =

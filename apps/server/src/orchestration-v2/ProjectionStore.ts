@@ -157,7 +157,7 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "updatedAt" | "pullRequests"
 >;
 
 /**
@@ -5350,6 +5350,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               lineage: thread.lineage,
               settledOverride: thread.settledOverride,
               settledAt: thread.settledAt,
+              updatedAt: thread.updatedAt,
               pullRequests: thread.pullRequests ?? [],
             })),
           ),
@@ -5832,6 +5833,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 lineage: thread.lineage,
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
+                updatedAt: thread.updatedAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
           ),

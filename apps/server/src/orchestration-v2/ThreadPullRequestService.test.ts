@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -315,6 +316,105 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* TestClock.adjust("1 minute");
           expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
           yield* service.drain;
+        }).pipe(Effect.provide(layerDependencies));
+      }),
+    ),
+  );
+
+  it.effect("periodic sweeps look up idle threads only on every sixth pass", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(NOW));
+        let active: OrchestrationV2ThreadShell = {
+          ...threadShell("active-thread"),
+          branch: "feature/active",
+        };
+        const idle = {
+          ...threadShell("idle-thread"),
+          branch: "feature/idle",
+          updatedAt: DateTime.makeUnsafe("2026-09-01T00:00:00.000Z"),
+        };
+        const identity = {
+          canonicalKey: "github.com/owner/repository",
+          locator: {
+            source: "git-remote" as const,
+            remoteName: "origin",
+            remoteUrl: "git@github.com:owner/repository.git",
+          },
+          provider: "github",
+          displayName: "owner/repository",
+          owner: "owner",
+          name: "repository",
+        };
+        const project: OrchestrationProjectShell = {
+          id: ProjectId.make("project-1"),
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          repositoryIdentity: identity,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const reads = yield* Queue.unbounded<void>();
+        const lookups = yield* Queue.unbounded<string>();
+        const layerDependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            getShellSnapshot: () =>
+              Queue.offer(reads, undefined).pipe(
+                Effect.as({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [active, idle],
+                  archivedThreads: [],
+                }),
+              ),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: ({ branch }) => Queue.offer(lookups, branch).pipe(Effect.as(null)),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () => Effect.succeed(identity),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+        const pass = (service: Effect.Success<typeof ThreadPullRequestService.make>) =>
+          Effect.gen(function* () {
+            yield* Queue.take(reads);
+            yield* service.drain;
+            return (yield* Queue.takeAll(lookups)).toSorted();
+          });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          // Backfill, then the first periodic pass a minute later, look at both.
+          expect(yield* pass(service)).toEqual(["feature/active", "feature/idle"]);
+          yield* TestClock.adjust("1 minute");
+          expect(yield* pass(service)).toEqual(["feature/active", "feature/idle"]);
+          for (let index = 1; index < 6; index++) {
+            yield* TestClock.adjust("5 minutes");
+            // Pinned so the active thread stays active as the clock moves.
+            active = { ...active, updatedAt: DateTime.makeUnsafe(yield* Clock.currentTimeMillis) };
+            expect(yield* pass(service)).toEqual(["feature/active"]);
+          }
+          yield* TestClock.adjust("5 minutes");
+          expect(yield* pass(service)).toEqual(["feature/active", "feature/idle"]);
         }).pipe(Effect.provide(layerDependencies));
       }),
     ),

@@ -12,8 +12,10 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -95,7 +97,16 @@ interface RefreshRequest {
   readonly threadId: ThreadId | null;
   readonly refresh: boolean;
   readonly backfill?: boolean;
+  /** A periodic pass that looks only at threads active within `RECENT_THREAD_MS`. */
+  readonly recentOnly?: boolean;
 }
+
+/**
+ * Fork: a thread updated within this long counts as active. The 5-minute pass looks only at
+ * active threads; every `FULL_PASS_EVERY`th pass (30 minutes) looks at every unsettled one.
+ */
+const RECENT_THREAD_MS = 30 * 60_000;
+const FULL_PASS_EVERY = 6;
 
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -167,9 +178,13 @@ export const make = Effect.gen(function* () {
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
+    const nowMs = yield* Clock.currentTimeMillis;
     const threads = threadSnapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        (!request.recentOnly ||
+          nowMs - DateTime.toEpochMillis(thread.updatedAt) < RECENT_THREAD_MS ||
+          pendingBackfill.has(thread.id)) &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
           pendingBackfill.has(thread.id)) &&
@@ -394,11 +409,17 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });
         yield* worker.drain;
+        let pass = 0;
         yield* Effect.gen(function* () {
-          yield* worker.enqueue({ threadId: null, refresh: false });
+          yield* worker.enqueue({
+            threadId: null,
+            refresh: false,
+            recentOnly: pass++ % FULL_PASS_EVERY !== 0,
+          });
           yield* worker.drain;
-          // Fork: every 5 minutes, not every minute. Each pass runs git in every unsettled
-          // thread's checkout; a thread whose run just ended is refreshed by its events above.
+          // Fork: every 5 minutes, not every minute, and only active threads between full
+          // passes. Each pass runs git in every thread's checkout it looks at; a thread whose
+          // run just ended is refreshed by its events above.
         }).pipe(Effect.repeat(Schedule.spaced("5 minutes")), Effect.delay("1 minute"));
       }).pipe(Effect.asVoid),
     );

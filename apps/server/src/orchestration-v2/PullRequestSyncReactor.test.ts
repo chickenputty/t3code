@@ -242,6 +242,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
                 },
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt === null ? null : DateTime.makeUnsafe(thread.settledAt),
+                updatedAt: DateTime.makeUnsafe(thread.updatedAt),
                 pullRequests: thread.pullRequests,
               })),
           ),
@@ -556,7 +557,9 @@ describe("PullRequestSyncReactor", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          snapshot: makeSnapshot([
+            makeThread("one", { updatedAt: NOW, pullRequests: [makeLink(42)] }),
+          ]),
         });
 
         yield* Effect.gen(function* () {
@@ -571,6 +574,62 @@ describe("PullRequestSyncReactor", () => {
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
           assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
           assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads an open pull request on an idle thread every ten minutes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          // Last updated eight days before NOW: nobody is using the thread.
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42, {})] })]),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          for (let minute = 1; minute < 10; minute++) yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a watched pull request every minute even on an idle thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const watched = makeLink(
+          42,
+          {},
+          {
+            watch: {
+              startedAt: NOW,
+              headSha: null,
+              failedChecks: [],
+              passed: false,
+              passedChecks: [],
+              remarksThrough: NOW,
+              remarkIds: [],
+              conflicting: false,
+              wakes: 0,
+            },
+          },
+        );
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [watched] })]),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepAgain(fixture, reactor);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -928,9 +987,16 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("first", { pullRequests: [makeLink(7, { state: "open" })] }),
-            makeThread("second", { pullRequests: [makeLink(8, { state: "open" })] }),
+            makeThread("first", {
+              updatedAt: NOW,
+              pullRequests: [makeLink(7, { state: "open" })],
+            }),
+            makeThread("second", {
+              updatedAt: NOW,
+              pullRequests: [makeLink(8, { state: "open" })],
+            }),
             makeThread("third", {
+              updatedAt: NOW,
               pullRequests: [
                 makeLink(
                   9,
