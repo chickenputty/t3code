@@ -1993,7 +1993,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const diff = latestRunDiff(thread);
   // Fork: the card's status sits before the branch on its last line; the top right
-  // always shows the time.
+  // always shows the time. When the line runs out of room (a working thread with a
+  // PR and a diff), the status label truncates first; the icon and duration stay.
   const cardStatus = topStatus ? (
     isWokeStatus ? (
       <Tooltip>
@@ -2004,12 +2005,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               aria-label="Dismiss Woke notification"
               onClick={handleAcknowledgeWokeClick}
               className={cn(
-                "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+                "inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-sm font-medium whitespace-nowrap outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
                 topStatus.className,
               )}
             >
               <AlarmClockIcon aria-hidden className="size-3.5 shrink-0" />
-              <span role="status">{topStatus.label}</span>
+              <span role="status" className="truncate">
+                {topStatus.label}
+              </span>
             </button>
           }
         />
@@ -2017,7 +2020,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       </Tooltip>
     ) : (
       <span
-        className={cn("inline-flex shrink-0 items-center gap-1 font-medium", topStatus.className)}
+        className={cn(
+          "inline-flex min-w-0 items-center gap-1 font-medium whitespace-nowrap",
+          topStatus.className,
+        )}
       >
         {topStatus.icon === "working" ? (
           <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
@@ -2032,9 +2038,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         ) : null}
         {/* The label alone is the live region: a role="status" wrapper around
             the ticking duration would make screen readers announce every second. */}
-        <span role="status">{topStatus.label}</span>
+        <span role="status" className="truncate">
+          {topStatus.label}
+        </span>
         {status === "working" ? (
-          <span aria-hidden>
+          <span aria-hidden className="shrink-0">
             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
           </span>
         ) : null}
