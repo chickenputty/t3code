@@ -1383,7 +1383,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("sidebar-thread-rows")}
-          description="How tall pinned and active threads are in the sidebar. Slim shows the project icon, the title and a status icon."
+          description="How tall pinned and active threads are in the sidebar. Slim keeps the project icon, the title, the PR, a status icon and the time."
           resetAction={
             settings.sidebarThreadRowDensity !==
             DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity ? (
