@@ -91,6 +91,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as WorkerProcessSpawner from "./workerProcessSpawner.ts";
+import * as GitHubApiHttp from "./sourceControl/gitHubApiHttp.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -254,8 +255,12 @@ const layerHttpServer = Layer.unwrap(
   }),
 );
 
-// ProcessRunner spawns from a worker on Windows, where CreateProcess can stall the event loop.
-const layerPlatformServices = Layer.provideMerge(WorkerProcessSpawner.layer, NodeServices.layer);
+// ProcessRunner spawns from a worker on Windows, where CreateProcess can stall the event loop,
+// and `gh api` reads go over HTTP instead of starting gh at all.
+const layerPlatformServices = Layer.provideMerge(
+  Layer.mergeAll(WorkerProcessSpawner.layer, GitHubApiHttp.layer),
+  NodeServices.layer,
+);
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 

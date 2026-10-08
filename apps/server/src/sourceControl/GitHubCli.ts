@@ -13,6 +13,7 @@ import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   TrimmedNonEmptyString,
@@ -23,6 +24,7 @@ import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApiHttp from "./gitHubApiHttp.ts";
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import {
@@ -33,6 +35,10 @@ import {
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** VcsProcess's own cap, which a `gh` process's output is cut to. */
+const VCS_DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+/** `gh api` calls answered over HTTP at once; each `gh` start was capped at four. */
+const HTTP_CONCURRENCY = 8;
 
 /** Server-local credential scope; never put its value in RPC payloads or cache keys. */
 export const PinnedGitHubCredential = Context.Reference<{
@@ -564,6 +570,94 @@ export const make = Effect.gen(function* () {
   const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
 
+  const transport = yield* GitHubApiHttp.GitHubApiTransport;
+  // gh's stored github.com login, read once per ten minutes rather than by every `gh` start.
+  const storedToken = yield* Cache.makeWith(
+    (_host: string) =>
+      process
+        .run({
+          operation: "GitHubCli.authToken",
+          command: "gh",
+          args: ["auth", "token", "--hostname", "github.com"],
+          cwd: globalThis.process.cwd(),
+          timeoutMs: DEFAULT_TIMEOUT_MS,
+        })
+        .pipe(
+          Effect.map((result) => {
+            const token = result.stdout.trim();
+            return token === "" ? undefined : Redacted.make(token);
+          }),
+          Effect.orElseSucceed(() => undefined),
+        ),
+    {
+      capacity: 1,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== undefined
+          ? Duration.minutes(10)
+          : Duration.minutes(1),
+    },
+  );
+  const httpRequests = yield* Semaphore.make(HTTP_CONCURRENCY);
+
+  /**
+   * Fork: answers a `gh api` call over HTTP when `parseGhApiArgs` can reproduce it, with the
+   * same output and errors a `gh` process would give. None when gh has to run it: no
+   * transport, an unsupported form, no token, a network failure, or a token GitHub refused.
+   */
+  const executeOverHttp = Effect.fn("GitHubCli.executeOverHttp")(function* (
+    input: Parameters<GitHubCli["Service"]["execute"]>[0],
+    env: NodeJS.ProcessEnv | undefined,
+  ) {
+    if (transport === undefined) return Option.none();
+    const request = GitHubApiHttp.parseGhApiArgs(input.args, input.stdin);
+    if (request === null) return Option.none();
+    const envToken = GitHubApiHttp.environmentToken({ ...globalThis.process.env, ...env });
+    const token =
+      envToken ??
+      Option.getOrUndefined(
+        Option.map(
+          Option.fromNullishOr(yield* Cache.get(storedToken, "github.com")),
+          Redacted.value,
+        ),
+      );
+    if (token === undefined) return Option.none();
+    const response = yield* transport({
+      ...request,
+      token,
+      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    }).pipe(httpRequests.withPermits(1), Effect.option);
+    if (Option.isNone(response)) return Option.none();
+    if (response.value.status === 401) {
+      // A stale stored login: read it again, and let gh answer this call.
+      if (envToken === undefined) yield* Cache.invalidate(storedToken, "github.com");
+      return Option.none();
+    }
+    const rendered = GitHubApiHttp.renderGhApiResponse(request, response.value);
+    const maxBytes = input.maxOutputBytes ?? VCS_DEFAULT_MAX_OUTPUT_BYTES;
+    const stdout = Buffer.from(rendered.stdout);
+    return Option.some(
+      yield* VcsProcess.settleExit(
+        {
+          operation: "GitHubCli.execute",
+          command: "gh",
+          cwd: input.cwd,
+          args: input.args,
+          ...(input.acceptNotModified ? { allowNonZeroExit: true } : {}),
+        },
+        {
+          code: rendered.code,
+          stdout:
+            stdout.byteLength > maxBytes
+              ? stdout.subarray(0, maxBytes).toString("utf8")
+              : rendered.stdout,
+          stderr: rendered.stderr,
+          stdoutTruncated: stdout.byteLength > maxBytes,
+          stderrTruncated: false,
+        },
+      ),
+    );
+  });
+
   const executeRaw: GitHubCli["Service"]["execute"] = Effect.fn("GitHubCli.executeRaw")(
     function* (input) {
       const credential = yield* PinnedGitHubCredential;
@@ -587,19 +681,28 @@ export const make = Effect.gen(function* () {
               GITHUB_ENTERPRISE_TOKEN: token,
               GH_DEBUG: "",
             };
-      const result = yield* process
-        .run({
-          operation: "GitHubCli.execute",
-          command: "gh",
-          args: input.args,
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          ...(input.acceptNotModified ? { allowNonZeroExit: true } : {}),
-          ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-          ...(env !== undefined ? { env } : {}),
-          ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-        })
-        .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+      const overHttp = yield* executeOverHttp(input, env).pipe(
+        Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+      );
+      const result = Option.isSome(overHttp)
+        ? overHttp.value
+        : yield* process
+            .run({
+              operation: "GitHubCli.execute",
+              command: "gh",
+              args: input.args,
+              cwd: input.cwd,
+              timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+              ...(input.acceptNotModified ? { allowNonZeroExit: true } : {}),
+              ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+              ...(env !== undefined ? { env } : {}),
+              ...(input.maxOutputBytes !== undefined
+                ? { maxOutputBytes: input.maxOutputBytes }
+                : {}),
+            })
+            .pipe(
+              Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+            );
       if (result.exitCode !== 0 && input.acceptNotModified) {
         const status = /^HTTP\/\S+ (\d+)/.exec(result.stdout)?.[1];
         if (status !== "304" || !input.args.includes("--include")) {

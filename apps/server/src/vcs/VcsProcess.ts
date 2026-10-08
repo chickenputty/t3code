@@ -113,6 +113,52 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+/**
+ * What a finished command returns: its output, or a classified `VcsProcessExitError` for a
+ * non-zero exit unless the input allows one. Also used for answers that did not come from a
+ * process (`gh api` over HTTP), so callers see the same results and errors either way.
+ */
+export const settleExit = (
+  input: Pick<VcsProcessInput, "operation" | "command" | "cwd" | "args" | "allowNonZeroExit">,
+  result: {
+    readonly code: number;
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly stdoutTruncated: boolean;
+    readonly stderrTruncated: boolean;
+    readonly stdoutInvalidUtf8?: boolean | undefined;
+    readonly stderrInvalidUtf8?: boolean | undefined;
+  },
+): Effect.Effect<VcsProcessOutput, VcsProcessExitError> => {
+  if (!input.allowNonZeroExit && result.code !== 0) {
+    const failureKind = classifyNonZeroExit(input.command, result.stderr);
+    return Effect.fail(
+      VcsProcessExitError.fromProcessExit(
+        {
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          argumentCount: input.args.length,
+        },
+        { exitCode: result.code, stderr: result.stderr, stderrTruncated: result.stderrTruncated },
+        failureKind,
+        input.command === "git" &&
+          failureKind === "command-failed" &&
+          isTransientGitExit(result.stderr),
+      ),
+    );
+  }
+  return Effect.succeed({
+    exitCode: ChildProcessSpawner.ExitCode(result.code),
+    stdout: result.stdout,
+    stderr: result.stderr,
+    stdoutTruncated: result.stdoutTruncated,
+    stderrTruncated: result.stderrTruncated,
+    stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
+    stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
+  });
+};
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
@@ -175,31 +221,7 @@ export const make = Effect.gen(function* () {
       return yield* new VcsProcessMissingExitCodeError(baseError);
     }
 
-    if (!input.allowNonZeroExit && result.code !== 0) {
-      const failureKind = classifyNonZeroExit(input.command, result.stderr);
-      return yield* VcsProcessExitError.fromProcessExit(
-        baseError,
-        {
-          exitCode: result.code,
-          stderr: result.stderr,
-          stderrTruncated: result.stderrTruncated,
-        },
-        failureKind,
-        input.command === "git" &&
-          failureKind === "command-failed" &&
-          isTransientGitExit(result.stderr),
-      );
-    }
-
-    return {
-      exitCode: result.code,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      stdoutTruncated: result.stdoutTruncated,
-      stderrTruncated: result.stderrTruncated,
-      stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
-      stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
-    } satisfies VcsProcessOutput;
+    return yield* settleExit(input, { ...result, code: result.code });
   });
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
