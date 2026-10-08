@@ -37,6 +37,7 @@ import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
+  probeSpawner,
   type ServerProviderDraft,
 } from "./providerSnapshot.ts";
 import { expandHomePath } from "../pathExpansion.ts";
@@ -375,7 +376,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawner = yield* probeSpawner;
   const environment = {
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),

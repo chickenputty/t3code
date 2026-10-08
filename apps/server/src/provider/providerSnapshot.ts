@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import { WorkerProcessSpawner } from "../workerProcessSpawner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
@@ -84,9 +85,17 @@ export function isCommandMissingCause(error: unknown): boolean {
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
+/**
+ * The spawner for provider health checks and probes: the server's worker spawner where it
+ * provides one (Windows), so a CLI that is slow to start does not freeze the event loop.
+ */
+export const probeSpawner = Effect.gen(function* () {
+  return (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
+});
+
 export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const spawner = yield* probeSpawner;
     const child = yield* spawner.spawn(command);
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
