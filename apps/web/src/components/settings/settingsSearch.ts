@@ -241,12 +241,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar density compact slim height card thread list rows"],
   },
   {
-    id: "sidebar-project-rows",
-    title: "Project rows",
-    to: "/settings/appearance",
-    searchTerms: ["sidebar density compact slim comfortable project header group divider"],
-  },
-  {
     id: "sidebar-project-icons",
     title: "Project icons",
     to: "/settings/appearance",

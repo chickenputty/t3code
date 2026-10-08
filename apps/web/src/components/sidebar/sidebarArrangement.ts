@@ -12,7 +12,6 @@
  */
 import type {
   SidebarProjectIconStyle,
-  SidebarProjectRowDensity,
   SidebarThreadIndent,
   SidebarThreadRowDensity,
 } from "@t3tools/contracts";
@@ -22,12 +21,6 @@ import { parseTimestampDate } from "~/timestampFormat";
 import type { SidebarThreadSummary } from "~/types";
 
 export const SIDEBAR_THREAD_ROW_DENSITY_LABELS: Record<SidebarThreadRowDensity, string> = {
-  comfortable: "Comfortable",
-  compact: "Compact",
-  slim: "Slim",
-};
-
-export const SIDEBAR_PROJECT_ROW_DENSITY_LABELS: Record<SidebarProjectRowDensity, string> = {
   comfortable: "Comfortable",
   compact: "Compact",
   slim: "Slim",
@@ -62,18 +55,6 @@ export interface SidebarThreadSort {
 }
 
 export const MANUAL_SIDEBAR_THREAD_SORT: SidebarThreadSort = { field: "manual", reversed: false };
-
-/**
- * How project groups are ordered when grouped by project. Same fields as the
- * thread sort; manual follows the project order from Settings.
- */
-export type SidebarProjectSort = SidebarThreadSort;
-
-/** Latest activity first: where a group sits when it follows its newest thread. */
-export const DEFAULT_SIDEBAR_PROJECT_SORT: SidebarProjectSort = {
-  field: "activity",
-  reversed: false,
-};
 
 export const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortField, string> = {
   manual: "Manual",
@@ -232,13 +213,6 @@ export interface SidebarProjectGroupRef {
   readonly label: string;
 }
 
-/** What a project sort needs to know about a group's project beyond its threads. */
-export interface SidebarProjectSortInfo {
-  /** Position in the project order from Settings, for the manual sort. */
-  readonly rank: number;
-  readonly createdAt?: string | undefined;
-}
-
 export interface SidebarActiveThreadGroup<T> {
   readonly key: string;
   readonly label: string;
@@ -260,10 +234,6 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
   threads: readonly T[],
   options: {
     readonly sort: SidebarThreadSort;
-    /** Orders the groups; ignored when not grouping. */
-    readonly projectSort: SidebarProjectSort;
-    /** The group's project, for the manual and created project sorts. */
-    readonly projectInfoOf?: (groupKey: string) => SidebarProjectSortInfo | undefined;
     readonly groupByProject: boolean;
     readonly statusOf: (thread: T) => SidebarThreadDisplayStatus;
     readonly openedAtOf?: (thread: T) => number | undefined;
@@ -307,91 +277,25 @@ export function arrangeSidebarActiveThreads<T extends SortableThread>(
   const pinOrder = (left: T, right: T) =>
     (pinRank.get(left) ?? Number.MAX_SAFE_INTEGER) -
     (pinRank.get(right) ?? Number.MAX_SAFE_INTEGER);
-  // Groups follow the project sort. Ties keep the order the groups' first threads
-  // sort in. Threads whose project is not loaded yet trail the named groups.
-  const groups = sortSidebarProjectGroups([...byKey.values()], options).map(
-    (entry): SidebarActiveThreadGroup<T> => ({
+  // Groups follow the sort too (Mitchell, PR #1): a project sits where its first thread
+  // sorts, so under the activity sort the project you touched last is on top, and under the
+  // name sort the groups read A to Z. Threads whose project is not loaded yet trail the
+  // named groups.
+  const groups = [...byKey.values()]
+    .toSorted((left, right) => {
+      if (left.ref === UNKNOWN_PROJECT_GROUP) return 1;
+      if (right.ref === UNKNOWN_PROJECT_GROUP) return -1;
+      return 0;
+    })
+    .map((entry): SidebarActiveThreadGroup<T> => ({
       key: entry.ref.key,
       label: entry.ref.label,
       // A stable sort, so unpinned rows keep the sort's order behind the pins.
       threads: pinRank.size === 0 ? entry.threads : [...entry.threads].sort(pinOrder),
       collapsed: options.collapsedGroupKeys.has(entry.ref.key),
-    }),
-  );
+    }));
   return {
     threads: groups.flatMap((group) => (group.collapsed ? [] : group.threads)),
     groups,
   };
-}
-
-/**
- * Orders project groups by `options.projectSort`, keyed off each group's threads
- * (newest activity or opening, most urgent status) or its project (name,
- * creation, Settings order). The incoming order breaks ties.
- */
-function sortSidebarProjectGroups<T extends SortableThread>(
-  entries: readonly { ref: SidebarProjectGroupRef; threads: T[] }[],
-  options: {
-    readonly projectSort: SidebarProjectSort;
-    readonly projectInfoOf?: (groupKey: string) => SidebarProjectSortInfo | undefined;
-    readonly statusOf: (thread: T) => SidebarThreadDisplayStatus;
-    readonly openedAtOf?: (thread: T) => number | undefined;
-  },
-): readonly { ref: SidebarProjectGroupRef; threads: T[] }[] {
-  const { field, reversed } = options.projectSort;
-  const direction = reversed ? -1 : 1;
-  const keyed = entries.map((entry, index) => {
-    const info = options.projectInfoOf?.(entry.ref.key);
-    let value = 0;
-    switch (field) {
-      case "manual":
-        value = info?.rank ?? Number.MAX_SAFE_INTEGER;
-        break;
-      case "activity":
-        value = Math.max(...entry.threads.map(sidebarThreadLatestActivityMs));
-        break;
-      case "opened":
-        value = Math.max(
-          ...entry.threads.map(
-            (thread) => options.openedAtOf?.(thread) ?? Number.NEGATIVE_INFINITY,
-          ),
-        );
-        break;
-      case "status":
-        value = Math.min(
-          ...entry.threads.map((thread) => DISPLAY_STATUS_RANK[options.statusOf(thread)]),
-        );
-        break;
-      case "created":
-        value =
-          info?.createdAt === undefined ? Number.NEGATIVE_INFINITY : timestampMs(info.createdAt);
-        break;
-      case "name":
-        break;
-    }
-    return { entry, index, value };
-  });
-  keyed.sort((left, right) => {
-    if (left.entry.ref === UNKNOWN_PROJECT_GROUP) return 1;
-    if (right.entry.ref === UNKNOWN_PROJECT_GROUP) return -1;
-    let primary = 0;
-    switch (field) {
-      case "manual":
-      case "status":
-        primary = left.value - right.value;
-        break;
-      case "activity":
-      case "opened":
-      case "created":
-        primary = compareNewestFirst(left.value, right.value);
-        break;
-      case "name":
-        primary = nameCollator.compare(left.entry.ref.label, right.entry.ref.label);
-        break;
-    }
-    // Manual has no direction: the order is the one Settings holds.
-    if (primary !== 0) return field === "manual" ? primary : primary * direction;
-    return left.index - right.index;
-  });
-  return keyed.map((item) => item.entry);
 }

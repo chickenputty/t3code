@@ -66,11 +66,6 @@ export const SidebarThreadRowDensity = Schema.Literals(["comfortable", "compact"
 export type SidebarThreadRowDensity = typeof SidebarThreadRowDensity.Type;
 const DEFAULT_SIDEBAR_THREAD_ROW_DENSITY: SidebarThreadRowDensity = "comfortable";
 
-// Fork: how roomy the project headers are when grouped by project. Compact is
-// the original header; comfortable adds room and a divider above each project.
-export const SidebarProjectRowDensity = Schema.Literals(["comfortable", "compact", "slim"]);
-export type SidebarProjectRowDensity = typeof SidebarProjectRowDensity.Type;
-
 // Fork: how a project without its own icon is drawn in the sidebar: its
 // initials on a tinted tile, or a folder in the project's colour.
 export const SidebarProjectIconStyle = Schema.Literals(["initials", "folder"]);
@@ -505,9 +500,6 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadRowDensity: SidebarThreadRowDensity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_ROW_DENSITY)),
-  ),
-  sidebarProjectRowDensity: SidebarProjectRowDensity.pipe(
-    Schema.withDecodingDefault(Effect.succeed("compact" as const)),
   ),
   // Fork: every thread row shows an emoji for its topic next to the project icon.
   sidebarThreadEmoji: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1869,7 +1861,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
-  sidebarProjectRowDensity: Schema.optionalKey(SidebarProjectRowDensity),
   sidebarThreadEmoji: Schema.optionalKey(Schema.Boolean),
   sidebarProjectIcons: Schema.optionalKey(Schema.Boolean),
   sidebarProjectIconStyle: Schema.optionalKey(SidebarProjectIconStyle),

@@ -1,12 +1,10 @@
 /**
  * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
  * and its indent, pins stay grouped, project icons and their style, topic emoji,
- * thread and project sort, thread and project row height), and the header row
- * each project group opens with.
+ * sort, thread row height), and the header row each project group opens with.
  */
 import {
   SidebarProjectIconStyle,
-  SidebarProjectRowDensity,
   SidebarThreadIndent,
   SidebarThreadRowDensity,
 } from "@t3tools/contracts";
@@ -45,13 +43,11 @@ import {
 } from "~/components/ui/menu";
 import {
   SIDEBAR_PROJECT_ICON_STYLE_LABELS,
-  SIDEBAR_PROJECT_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_INDENT_LABELS,
   SIDEBAR_THREAD_ROW_DENSITY_LABELS,
   SIDEBAR_THREAD_SORT_DIRECTION_LABELS,
   SIDEBAR_THREAD_SORT_FIELDS,
   SIDEBAR_THREAD_SORT_LABELS,
-  type SidebarThreadSort,
   type SidebarThreadSortField,
 } from "./sidebarArrangement";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
@@ -73,16 +69,18 @@ export function SidebarViewControls() {
   const sort = useSidebarViewStore((state) => state.sort);
   const setSortField = useSidebarViewStore((state) => state.setSortField);
   const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
-  const projectSort = useSidebarViewStore((state) => state.projectSort);
-  const setProjectSortField = useSidebarViewStore((state) => state.setProjectSortField);
-  const setProjectSortReversed = useSidebarViewStore((state) => state.setProjectSortReversed);
   const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
-  const projectRowDensity = useClientSettings((settings) => settings.sidebarProjectRowDensity);
   const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
   const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
   const iconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
   const indent = useClientSettings((settings) => settings.sidebarThreadIndent);
   const updateSettings = useUpdateClientSettings();
+  const directionLabels =
+    sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
+  const sortSummary =
+    directionLabels === null
+      ? SIDEBAR_THREAD_SORT_LABELS.manual
+      : `${SIDEBAR_THREAD_SORT_LABELS[sort.field]}, ${directionLabels[sort.reversed ? 1 : 0].toLowerCase()}`;
 
   return (
     <Menu>
@@ -175,22 +173,44 @@ export function SidebarViewControls() {
           Topic emoji
         </MenuCheckboxItem>
         <MenuSeparator />
-        <SidebarSortSubmenu
-          label="Thread sort"
-          sort={sort}
-          manualHint="Drag threads to arrange them."
-          onFieldChange={setSortField}
-          onReversedChange={setSortReversed}
-        />
-        {/* Projects only have an order while their folders are drawn. */}
-        <SidebarSortSubmenu
-          label="Project sort"
-          sort={projectSort}
-          manualHint="Follows the project order in Settings."
-          disabled={!groupByProject}
-          onFieldChange={setProjectSortField}
-          onReversedChange={setProjectSortReversed}
-        />
+        <MenuSub>
+          <MenuSubTrigger>
+            Sort
+            <MenuSubValue>{sortSummary}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-44">
+            <MenuGroup>
+              <MenuRadioGroup
+                value={sort.field}
+                onValueChange={(value) => setSortField(value as SidebarThreadSortField)}
+              >
+                {SIDEBAR_THREAD_SORT_FIELDS.map((field) => (
+                  <MenuRadioItem key={field} value={field}>
+                    {SIDEBAR_THREAD_SORT_LABELS[field]}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+            {directionLabels === null ? (
+              <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
+                Drag threads to arrange them.
+              </p>
+            ) : (
+              <>
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuRadioGroup
+                    value={sort.reversed ? "reversed" : "natural"}
+                    onValueChange={(value) => setSortReversed(value === "reversed")}
+                  >
+                    <MenuRadioItem value="natural">{directionLabels[0]}</MenuRadioItem>
+                    <MenuRadioItem value="reversed">{directionLabels[1]}</MenuRadioItem>
+                  </MenuRadioGroup>
+                </MenuGroup>
+              </>
+            )}
+          </MenuSubPopup>
+        </MenuSub>
         <MenuSub>
           <MenuSubTrigger>
             Thread rows
@@ -211,85 +231,8 @@ export function SidebarViewControls() {
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
-        <MenuSub>
-          {/* Only grouped lists draw project headers. */}
-          <MenuSubTrigger disabled={!groupByProject}>
-            Project rows
-            <MenuSubValue>{SIDEBAR_PROJECT_ROW_DENSITY_LABELS[projectRowDensity]}</MenuSubValue>
-          </MenuSubTrigger>
-          <MenuSubPopup className="min-w-40">
-            <MenuRadioGroup
-              value={projectRowDensity}
-              onValueChange={(value) =>
-                updateSettings({ sidebarProjectRowDensity: value as SidebarProjectRowDensity })
-              }
-            >
-              {SidebarProjectRowDensity.literals.map((density) => (
-                <MenuRadioItem key={density} value={density}>
-                  {SIDEBAR_PROJECT_ROW_DENSITY_LABELS[density]}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuSubPopup>
-        </MenuSub>
       </MenuPopup>
     </Menu>
-  );
-}
-
-/** A sort submenu: the field, then its direction (manual has none, just a hint). */
-function SidebarSortSubmenu(props: {
-  label: string;
-  sort: SidebarThreadSort;
-  manualHint: string;
-  disabled?: boolean;
-  onFieldChange: (field: SidebarThreadSortField) => void;
-  onReversedChange: (reversed: boolean) => void;
-}) {
-  const { sort } = props;
-  const directionLabels =
-    sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
-  const summary =
-    directionLabels === null
-      ? SIDEBAR_THREAD_SORT_LABELS.manual
-      : `${SIDEBAR_THREAD_SORT_LABELS[sort.field]}, ${directionLabels[sort.reversed ? 1 : 0].toLowerCase()}`;
-  return (
-    <MenuSub>
-      <MenuSubTrigger disabled={props.disabled}>
-        {props.label}
-        <MenuSubValue>{summary}</MenuSubValue>
-      </MenuSubTrigger>
-      <MenuSubPopup className="min-w-44">
-        <MenuGroup>
-          <MenuRadioGroup
-            value={sort.field}
-            onValueChange={(value) => props.onFieldChange(value as SidebarThreadSortField)}
-          >
-            {SIDEBAR_THREAD_SORT_FIELDS.map((field) => (
-              <MenuRadioItem key={field} value={field}>
-                {SIDEBAR_THREAD_SORT_LABELS[field]}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-        {directionLabels === null ? (
-          <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
-        ) : (
-          <>
-            <MenuSeparator />
-            <MenuGroup>
-              <MenuRadioGroup
-                value={sort.reversed ? "reversed" : "natural"}
-                onValueChange={(value) => props.onReversedChange(value === "reversed")}
-              >
-                <MenuRadioItem value="natural">{directionLabels[0]}</MenuRadioItem>
-                <MenuRadioItem value="reversed">{directionLabels[1]}</MenuRadioItem>
-              </MenuRadioGroup>
-            </MenuGroup>
-          </>
-        )}
-      </MenuSubPopup>
-    </MenuSub>
   );
 }
 
@@ -356,7 +299,6 @@ export function SidebarStatusGlyph(props: {
  */
 export function SidebarProjectGroupHeader(props: {
   label: string;
-  density: SidebarProjectRowDensity;
   count: number;
   collapsed: boolean;
   /** "folder" draws an open or closed folder; "project" draws `projectIcon`. */
@@ -370,29 +312,14 @@ export function SidebarProjectGroupHeader(props: {
   const Folder = props.collapsed ? FolderIcon : FolderOpenIcon;
   return (
     <li
-      className={cn(
-        "group/project-header mx-0.5 flex list-none items-center first:mt-0",
-        // Comfortable draws a divider above every project but the first.
-        props.density === "comfortable"
-          ? "mt-2 border-t border-sidebar-border pt-2 first:border-t-0 first:pt-0"
-          : props.density === "compact"
-            ? "mt-1"
-            : "mt-0.5",
-      )}
+      className="group/project-header mx-0.5 mt-1 flex list-none items-center first:mt-0"
       data-testid="sidebar-project-group-header"
     >
       <button
         type="button"
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
-        className={cn(
-          "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-          props.density === "comfortable"
-            ? "h-9 text-sm"
-            : props.density === "compact"
-              ? "h-8 text-sm"
-              : "h-6 text-xs",
-        )}
+        className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
         {props.iconStyle === "folder" ? (
           <Folder
