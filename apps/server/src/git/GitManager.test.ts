@@ -1078,6 +1078,26 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("local status refreshes reuse the hosting provider", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+      const gitConfigReads: string[] = [];
+      const { manager } = yield* makeManager({ gitConfigReads });
+
+      const first = yield* manager.localStatus({ cwd: repoDir });
+      gitConfigReads.length = 0;
+      yield* manager.invalidateLocalStatus(repoDir);
+      const second = yield* manager.localStatus({ cwd: repoDir });
+
+      expect(second.sourceControlProvider).toEqual(first.sourceControlProvider);
+      expect(gitConfigReads.filter((key) => key.startsWith("remote."))).toHaveLength(0);
+    }),
+  );
+
   it.effect("a branch tracking origin reads origin's URL once per PR lookup", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as ByteSize from "effect/ByteSize";
@@ -147,6 +148,9 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
+// Local status refreshes on every file change; the hosting provider comes from git config that
+// almost never changes, and reading it cost two git launches per refresh per worktree.
+const HOSTING_PROVIDER_CACHE_TTL = Duration.seconds(60);
 // Matches the automatic settlement sweep cadence so every background sweep
 // reads fresh branch state: an external merge settles within about a minute
 // instead of waiting out a longer cache. Unpublished branches never reach the
@@ -1051,7 +1055,7 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.isRepo
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* cachedHostingProvider(cwd, details.branch)
       : null;
 
     return {
@@ -1389,6 +1393,28 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => null));
     return handle?.context?.provider ?? provider;
+  });
+
+  // A plain map: a Cache read inside localStatusResultCache's lookup stalled the next status read.
+  const hostingProviders = new Map<
+    string,
+    {
+      readonly at: number;
+      readonly provider: Effect.Success<ReturnType<typeof resolveHostingProvider>>;
+    }
+  >();
+  const cachedHostingProvider = Effect.fn("cachedHostingProvider")(function* (
+    cwd: string,
+    branch: string | null,
+  ) {
+    const key = `${cwd}\u0000${branch ?? ""}`;
+    const now = yield* Clock.currentTimeMillis;
+    const hit = hostingProviders.get(key);
+    if (hit && now - hit.at < Duration.toMillis(HOSTING_PROVIDER_CACHE_TTL)) return hit.provider;
+    const provider = yield* resolveHostingProvider(cwd, branch);
+    if (hostingProviders.size >= STATUS_RESULT_CACHE_CAPACITY) hostingProviders.clear();
+    hostingProviders.set(key, { at: now, provider });
+    return provider;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
