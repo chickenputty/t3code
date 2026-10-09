@@ -32,7 +32,13 @@ const SHARED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   // Fork: saved thread views follow the user, not the machine.
   "savedViews",
+  "threadCategories",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
+
+export type SharedSettingsCapabilities = Pick<
+  ExecutionEnvironmentCapabilities,
+  "threadRestartContinuation" | "savedViews" | "threadCategories"
+>;
 
 export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
@@ -61,9 +67,7 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
 /** Filter unsupported preferences; direct model writes retain the server's fallback behavior. */
 export function filterSharedServerPatch(
   patch: ServerSettingsPatch,
-  capabilities:
-    | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation" | "savedViews">
-    | undefined,
+  capabilities: SharedSettingsCapabilities | undefined,
   settings?: ServerSettings,
   sourceSettings = settings,
   targetIsSource = false,
@@ -88,6 +92,9 @@ export function filterSharedServerPatch(
   if (capabilities?.savedViews !== true) {
     patch = Struct.omit(patch, ["savedViews"]);
   }
+  if (capabilities?.threadCategories !== true) {
+    patch = Struct.omit(patch, ["threadCategories"]);
+  }
   return capabilities?.threadRestartContinuation === true
     ? patch
     : Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
@@ -96,7 +103,7 @@ export function filterSharedServerPatch(
 /** The shared subset supported by one environment. */
 export function pickSharedServerSettings(
   settings: ServerSettings,
-  capabilities?: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation" | "savedViews">,
+  capabilities?: SharedSettingsCapabilities,
 ): ServerSettingsPatch {
   return filterSharedServerPatch(
     Struct.pick(settings, SHARED_SERVER_SETTING_KEYS),
@@ -128,9 +135,7 @@ export interface SharedSettingsEnvironment {
   readonly label: string;
   readonly syncEligible: boolean;
   readonly settings: ServerSettings | null;
-  readonly capabilities?:
-    | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation" | "savedViews">
-    | undefined;
+  readonly capabilities?: SharedSettingsCapabilities | undefined;
 }
 
 /**
@@ -144,9 +149,7 @@ export interface SharedSettingsEnvironment {
 export function findSharedSettingsMismatches(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly primarySettings: ServerSettings | null;
-  readonly primaryCapabilities?:
-    | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation" | "savedViews">
-    | undefined;
+  readonly primaryCapabilities?: SharedSettingsCapabilities | undefined;
   readonly environments: ReadonlyArray<SharedSettingsEnvironment>;
 }): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }> {
   if (input.primaryEnvironmentId === null || input.primarySettings === null) {

@@ -1,7 +1,7 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadCategories } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import { resolveThreadLastVisitedAt } from "~/components/Sidebar.logic";
@@ -76,7 +76,10 @@ function pullRequestOf(thread: SidebarThreadSummary): {
  * Every thread a view can show, as resolved rows. Archived threads are only
  * fetched while `includeArchived` is on, since they arrive on their own feed.
  */
-export function useViewRows(includeArchived: boolean): {
+export function useViewRows(
+  includeArchived: boolean,
+  categories: Pick<ThreadCategories, "categories" | "assignments">,
+): {
   readonly rows: readonly ViewRow[];
   readonly nowMs: number;
   readonly archivedLoading: boolean;
@@ -101,6 +104,9 @@ export function useViewRows(includeArchived: boolean): {
       environments.map((environment) => [environment.environmentId, environment.label]),
     );
     const now = new Date(nowMs).toISOString();
+    const categoryNames = new Map(
+      categories.categories.map((category) => [category.id, category.name]),
+    );
 
     const toRow = (thread: SidebarThreadSummary, archivedRow: boolean): ViewRow => {
       const ref = scopeThreadRef(thread.environmentId, thread.id);
@@ -126,6 +132,9 @@ export function useViewRows(includeArchived: boolean): {
         wokeAt: threadWokeAt(thread, { now }),
       });
       const pullRequest = pullRequestOf(thread);
+      // An assignment to a deleted category reads as none.
+      const assigned = categories.assignments[key];
+      const categoryLabel = assigned === undefined ? undefined : categoryNames.get(assigned);
       return {
         key,
         ref,
@@ -136,6 +145,8 @@ export function useViewRows(includeArchived: boolean): {
         section,
         status,
         stage: stageOfStatus(status),
+        category: assigned !== undefined && categoryLabel !== undefined ? assigned : null,
+        categoryLabel: categoryLabel ?? null,
         kind:
           thread.lineage.relationshipToParent === "subagent"
             ? "subagent"
@@ -182,7 +193,17 @@ export function useViewRows(includeArchived: boolean): {
       }
     }
     return result;
-  }, [archived.snapshots, environments, includeArchived, lastVisitedById, nowMs, projects, shells]);
+  }, [
+    archived.snapshots,
+    categories.assignments,
+    categories.categories,
+    environments,
+    includeArchived,
+    lastVisitedById,
+    nowMs,
+    projects,
+    shells,
+  ]);
 
   return { rows, nowMs, archivedLoading: includeArchived && archived.isLoading };
 }

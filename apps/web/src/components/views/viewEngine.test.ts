@@ -5,6 +5,7 @@ import {
   filterViewRows,
   groupViewRows,
   newSavedView,
+  planGroupDrop,
   sortViewRows,
   stageOfStatus,
   type ViewRow,
@@ -26,6 +27,8 @@ function row(key: string, overrides: Partial<ViewRow> = {}): ViewRow {
     status: "idle",
     stage: "done",
     kind: "chat",
+    category: null,
+    categoryLabel: null,
     model: "opus",
     provider: "claude",
     branch: null,
@@ -202,5 +205,52 @@ describe("dateBucket", () => {
     expect(dateBucket(midnight, NOW)).toBe("today");
     expect(dateBucket(midnight - 1, NOW)).toBe("yesterday");
     expect(dateBucket(midnight - 3 * DAY, NOW)).toBe("week");
+  });
+});
+
+describe("custom categories", () => {
+  const categories = [
+    { id: "u100", name: "Update 100" },
+    { id: "empty", name: "Later" },
+  ];
+  const rows = [
+    row("vault", { projectKey: "env:vault", projectLabel: "Pet Vault", category: "u100" }),
+    row("repo", { projectKey: "env:ps99", projectLabel: "pet-simulator-99", category: "u100" }),
+    row("other", { projectKey: "env:ps99", projectLabel: "pet-simulator-99" }),
+  ];
+
+  it("pull filed threads out of their projects into a category group", () => {
+    const groups = groupViewRows(rows, "project", { hideEmpty: true, nowMs: NOW, categories });
+    expect(groups.map((g) => [g.label, g.rows.map((r) => r.key)])).toEqual([
+      ["Update 100", ["vault", "repo"]],
+      ["Later", []],
+      ["pet-simulator-99", ["other"]],
+    ]);
+  });
+
+  it("group by category with the rest under No category", () => {
+    const groups = groupViewRows(rows, "category", { hideEmpty: true, nowMs: NOW, categories });
+    expect(groups.map((g) => g.key)).toEqual(["category:u100", "category:empty", ""]);
+  });
+
+  it("plan drops: into a category, back to the own project, never to another", () => {
+    const filed = rows[0]!;
+    const loose = rows[2]!;
+    expect(planGroupDrop("project", loose, "category:u100")).toEqual({
+      kind: "category",
+      categoryId: "u100",
+    });
+    expect(planGroupDrop("project", filed, "env:vault")).toEqual({
+      kind: "category",
+      categoryId: null,
+    });
+    expect(planGroupDrop("project", filed, "env:ps99")).toBeNull();
+    expect(planGroupDrop("project", filed, "category:u100")).toBeNull();
+    expect(planGroupDrop("category", filed, "")).toEqual({ kind: "category", categoryId: null });
+    expect(planGroupDrop("status", loose, "category:u100")).toBeNull();
+    expect(planGroupDrop("section", loose, "pinned")).toEqual({
+      kind: "section",
+      section: "pinned",
+    });
   });
 });

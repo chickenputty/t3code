@@ -26,15 +26,15 @@ import {
 } from "react";
 
 import { Checkbox } from "~/components/ui/checkbox";
+
+import { type CategoryTools, GroupTitle, NewCategoryColumn } from "./CategoryControls";
 import { cn } from "~/lib/utils";
 
 import {
   formatViewPropertyValue,
-  isEditableGrouping,
   type ViewGroup,
   type ViewProperty,
   type ViewRow,
-  type ViewSection,
   viewProperty,
 } from "./viewEngine";
 
@@ -42,7 +42,8 @@ export interface ViewLayoutHandlers {
   readonly onOpen: (row: ViewRow, event: MouseEvent | KeyboardEvent) => void;
   readonly onContextMenu: (row: ViewRow, event: MouseEvent) => void;
   readonly onToggleSelect: (row: ViewRow, event: MouseEvent) => void;
-  readonly onMoveToSection: (row: ViewRow, section: ViewSection) => void;
+  /** A card dropped on a board group; the page decides what, if anything, it does. */
+  readonly onDropOnGroup: (row: ViewRow, groupKey: string) => void;
   readonly onRename: (row: ViewRow, title: string) => void;
   readonly onSortBy: (propertyId: string) => void;
 }
@@ -55,6 +56,8 @@ export interface ViewLayoutProps extends ViewLayoutHandlers {
   readonly nowMs: number;
   /** Text under each card title, by thread key: a search match or a message preview. */
   readonly snippets: ReadonlyMap<string, string>;
+  /** Present when the grouping shows custom categories and they can be edited. */
+  readonly categoryTools: CategoryTools | null;
 }
 
 const STATUS_DOT: Record<ViewRow["status"], string> = {
@@ -117,11 +120,14 @@ function keyHandler(row: ViewRow, handlers: ViewLayoutHandlers) {
   };
 }
 
-function GroupHeader({ group }: { group: ViewGroup }) {
+function GroupHeader({ group, tools }: { group: ViewGroup; tools: CategoryTools | null }) {
   return (
     <div className="flex items-center gap-2 px-1 pt-4 pb-1.5 text-muted-foreground text-xs font-medium">
-      <span className="truncate">{group.label}</span>
-      <span className="tabular-nums opacity-70">{group.rows.length}</span>
+      <GroupTitle
+        group={group}
+        tools={tools}
+        count={<span className="tabular-nums opacity-70">{group.rows.length}</span>}
+      />
     </div>
   );
 }
@@ -234,7 +240,11 @@ export function ListLayout(props: ViewLayoutProps) {
     <div className="mx-auto w-full max-w-6xl px-4 pb-10 sm:px-6">
       {groups.map((group) => (
         <section key={group.key}>
-          {grouped ? <GroupHeader group={group} /> : <div className="h-3" />}
+          {grouped ? (
+            <GroupHeader group={group} tools={props.categoryTools} />
+          ) : (
+            <div className="h-3" />
+          )}
           <ul className="divide-y divide-border/60 rounded-lg border border-border/70 bg-card/40">
             {group.rows.map((row) => {
               const preview = previewText(snippets.get(row.key));
@@ -304,7 +314,11 @@ export function GalleryLayout(props: ViewLayoutProps) {
     <div className="w-full px-4 pb-10 sm:px-6">
       {groups.map((group) => (
         <section key={group.key}>
-          {grouped ? <GroupHeader group={group} /> : <div className="h-3" />}
+          {grouped ? (
+            <GroupHeader group={group} tools={props.categoryTools} />
+          ) : (
+            <div className="h-3" />
+          )}
           <div
             className="grid gap-3"
             style={{
@@ -363,11 +377,13 @@ function BoardColumn({
   group,
   width,
   droppable,
+  tools,
   children,
 }: {
   group: ViewGroup;
   width: number;
   droppable: boolean;
+  tools: CategoryTools | null;
   children: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: group.key, disabled: !droppable });
@@ -381,8 +397,13 @@ function BoardColumn({
       style={{ width }}
     >
       <div className="flex items-center gap-2 px-3 pt-3 pb-2 text-sm font-medium">
-        <span className="truncate">{group.label}</span>
-        <span className="text-muted-foreground text-xs tabular-nums">{group.rows.length}</span>
+        <GroupTitle
+          group={group}
+          tools={tools}
+          count={
+            <span className="text-muted-foreground text-xs tabular-nums">{group.rows.length}</span>
+          }
+        />
       </div>
       <div className="flex min-h-12 flex-col gap-2 overflow-y-auto px-2 pb-2">{children}</div>
     </section>
@@ -391,7 +412,8 @@ function BoardColumn({
 
 export function BoardLayout(props: ViewLayoutProps) {
   const { view, groups, selected, openKey, nowMs, snippets } = props;
-  const editable = isEditableGrouping(view.groupBy);
+  // Category drops write settings, so they need the category tools.
+  const editable = view.groupBy === "section" || props.categoryTools !== null;
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const rowByKey = new Map(
@@ -405,8 +427,8 @@ export function BoardLayout(props: ViewLayoutProps) {
     setActiveKey(null);
     const row = rowByKey.get(String(event.active.id));
     const target = event.over?.id;
-    if (!row || target === undefined || target === row.section) return;
-    props.onMoveToSection(row, String(target) as ViewSection);
+    if (!row || target === undefined) return;
+    props.onDropOnGroup(row, String(target));
   };
 
   return (
@@ -418,7 +440,13 @@ export function BoardLayout(props: ViewLayoutProps) {
     >
       <div className="flex h-full min-h-0 gap-3 overflow-x-auto px-4 pt-3 pb-4 sm:px-6">
         {groups.map((group) => (
-          <BoardColumn key={group.key} group={group} width={width} droppable={editable}>
+          <BoardColumn
+            key={group.key}
+            group={group}
+            width={width}
+            droppable={editable}
+            tools={props.categoryTools}
+          >
             {group.rows.map((row) => (
               <div key={row.key} style={OFFSCREEN_CARD}>
                 <BoardCard
@@ -435,6 +463,9 @@ export function BoardLayout(props: ViewLayoutProps) {
             ))}
           </BoardColumn>
         ))}
+        {props.categoryTools ? (
+          <NewCategoryColumn tools={props.categoryTools} width={width} />
+        ) : null}
       </div>
       <DragOverlay dropAnimation={null}>
         {activeRow ? (
@@ -542,7 +573,7 @@ export function TableLayout(props: ViewLayoutProps) {
             {grouped ? (
               <tr>
                 <td colSpan={properties.length + 2}>
-                  <GroupHeader group={group} />
+                  <GroupHeader group={group} tools={props.categoryTools} />
                 </td>
               </tr>
             ) : null}

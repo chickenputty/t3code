@@ -244,7 +244,16 @@ how a thread opens, and renames, duplicates, or deletes it.
 Click a thread to see its details, messages, changed files, turns, and token
 usage, then **Resume Chat** to continue it. Ctrl-click or Shift-click selects
 several threads for bulk actions. On a board grouped by **Section**, drag a card
-to pin, settle, snooze, or archive it; other groupings can't be dragged.
+to pin, settle, snooze, or archive it.
+
+To keep related threads together across projects, make a category: choose
+**New category** at the end of a board grouped by **Project** or **Category**,
+or select threads and choose **Category** in the selection bar. In those
+groupings a category sits beside your projects and takes its threads out of
+them; drag a card onto a category to file it, and back onto its project to take
+it out. Every view shares the same categories, and deleting one returns its
+threads to their projects.
+
 Group a board by **Stage** to see threads move left to right: **Needs you**
 (waiting on an answer, approval, or a failed turn), **Working**, **Review**
 (finished but not yet read), and **Done**.

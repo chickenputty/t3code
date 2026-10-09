@@ -267,6 +267,18 @@ describe("saved views", () => {
     expect(filterSharedServerPatch(patch, { savedViews: true })).toEqual(patch);
     expect(filterSharedServerPatch(patch, {})).toEqual({ sidebarAutoSettleAfterDays: 7 });
   });
+
+  it("send categories only to servers that store them", () => {
+    const threadCategories = {
+      categories: [{ id: "c", name: "Update 100" }],
+      assignments: { "env:t": "c" },
+    };
+    expect(splitSharedServerPatch({ threadCategories }).sharedPatch).toEqual({ threadCategories });
+    expect(filterSharedServerPatch({ threadCategories }, { savedViews: true })).toEqual({});
+    expect(filterSharedServerPatch({ threadCategories }, { threadCategories: true })).toEqual({
+      threadCategories,
+    });
+  });
 });
 
 describe("findSharedSettingsMismatches", () => {

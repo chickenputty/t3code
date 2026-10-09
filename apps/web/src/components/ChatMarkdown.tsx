@@ -2459,11 +2459,6 @@ function useChatMarkdownState({
     },
     [environmentId, openInEditor],
   );
-  // Fork (chickenputty/t3code): an inline-code folder path opens in the file manager.
-  const openFolderInFileManager = useMemo(
-    () => (canOpenWithFileManager ? openPathWithFileManager : null),
-    [canOpenWithFileManager, openPathWithFileManager],
-  );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
@@ -2485,7 +2480,9 @@ function useChatMarkdownState({
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
     for (const span of extractInlineCodeSpans(text)) {
       if (metaByText.has(span)) continue;
-      const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
+      const meta =
+        resolveInlineCodeFolderLinkMeta(span, cwd) ??
+        resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
       if (meta) {
         metaByText.set(span, meta);
       }
@@ -2851,7 +2848,6 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
-      openFolderInFileManager,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2885,7 +2881,6 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
-      openFolderInFileManager,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2916,55 +2911,21 @@ function useChatMarkdownState({
 
 /**
  * Fork (chickenputty/t3code): an absolute folder path written as inline code
- * (it ends with a separator, as `C:\Games\Art\` does), or null.
+ * (it ends with a separator, as `C:\Games\Art\` does), as the forward-slash
+ * path the file chip resolves, or null. Upstream only links inline code that
+ * looks like a file, so folders would otherwise stay plain code.
  */
-export function inlineCodeFolderPath(text: string): { path: string; name: string } | null {
+export function inlineCodeFolderHref(text: string): string | null {
   const path = text.trim();
   if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/]|\/)/.test(path)) return null;
   if (!/[\\/]$/.test(path) || /[\r\n<>"|?*]/.test(path.slice(2))) return null;
-  const segments = path.split(/[\\/]+/).filter(Boolean);
-  const name = segments.at(-1) ?? path;
-  return { path, name };
+  const href = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  return href.length > 0 && !/^[A-Za-z]:$/.test(href) ? href : null;
 }
 
-function MarkdownFolderChip(props: {
-  readonly folder: { readonly path: string; readonly name: string };
-  readonly onOpen: ((path: string) => unknown) | null;
-}) {
-  const content = (
-    <>
-      <span aria-hidden>📁</span>
-      <span className="truncate">{props.folder.name}</span>
-    </>
-  );
-  const className =
-    "inline-flex max-w-full items-baseline gap-1 rounded-sm px-1 align-baseline font-medium";
-  const onOpen = props.onOpen;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          onOpen === null ? (
-            <span className={className} />
-          ) : (
-            <button
-              type="button"
-              className={cn(className, "cursor-pointer text-primary hover:underline")}
-              aria-label={`Open folder ${props.folder.name}`}
-              onClick={() => {
-                void onOpen(props.folder.path);
-              }}
-            />
-          )
-        }
-      >
-        {content}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {onOpen === null ? props.folder.path : `Open ${props.folder.path}`}
-      </TooltipPopup>
-    </Tooltip>
-  );
+function resolveInlineCodeFolderLinkMeta(text: string, cwd: string | undefined) {
+  const href = inlineCodeFolderHref(text);
+  return href === null ? null : resolveMarkdownFileLinkMeta(href, cwd);
 }
 
 const ChatMarkdownRendererContext = React.createContext<
@@ -3344,21 +3305,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const {
-      cwd,
-      imageBaseDir,
-      inlineCodeFileLinkMetaByText,
-      fileLinkChip,
-      openFolderInFileManager,
-    } = use(ChatMarkdownRendererContext);
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
+      ChatMarkdownRendererContext,
+    );
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
-      const folder = inlineCodeFolderPath(codeText);
-      if (folder !== null) {
-        return <MarkdownFolderChip folder={folder} onOpen={openFolderInFileManager} />;
-      }
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+        resolveInlineCodeFolderLinkMeta(codeText, cwd) ??
         resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
       if (fileLinkMeta) {
         return fileLinkChip(

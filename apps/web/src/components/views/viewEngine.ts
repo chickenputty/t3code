@@ -11,6 +11,7 @@ import type {
   SavedViewLayout,
   SavedViewSort,
   ScopedThreadRef,
+  ThreadCategory,
 } from "@t3tools/contracts";
 
 import type { SidebarThreadDisplayStatus } from "~/components/sidebar/sidebarArrangement";
@@ -33,6 +34,9 @@ export interface ViewRow {
   readonly status: SidebarThreadDisplayStatus;
   readonly stage: ViewStage;
   readonly kind: ViewKind;
+  /** The custom category the thread is filed under, if any. */
+  readonly category: string | null;
+  readonly categoryLabel: string | null;
   readonly model: string;
   readonly provider: string;
   readonly branch: string | null;
@@ -164,6 +168,14 @@ export const VIEW_PROPERTIES: readonly ViewProperty[] = [
     groupable: true,
     options: VIEW_STATUS_OPTIONS,
     value: (row) => row.status,
+  },
+  {
+    id: "category",
+    label: "Category",
+    type: "enum",
+    groupable: true,
+    value: (row) => row.category,
+    display: (row) => row.categoryLabel ?? "",
   },
   {
     id: "stage",
@@ -465,6 +477,19 @@ export interface ViewGroup {
   readonly key: string;
   readonly label: string;
   readonly rows: readonly ViewRow[];
+  /** Set on a custom category's group, which shows even when empty. */
+  readonly categoryId?: string;
+}
+
+const CATEGORY_GROUP_PREFIX = "category:";
+
+export function categoryGroupKey(categoryId: string): string {
+  return `${CATEGORY_GROUP_PREFIX}${categoryId}`;
+}
+
+/** Groupings that show custom categories as their own groups. */
+export function showsCategories(groupBy: string | null): boolean {
+  return groupBy === "project" || groupBy === "category";
 }
 
 const DATE_BUCKETS = [
@@ -516,10 +541,16 @@ function groupKeyOf(
 export function groupViewRows(
   rows: readonly ViewRow[],
   groupBy: string | null,
-  options: { readonly hideEmpty: boolean; readonly nowMs: number; readonly showArchived?: boolean },
+  options: {
+    readonly hideEmpty: boolean;
+    readonly nowMs: number;
+    readonly showArchived?: boolean;
+    readonly categories?: readonly ThreadCategory[];
+  },
 ): readonly ViewGroup[] {
   const property = groupBy === null ? undefined : viewProperty(groupBy);
   if (!property || !property.groupable) return [{ key: "all", label: "All", rows }];
+  if (showsCategories(property.id)) return groupWithCategories(rows, property, options);
   const groups = new Map<string, { label: string; rows: ViewRow[] }>();
   const fixed =
     property.type === "date"
@@ -541,6 +572,76 @@ export function groupViewRows(
     result.push({ key, label: group.label, rows: group.rows });
   }
   return result;
+}
+
+/**
+ * Custom categories come first, in the order they were made, and keep their
+ * place even when empty so a card can be dropped into a new one. A filed
+ * thread leaves its project group; by category, the rest share "No category".
+ */
+function groupWithCategories(
+  rows: readonly ViewRow[],
+  property: ViewProperty,
+  options: { readonly hideEmpty: boolean; readonly categories?: readonly ThreadCategory[] },
+): readonly ViewGroup[] {
+  const groups = new Map<string, { label: string; rows: ViewRow[]; categoryId?: string }>();
+  for (const category of options.categories ?? []) {
+    groups.set(categoryGroupKey(category.id), {
+      label: category.name,
+      rows: [],
+      categoryId: category.id,
+    });
+  }
+  for (const row of rows) {
+    const filed = row.category === null ? undefined : groups.get(categoryGroupKey(row.category));
+    if (filed) {
+      filed.rows.push(row);
+      continue;
+    }
+    const key = property.id === "project" ? row.projectKey : "";
+    const label = property.id === "project" ? row.projectLabel : "No category";
+    const group = groups.get(key);
+    if (group) group.rows.push(row);
+    else groups.set(key, { label, rows: [row] });
+  }
+  const result: ViewGroup[] = [];
+  for (const [key, group] of groups) {
+    if (options.hideEmpty && group.rows.length === 0 && group.categoryId === undefined) continue;
+    result.push({
+      key,
+      label: group.label,
+      rows: group.rows,
+      ...(group.categoryId === undefined ? {} : { categoryId: group.categoryId }),
+    });
+  }
+  return result;
+}
+
+export type GroupDrop =
+  | { readonly kind: "section"; readonly section: ViewSection }
+  | { readonly kind: "category"; readonly categoryId: string | null };
+
+/**
+ * What dropping a card on a group does: a section move, filing it under a
+ * category, or taking it out of its category (back onto its own project, or
+ * onto "No category"). Null when the drop changes nothing or cannot apply,
+ * such as onto another project.
+ */
+export function planGroupDrop(
+  groupBy: string | null,
+  row: Pick<ViewRow, "section" | "category" | "projectKey">,
+  groupKey: string,
+): GroupDrop | null {
+  if (groupBy === "section") {
+    return groupKey === row.section ? null : { kind: "section", section: groupKey as ViewSection };
+  }
+  if (!showsCategories(groupBy)) return null;
+  if (groupKey.startsWith(CATEGORY_GROUP_PREFIX)) {
+    const categoryId = groupKey.slice(CATEGORY_GROUP_PREFIX.length);
+    return categoryId === row.category ? null : { kind: "category", categoryId };
+  }
+  const home = groupBy === "project" ? row.projectKey : "";
+  return groupKey === home && row.category !== null ? { kind: "category", categoryId: null } : null;
 }
 
 // ── View records ───────────────────────────────────────────────────────────
@@ -587,11 +688,6 @@ export const DEFAULT_SAVED_VIEWS: readonly SavedView[] = [
 
 export function newSavedViewId(): string {
   return `view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-/** Groupings whose columns a card can be dragged between. */
-export function isEditableGrouping(groupBy: string | null): boolean {
-  return groupBy === "section";
 }
 
 export type MoveStep =

@@ -73,3 +73,24 @@ export const SavedView = Schema.Struct({
   openMode: SavedViewOpenMode.pipe(Schema.withDecodingDefault(Effect.succeed("peek" as const))),
 });
 export type SavedView = typeof SavedView.Type;
+
+/** A header the user made to file threads under, across projects. */
+export const ThreadCategory = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+});
+export type ThreadCategory = typeof ThreadCategory.Type;
+
+/**
+ * Custom categories, shared by every view. A thread is in at most one; views
+ * grouped by project show each category beside the projects and take its
+ * threads out of their project.
+ */
+export const ThreadCategories = Schema.Struct({
+  categories: Schema.Array(ThreadCategory).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Scoped thread key (environment and thread id) to category id. */
+  assignments: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type ThreadCategories = typeof ThreadCategories.Type;

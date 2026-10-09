@@ -5,7 +5,7 @@
  */
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import type { SavedView } from "@t3tools/contracts";
+import type { SavedView, ThreadCategory } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
@@ -29,9 +29,11 @@ import { readLocalApi } from "~/localApi";
 import { useThreadSearch } from "~/state/queries";
 import { useEnvironments } from "~/state/environments";
 
+import { type CategoryTools, CategoryPicker } from "./CategoryControls";
 import { ThreadInspector } from "./ThreadInspector";
 import { isWidgetEvent } from "./viewKeys";
 import { useSavedViews } from "./useSavedViews";
+import { useThreadCategories } from "./useThreadCategories";
 import { useThreadPreviews } from "./useThreadPreviews";
 import { type ViewBulkAction, useViewThreadOps } from "./useViewThreadOps";
 import { useViewRows } from "./useViewRows";
@@ -47,7 +49,8 @@ import { ViewToolbar } from "./ViewToolbar";
 import {
   filterViewRows,
   groupViewRows,
-  isEditableGrouping,
+  planGroupDrop,
+  showsCategories,
   sortViewRows,
   type ViewProperty,
   type ViewPropertyOption,
@@ -120,7 +123,8 @@ function SavedViewContent({
   const navigateToMainApp = useNavigateToMainApp();
   const { views, update, duplicate, remove } = useSavedViews();
   const ops = useViewThreadOps();
-  const { rows, nowMs, archivedLoading } = useViewRows(view.showArchived);
+  const categories = useThreadCategories();
+  const { rows, nowMs, archivedLoading } = useViewRows(view.showArchived, categories);
   const { environments } = useEnvironments();
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -163,13 +167,21 @@ function SavedViewContent({
   const groups = useMemo(
     () =>
       groupViewRows(visibleRows, groupBy, {
-        // Board columns that accept drops stay visible even when empty.
-        hideEmpty:
-          view.hideEmptyGroups && !(view.layout === "board" && isEditableGrouping(groupBy)),
+        // Board sections accept drops, so they stay visible even when empty.
+        hideEmpty: view.hideEmptyGroups && !(view.layout === "board" && groupBy === "section"),
         nowMs,
         showArchived: view.showArchived,
+        categories: categories.categories,
       }),
-    [groupBy, nowMs, view.hideEmptyGroups, view.layout, view.showArchived, visibleRows],
+    [
+      categories.categories,
+      groupBy,
+      nowMs,
+      view.hideEmptyGroups,
+      view.layout,
+      view.showArchived,
+      visibleRows,
+    ],
   );
   const orderedRows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
   const rowByKey = useMemo(() => new Map(rows.map((row) => [row.key, row])), [rows]);
@@ -230,7 +242,7 @@ function SavedViewContent({
 
   const handlers: Omit<
     ViewLayoutProps,
-    "view" | "groups" | "selected" | "openKey" | "nowMs" | "snippets"
+    "view" | "groups" | "selected" | "openKey" | "nowMs" | "snippets" | "categoryTools"
   > = {
     onOpen: (row) =>
       onOpenKeyChange(openKey === row.key && view.openMode === "peek" ? null : row.key),
@@ -261,7 +273,11 @@ function SavedViewContent({
       });
       setAnchorKey(row.key);
     },
-    onMoveToSection: (row, section) => void ops.moveToSection(row, section),
+    onDropOnGroup: (row, groupKey) => {
+      const drop = planGroupDrop(groupBy, row, groupKey);
+      if (drop?.kind === "section") void ops.moveToSection(row, drop.section);
+      else if (drop?.kind === "category") categories.assign([row.key], drop.categoryId);
+    },
     onRename: (row, title) => void ops.rename(row.ref, title),
     onSortBy: (propertyId) => {
       const current = view.sorts[0];
@@ -284,6 +300,28 @@ function SavedViewContent({
     return map;
   }, [previews, snippets, view.preview]);
 
+  const deleteCategory = async (category: ThreadCategory) => {
+    const confirmed = await settlePromise(
+      () =>
+        readLocalApi()?.dialogs.confirm(
+          `Delete the category "${category.name}"? Its threads go back to their projects.`,
+        ) ?? Promise.resolve(true),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    categories.remove(category.id);
+  };
+  const categoryTools: CategoryTools | null =
+    categories.canEdit && showsCategories(groupBy)
+      ? {
+          create: (name) => void categories.create(name),
+          rename: categories.rename,
+          remove: (id) => {
+            const category = categories.categories.find((candidate) => candidate.id === id);
+            if (category) void deleteCategory(category);
+          },
+        }
+      : null;
+
   const layoutProps: ViewLayoutProps = {
     ...handlers,
     view: { ...view, groupBy },
@@ -292,6 +330,7 @@ function SavedViewContent({
     openKey,
     nowMs,
     snippets: cardText,
+    categoryTools,
   };
 
   const deleteView = async () => {
@@ -429,6 +468,25 @@ function SavedViewContent({
             rows={selectedRows}
             onAction={(action) => runAction(selectedRows, action)}
             onClear={() => setSelected(new Set())}
+            category={
+              categories.canEdit ? (
+                <CategoryPicker
+                  categories={categories.categories}
+                  onAssign={(categoryId) =>
+                    categories.assign(
+                      selectedRows.map((row) => row.key),
+                      categoryId,
+                    )
+                  }
+                  onCreate={(name) =>
+                    void categories.create(
+                      name,
+                      selectedRows.map((row) => row.key),
+                    )
+                  }
+                />
+              ) : null
+            }
           />
         ) : null}
       </div>
@@ -448,10 +506,12 @@ function BulkBar({
   rows,
   onAction,
   onClear,
+  category,
 }: {
   rows: readonly ViewRow[];
   onAction: (action: ViewBulkAction) => void;
   onClear: () => void;
+  category: ReactNode;
 }) {
   const archivedOnly = rows.every((row) => row.section === "archived");
   return (
@@ -473,6 +533,7 @@ function BulkBar({
           </Button>
         ))
       )}
+      {category}
       {archivedOnly ? null : (
         <Button variant="ghost-destructive" size="xs" onClick={() => onAction("delete")}>
           Delete

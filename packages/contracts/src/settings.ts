@@ -17,7 +17,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { SavedView } from "./savedViews.ts";
+import { SavedView, ThreadCategories } from "./savedViews.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -1312,6 +1312,10 @@ export const ServerSettings = Schema.Struct({
   savedViews: ForwardCompatibleNullable(Schema.Array(SavedView)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Fork: custom thread categories for saved views. Null until the first one is made. */
+  threadCategories: ForwardCompatibleNullable(ThreadCategories).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1573,6 +1577,8 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   /** Replaces the whole list; `null` restores the default views. */
   savedViews: Schema.optionalKey(Schema.NullOr(Schema.Array(SavedView))),
+  /** Replaces categories and assignments together. */
+  threadCategories: Schema.optionalKey(Schema.NullOr(ThreadCategories)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

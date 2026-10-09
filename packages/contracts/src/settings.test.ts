@@ -1061,4 +1061,15 @@ describe("saved views in server settings", () => {
     expect(settings.savedViews).toBeNull();
     expect(settings.worktreesDirectory).toBe("D:\worktrees");
   });
+
+  it("defaults thread categories to null and fills missing parts", () => {
+    expect(Schema.decodeUnknownSync(ServerSettings)({}).threadCategories).toBeNull();
+    const settings = Schema.decodeUnknownSync(ServerSettings)({
+      threadCategories: { categories: [{ id: "c", name: "Update 100" }] },
+    });
+    expect(settings.threadCategories).toEqual({
+      categories: [{ id: "c", name: "Update 100" }],
+      assignments: {},
+    });
+  });
 });
