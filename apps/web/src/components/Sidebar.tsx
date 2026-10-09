@@ -1842,8 +1842,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : null;
 
   if (variant === "slim") {
-    // Fork: a live row in the Slim setting drops the draft, pin and terminal
-    // markers, keeping its icon, title, PR, status and time.
+    // Fork: a live row in the Slim setting drops the draft and terminal
+    // markers, keeping its icon, title, pin, PR, time and status.
     const statusOnly = props.statusSlim === true && variantAction === "settle";
     return (
       <li
@@ -1902,7 +1902,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {statusOnly ? null : draftIndicator}
             {title}
-            {statusOnly ? null : pinIndicator}
+            {pinIndicator}
             {statusOnly ? null : terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1959,16 +1959,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
                   ) : variantAction === "settle" && topStatus !== null ? (
-                    // Fork: a live Compact or Slim row shows its status glyph, then
-                    // its time, at the far right.
+                    // Fork: a live Compact or Slim row shows its time, then its
+                    // status glyph, at the far right.
                     <span className="inline-flex items-center gap-1.5">
+                      <span className="text-xs">{threadTimeLabel(thread)}</span>
                       <span className={cn("inline-flex", topStatus.className)}>
                         <SidebarStatusGlyph icon={topStatus.icon} />
                         <span role="status" className="sr-only">
                           {topStatus.label}
                         </span>
                       </span>
-                      <span className="text-xs">{threadTimeLabel(thread)}</span>
                     </span>
                   ) : (
                     <span className="text-xs">
