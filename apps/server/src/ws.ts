@@ -1919,18 +1919,14 @@ const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadPreviews]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_V2_WS_METHODS.getThreadPreviews,
-            threadPreviews.getPreviews(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetThreadPreviewsError({
-                    message: "Failed to read thread previews",
-                    cause,
-                  }),
-              ),
+          threadPreviews.getPreviews(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetThreadPreviewsError({
+                  message: "Failed to read thread previews",
+                  cause,
+                }),
             ),
-            { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
