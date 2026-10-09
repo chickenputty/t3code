@@ -1,9 +1,12 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import ChatView from "./ChatView";
+import { ThreadSplitView } from "./ThreadSplitView";
+import { useIsMobile } from "../hooks/useMediaQuery";
+import { resolveThreadSplitSecondary, useThreadSplitStore } from "../threadSplitStore";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { SidebarInset } from "./ui/sidebar";
@@ -105,6 +108,21 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     draftThreadExists: draftThread !== null,
   });
   const serverThreadStarted = threadHasStarted(serverThreadShell);
+  const routeThreadKey = serverThreadRef ? scopedThreadKey(serverThreadRef) : null;
+  const splitThreadKey = useThreadSplitStore((state) => state.secondaryThreadKey);
+  const splitSecondaryRef = useMemo(
+    () => resolveThreadSplitSecondary({ routeThreadKey, secondaryThreadKey: splitThreadKey }),
+    [routeThreadKey, splitThreadKey],
+  );
+  // Phones have no room for two threads; the split comes back on a wider window.
+  const isMobileViewport = useIsMobile();
+
+  // Opening the split thread in the primary pane folds the split back into one.
+  useEffect(() => {
+    if (splitThreadKey !== null && splitThreadKey === routeThreadKey) {
+      useThreadSplitStore.getState().closeSplit();
+    }
+  }, [routeThreadKey, splitThreadKey]);
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
 
   useEffect(() => {
@@ -191,7 +209,10 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh">
-      {view}
+      <ThreadSplitView
+        primary={view}
+        secondaryThreadRef={view !== null && !isMobileViewport ? splitSecondaryRef : null}
+      />
     </SidebarInset>
   );
 }

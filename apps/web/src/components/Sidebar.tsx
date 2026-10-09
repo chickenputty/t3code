@@ -136,6 +136,7 @@ import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
+import { resolveSidebarSplitViewAction, useThreadSplitStore } from "../threadSplitStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -4883,6 +4884,12 @@ export default function Sidebar() {
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
+              splitView: resolveSidebarSplitViewAction({
+                threadKey,
+                routeThreadKey: routeThreadKeyRef.current,
+                secondaryThreadKey: useThreadSplitStore.getState().secondaryThreadKey,
+                isMobile,
+              }),
               projectFilter: threadProjectGroup
                 ? {
                     label: threadProjectGroup.displayName,
@@ -4919,6 +4926,12 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "open-split":
+            useThreadSplitStore.getState().openSplit(threadRef);
+            return;
+          case "close-split":
+            useThreadSplitStore.getState().closeSplit();
+            return;
           case "filter-by-project":
             // This item is the only scope control here, so picking the
             // already-scoped project again is the way back to all projects.
@@ -5109,6 +5122,7 @@ export default function Sidebar() {
       copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
+      isMobile,
       markThreadUnread,
       openProjectSettings,
       projectScopeKey,
