@@ -5,11 +5,10 @@
  * does. Preview, open in editor, open file, open parent folder and the copy
  * actions all go through here so they agree on one path.
  */
-import { formatFilePathPosition } from "@t3tools/client-runtime/markdown-links";
+import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import * as Schema from "effect/Schema";
 
 import type { MarkdownFileLinkMeta } from "./markdown-links";
-import { resolvePathLinkTarget } from "./terminal-links";
 
 export class MarkdownFileParentFolderUnavailableError extends Schema.TaggedError<MarkdownFileParentFolderUnavailableError>()(
   "MarkdownFileParentFolderUnavailableError",

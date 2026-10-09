@@ -594,7 +594,7 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect("streams a local snapshot first and remote updates later", () => {
+  it.effect("passive streams retain cached remote status", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -608,18 +608,25 @@ describe("VcsStatusBroadcaster", () => {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
-        if (event._tag === "snapshot") {
-          return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
-        }
-        if (event._tag === "remoteUpdated") {
-          return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
-        }
-        return Effect.void;
-      }).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+        (event) => {
+          if (event._tag === "snapshot") {
+            return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+          }
+          if (event._tag === "remoteUpdated") {
+            return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        },
+      ).pipe(Effect.forkScoped);
 
       const snapshot = yield* Deferred.await(snapshotDeferred);
-      yield* broadcaster.refreshStatus("/repo");
+      yield* TestClock.adjust("1 minute");
+      assert.equal(state.remoteStatusCalls, 0);
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      state.currentRemoteStatus = remoteStatusWithPr;
+      yield* broadcaster.refreshPullRequestStatus("/repo");
       const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred);
 
       assert.deepStrictEqual(snapshot, {
@@ -629,8 +636,16 @@ describe("VcsStatusBroadcaster", () => {
       } satisfies VcsStatusStreamEvent);
       assert.deepStrictEqual(remoteUpdated, {
         _tag: "remoteUpdated",
-        remote: baseRemoteStatus,
+        remote: remoteStatusWithPr,
       } satisfies VcsStatusStreamEvent);
+      const cachedSnapshot = yield* Stream.runHead(
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+      );
+      assert.deepStrictEqual(Option.getOrThrow(cachedSnapshot), {
+        _tag: "snapshot",
+        local: baseLocalStatus,
+        remote: remoteStatusWithPr,
+      });
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
@@ -853,58 +868,6 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())));
   });
 
-  it.effect("refreshes a cwd only background subscribers watch every 5 minutes", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-    };
-
-    return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      yield* broadcaster.getStatus({ cwd: "/repo" });
-      const options = { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) };
-      const watch = (input: { cwd: string; priority?: "background" }, scope: Scope.Scope) =>
-        Effect.gen(function* () {
-          const snapshot = yield* Deferred.make<void>();
-          yield* Stream.runForEach(broadcaster.streamStatus(input, options), (event) =>
-            event._tag === "snapshot" ? Deferred.succeed(snapshot, undefined) : Effect.void,
-          ).pipe(Effect.forkIn(scope));
-          yield* Deferred.await(snapshot);
-        });
-
-      const sidebar = yield* Scope.make();
-      yield* watch({ cwd: "/repo", priority: "background" }, sidebar);
-      assert.equal(state.remoteStatusCalls, 1);
-
-      yield* TestClock.adjust(Duration.minutes(4));
-      yield* Effect.yieldNow;
-      assert.equal(state.remoteStatusCalls, 1);
-
-      yield* TestClock.adjust(Duration.minutes(1));
-      yield* Effect.yieldNow;
-      assert.equal(state.remoteStatusCalls, 2);
-
-      // Opening the thread adds a foreground subscriber: back to every tick.
-      const open = yield* Scope.make();
-      yield* watch({ cwd: "/repo" }, open);
-      yield* TestClock.adjust(Duration.minutes(1));
-      yield* Effect.yieldNow;
-      assert.equal(state.remoteStatusCalls, 3);
-
-      // Closing it leaves the sidebar alone again.
-      yield* Scope.close(open, Exit.void);
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* Effect.yieldNow;
-      assert.equal(state.remoteStatusCalls, 3);
-
-      yield* Scope.close(sidebar, Exit.void);
-    }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())));
-  });
-
   // A push from a terminal moves ahead; a PR merged on the host moves ahead-of-default.
   it.effect.each([
     ["a push", { ...baseRemoteStatus, aheadCount: 1, aheadOfDefaultCount: 0 }],
@@ -1084,7 +1047,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
-  it.effect("stops the remote poller after the last stream subscriber disconnects", () => {
+  it.effect("releases remote demand while passive observers remain", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -1144,6 +1107,16 @@ describe("VcsStatusBroadcaster", () => {
       const secondSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const firstScope = yield* Scope.make();
       const secondScope = yield* Scope.make();
+      const passiveSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+        (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(passiveSnapshot, event).pipe(Effect.ignore)
+            : Effect.void,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(passiveSnapshot);
+      assert.equal(state.remoteStatusCalls, 0);
       yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) =>
         event._tag === "snapshot"
           ? Deferred.succeed(firstSnapshot, event).pipe(Effect.ignore)

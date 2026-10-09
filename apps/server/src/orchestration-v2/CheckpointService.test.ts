@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -15,7 +16,7 @@ import * as Layer from "effect/Layer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 it.effect.each([false, true, "interrupt"] as const)(
   "materializes baseline, lookup fails=%s",
@@ -58,6 +59,7 @@ it.effect.each([false, true, "interrupt"] as const)(
           }),
         ),
       ),
+      Layer.provideMerge(NodeCrypto.layer),
     );
 
     return Effect.gen(function* () {
@@ -88,7 +90,7 @@ it.effect.each([false, true, "interrupt"] as const)(
       assert.equal(baseline.ordinalWithinScope, 2);
       assert.equal(
         baseline.ref,
-        CheckpointService.checkpointRefForScopeOrdinal({
+        yield* CheckpointService.checkpointRefForScopeOrdinal({
           scopeId: scope.id,
           ordinalWithinScope: 2,
         }),
@@ -103,13 +105,14 @@ it.effect.each([false, true, "interrupt"] as const)(
 );
 
 it("skips checkpoints for folders under a T3CODE_CHECKPOINT_SKIP prefix", () => {
-  const skip = process.platform === "win32" ? ["c:/repos/big"] : ["/repos/big"];
-  const root = process.platform === "win32" ? "C:\\Repos\\Big" : "/repos/big";
-  const sep = process.platform === "win32" ? "\\" : "/";
-  assert.isTrue(CheckpointService.isCheckpointSkipped(root, skip));
+  const { isCheckpointSkipped } = CheckpointService;
+  const windowsRoot = String.raw`C:\Repos\Big`;
+  assert.isTrue(isCheckpointSkipped(windowsRoot, ["c:/repos/big"], "win32"));
   assert.isTrue(
-    CheckpointService.isCheckpointSkipped(`${root}${sep}.claude${sep}worktrees${sep}a`, skip),
+    isCheckpointSkipped(String.raw`${windowsRoot}\.claude\worktrees\a`, ["c:/repos/big"], "win32"),
   );
-  assert.isFalse(CheckpointService.isCheckpointSkipped(`${root}-other`, skip));
-  assert.isFalse(CheckpointService.isCheckpointSkipped(root, []));
+  assert.isFalse(isCheckpointSkipped(`${windowsRoot}-other`, ["c:/repos/big"], "win32"));
+  assert.isFalse(isCheckpointSkipped(windowsRoot, [], "win32"));
+  assert.isTrue(isCheckpointSkipped("/repos/big/.claude/worktrees/a", ["/repos/big"], "linux"));
+  assert.isFalse(isCheckpointSkipped("/Repos/Big", ["/repos/big"], "linux"));
 });

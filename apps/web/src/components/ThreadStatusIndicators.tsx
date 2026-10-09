@@ -910,8 +910,7 @@ export function ThreadRowLeadingStatus({
       gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
-          // Fork: sidebar rows refresh slowly; the open thread's own subscription keeps its cwd live.
-          input: { cwd: gitCwd, priority: "background" },
+          input: { cwd: gitCwd, includeRemote: false },
         })
       : null,
   );

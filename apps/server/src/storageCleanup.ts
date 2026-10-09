@@ -86,7 +86,12 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
     thread.branch !== null &&
     thread.worktreePath !== null &&
     thread.activeRunId === null &&
-    (thread.status === "idle" || thread.status === "failed") &&
+    (thread.status === "idle" ||
+      thread.status === "completed" ||
+      thread.status === "interrupted" ||
+      thread.status === "failed" ||
+      thread.status === "cancelled" ||
+      thread.status === "rolled_back") &&
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
     !threadHasQueuedTurnStart(thread, now)
@@ -106,15 +111,30 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
   );
 }
 
-// Fork: a squash or rebase merge never puts the branch head on the default branch. Such a
-// worktree counts as merged when its pull request merged and HEAD has no commit made after it.
-export function storageCleanupSquashMerged(
-  pullRequest: { readonly state: string; readonly mergedAt?: string | null } | null,
-  headCommittedAtMs: number,
+/**
+ * Whether the host's pull request proves this worktree's head was merged. A
+ * squash or rebase merge leaves the head outside the default branch, so the
+ * merged pull request then has to name this exact commit.
+ */
+export function storageCleanupPullRequestMerged(
+  pullRequest: Pick<
+    GitManager.GitBranchPullRequest,
+    "state" | "headRef" | "baseRef" | "headSha"
+  > | null,
+  worktree: {
+    readonly branch: string;
+    readonly defaultBranch: string;
+    readonly headSha: string;
+    readonly integrated: boolean;
+  },
 ): boolean {
-  if (pullRequest?.state !== "merged" || pullRequest.mergedAt == null) return false;
-  const mergedAtMs = Date.parse(pullRequest.mergedAt);
-  return Number.isFinite(mergedAtMs) && headCommittedAtMs <= mergedAtMs;
+  return (
+    pullRequest?.state === "merged" &&
+    (worktree.integrated ||
+      (pullRequest.headRef === worktree.branch &&
+        pullRequest.baseRef === worktree.defaultBranch &&
+        pullRequest.headSha === worktree.headSha))
+  );
 }
 
 export const make = Effect.gen(function* () {
@@ -313,19 +333,12 @@ export const make = Effect.gen(function* () {
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true },
             );
-            if (integrated) {
-              eligible = pullRequest?.state === "merged";
-            } else {
-              const committedAt = yield* git.execute({
-                operation: "StorageCleanup.headCommittedAt",
-                cwd: worktreePath,
-                args: ["log", "-1", "--format=%ct", head.commitSha],
-              });
-              eligible = storageCleanupSquashMerged(
-                pullRequest,
-                Number(committedAt.stdout.trim()) * 1_000,
-              );
-            }
+            eligible = storageCleanupPullRequestMerged(pullRequest, {
+              branch: thread.branch,
+              defaultBranch: branch,
+              headSha: head.commitSha,
+              integrated,
+            });
           }
         }
         if (!eligible) return;
