@@ -251,6 +251,7 @@ describe("saved views", () => {
     density: "comfortable" as const,
     showArchived: false,
     showSettled: true,
+    showSubagents: false,
     hideEmptyGroups: true,
     openMode: "peek" as const,
   };
