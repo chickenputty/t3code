@@ -28,6 +28,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { useNavigateToMainApp } from "~/components/sidebar/mainAppLocation";
+import { useSidebar } from "~/components/ui/sidebar";
 
 import { useSavedViews } from "./useSavedViews";
 import { VIEW_LAYOUT_LABELS } from "./viewEngine";
@@ -44,12 +45,15 @@ const LAYOUTS: readonly SavedViewLayout[] = ["list", "board", "gallery", "table"
 export function ViewSwitcher({ currentViewId }: { readonly currentViewId: string | null }) {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
-  const { views, create } = useSavedViews();
+  const { views, create, canSave } = useSavedViews();
+  const { isMobile, setOpenMobile } = useSidebar();
   const [open, setOpen] = useState(false);
   const current = currentViewId === null ? null : views.find((view) => view.id === currentViewId);
   const CurrentIcon = current ? VIEW_LAYOUT_ICONS[current.layout] : MessagesSquareIcon;
 
   const openView = (viewId: string) => {
+    // The switcher also sits in the mobile sidebar sheet; a view replaces it.
+    if (isMobile) setOpenMobile(false);
     void navigate({ to: "/views/$viewId", params: { viewId } });
   };
 
@@ -92,24 +96,26 @@ export function ViewSwitcher({ currentViewId }: { readonly currentViewId: string
             </MenuItem>
           );
         })}
-        <MenuSeparator />
-        <MenuSub>
-          <MenuSubTrigger>
-            <PlusIcon />
-            New view
-          </MenuSubTrigger>
-          <MenuSubPopup className="min-w-40">
-            {LAYOUTS.map((layout) => {
-              const Icon = VIEW_LAYOUT_ICONS[layout];
-              return (
-                <MenuItem key={layout} onClick={() => openView(create(layout).id)}>
-                  <Icon />
-                  {VIEW_LAYOUT_LABELS[layout]}
-                </MenuItem>
-              );
-            })}
-          </MenuSubPopup>
-        </MenuSub>
+        {canSave ? <MenuSeparator /> : null}
+        {canSave ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <PlusIcon />
+              New view
+            </MenuSubTrigger>
+            <MenuSubPopup className="min-w-40">
+              {LAYOUTS.map((layout) => {
+                const Icon = VIEW_LAYOUT_ICONS[layout];
+                return (
+                  <MenuItem key={layout} onClick={() => openView(create(layout).id)}>
+                    <Icon />
+                    {VIEW_LAYOUT_LABELS[layout]}
+                  </MenuItem>
+                );
+              })}
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

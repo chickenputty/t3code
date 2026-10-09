@@ -1484,8 +1484,12 @@ export const ServerSettings = Schema.Struct({
   usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  /** Fork: saved thread views. Null until the user first edits one; clients show defaults. */
-  savedViews: Schema.NullOr(Schema.Array(SavedView)).pipe(
+  /**
+   * Fork: saved thread views. Null until the user first edits one; clients show
+   * defaults. A list this build cannot read (a newer layout) decodes as null
+   * instead of failing the whole settings file.
+   */
+  savedViews: ForwardCompatibleNullable(Schema.Array(SavedView)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 });

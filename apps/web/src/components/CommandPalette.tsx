@@ -744,7 +744,7 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const projects = useProjects();
   // Fork: saved thread views open from the palette too.
-  const { views: savedViews, create: createSavedView } = useSavedViews();
+  const { views: savedViews, create: createSavedView, canSave: canSaveViews } = useSavedViews();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -2249,17 +2249,18 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-  actionItems.push({
-    kind: "action",
-    value: "action:new-view",
-    searchTerms: ["new view", "create view", "board", "gallery", "table", "list"],
-    title: "New view",
-    icon: <ListIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      const view = createSavedView("list");
-      await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
-    },
-  });
+  if (canSaveViews)
+    actionItems.push({
+      kind: "action",
+      value: "action:new-view",
+      searchTerms: ["new view", "create view", "board", "gallery", "table", "list"],
+      title: "New view",
+      icon: <ListIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        const view = createSavedView("list");
+        await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
+      },
+    });
 
   actionItems.push({
     kind: "action",

@@ -1120,3 +1120,21 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
     ).toBe(true);
   });
 });
+
+describe("saved views in server settings", () => {
+  const view = { id: "v", name: "Board", layout: "board" };
+
+  it("decodes saved views with their defaults", () => {
+    const settings = Schema.decodeUnknownSync(ServerSettings)({ savedViews: [view] });
+    expect(settings.savedViews?.[0]).toMatchObject({ id: "v", layout: "board", openMode: "peek" });
+  });
+
+  it("drops a list it cannot read without losing the rest of the settings", () => {
+    const settings = Schema.decodeUnknownSync(ServerSettings)({
+      worktreesDirectory: "D:\worktrees",
+      savedViews: [{ ...view, layout: "timeline" }],
+    });
+    expect(settings.savedViews).toBeNull();
+    expect(settings.worktreesDirectory).toBe("D:\worktrees");
+  });
+});

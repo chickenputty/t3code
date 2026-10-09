@@ -3,9 +3,10 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useServerConfigs } from "~/state/entities";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { orchestrationEnvironment } from "~/state/orchestration";
 
 import type { ViewRow } from "./viewEngine";
@@ -74,6 +75,29 @@ export function useThreadPreviews(
       .map(([environmentId, ids]) => [environmentId, ...ids.toSorted()].join(FIELD_SEPARATOR))
       .join(ENVIRONMENT_SEPARATOR);
   }, [enabled, rows, serverConfigs]);
+  // The newest activity among the requested threads: when it moves, a preview
+  // may have changed, so the cached answers are refetched.
+  const activity = useMemo(
+    () => (key === null ? 0 : Math.max(0, ...rows.map((row) => row.activityMs))),
+    [key, rows],
+  );
+  const seen = useRef<{ key: string | null; activity: number } | null>(null);
+  useEffect(() => {
+    const previous = seen.current;
+    seen.current = { key, activity };
+    // A new thread set fetches on its own; only later activity on the same set refetches.
+    if (key === null || previous === null || previous.key !== key) return;
+    if (previous.activity === activity) return;
+    for (const entry of key.split(ENVIRONMENT_SEPARATOR)) {
+      const [environmentId, ...threadIds] = entry.split(FIELD_SEPARATOR) as [
+        EnvironmentId,
+        ...ThreadId[],
+      ];
+      appAtomRegistry.refresh(
+        orchestrationEnvironment.threadPreviews({ environmentId, input: { threadIds } }),
+      );
+    }
+  }, [activity, key]);
   const previews = useAtomValue(key === null ? EMPTY_ATOM : previewsAtom(key));
   // A changed thread set refetches; keep showing the last previews until it lands.
   const [held, setHeld] = useState(previews);

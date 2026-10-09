@@ -1,20 +1,27 @@
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  resolveSnoozePresets,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
+import { deleteSelectedThreadEntries } from "~/components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useThreadActions } from "~/hooks/useThreadActions";
 import { readLocalApi } from "~/localApi";
+import { readEnvironmentSupportsSnooze } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import type { ViewRow, ViewSection } from "./viewEngine";
+import { type MoveStep, planSectionMove, type ViewRow, type ViewSection } from "./viewEngine";
 
 export type ViewBulkAction =
   | "pin"
@@ -28,16 +35,15 @@ export type ViewBulkAction =
   | "unarchive"
   | "delete";
 
+function errorToast(title: string, description: string) {
+  toastManager.add(stackedThreadToast({ type: "error", title, description }));
+}
+
 async function report(title: string, run: () => Promise<AtomCommandResult<unknown, unknown>>) {
   const result = await run();
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: String(squashAtomCommandFailure(result) ?? "An error occurred."),
-      }),
-    );
+    const error = squashAtomCommandFailure(result);
+    errorToast(title, error instanceof Error ? error.message : "An error occurred.");
     return false;
   }
   return true;
@@ -45,13 +51,12 @@ async function report(title: string, run: () => Promise<AtomCommandResult<unknow
 
 /**
  * The thread mutations a view performs, through the same commands as the
- * sidebar. A board drop moves a thread between sections by undoing the state
- * it leaves and applying the one it enters.
+ * sidebar.
  */
 export function useViewThreadOps() {
   const {
     pinThread,
-    unpinThread,
+    confirmAndUnpinThread,
     settleThread,
     unsettleThread,
     snoozeThread,
@@ -74,49 +79,70 @@ export function useViewThreadOps() {
     [snoozeThread],
   );
 
-  const leave = useCallback(
-    async (row: ViewRow, target: ViewSection) => {
-      const { ref, section } = row;
-      if (section === "archived" && target !== "archived") {
-        if (!(await report("Failed to unarchive thread", () => unarchiveThread(ref)))) return false;
+  const runStep = useCallback(
+    (ref: ScopedThreadRef, step: MoveStep) => {
+      switch (step) {
+        case "unarchive":
+          return report("Failed to unarchive thread", () => unarchiveThread(ref));
+        case "unsnooze":
+          return report("Failed to wake thread", () => unsnoozeThread(ref));
+        case "unsettle":
+          return report("Failed to un-settle thread", () => unsettleThread(ref));
+        case "unpin":
+          return report("Failed to unpin thread", () => confirmAndUnpinThread(ref));
+        case "pin":
+          return report("Failed to pin thread", () => pinThread(ref));
+        case "snooze":
+          return report("Failed to snooze thread", () => snoozeUntilTomorrow(ref));
+        case "settle":
+          return report("Failed to settle thread", () => settleThread(ref));
+        case "archive":
+          return report("Failed to archive thread", () => archiveThread(ref));
       }
-      if (section === "snoozed" && target !== "snoozed") {
-        if (!(await report("Failed to wake thread", () => unsnoozeThread(ref)))) return false;
-      }
-      if (section === "settled" && target !== "settled" && target !== "archived") {
-        if (!(await report("Failed to un-settle thread", () => unsettleThread(ref)))) return false;
-      }
-      if (row.pinned && target === "active") {
-        if (!(await report("Failed to unpin thread", () => unpinThread(ref)))) return false;
-      }
-      return true;
     },
-    [unarchiveThread, unpinThread, unsettleThread, unsnoozeThread],
+    [
+      archiveThread,
+      confirmAndUnpinThread,
+      pinThread,
+      settleThread,
+      snoozeUntilTomorrow,
+      unarchiveThread,
+      unsettleThread,
+      unsnoozeThread,
+    ],
   );
 
   const moveToSection = useCallback(
     async (row: ViewRow, target: ViewSection) => {
       if (row.section === target) return;
-      if (!(await leave(row, target))) return;
-      const { ref } = row;
-      switch (target) {
-        case "pinned":
-          if (!row.pinned) await report("Failed to pin thread", () => pinThread(ref));
-          return;
-        case "snoozed":
-          await report("Failed to snooze thread", () => snoozeUntilTomorrow(ref));
-          return;
-        case "settled":
-          await report("Failed to settle thread", () => settleThread(ref));
-          return;
-        case "archived":
-          await report("Failed to archive thread", () => archiveThread(ref));
-          return;
-        case "active":
-          return;
+      const { shell, ref } = row;
+      const now = new Date().toISOString();
+      // Refuse up front, so a refused move never half-applies.
+      if (target === "archived" && !threadRuntimeCanArchive(shell.runtime)) {
+        errorToast("Can't archive this thread", "Stop the running turn first.");
+        return;
+      }
+      if (
+        target === "snoozed" &&
+        (!readEnvironmentSupportsSnooze(ref.environmentId) || !canSnooze(shell, { now }))
+      ) {
+        errorToast("Can't snooze this thread", "It is running or its server can't snooze.");
+        return;
+      }
+      const steps = planSectionMove(
+        {
+          archived: row.section === "archived",
+          snoozed: effectiveSnoozed(shell, { now }),
+          settled: shell.settledOverride === "settled",
+          pinned: row.pinned,
+        },
+        target,
+      );
+      for (const step of steps) {
+        if (!(await runStep(ref, step))) return;
       }
     },
-    [archiveThread, leave, pinThread, settleThread, snoozeUntilTomorrow],
+    [runStep],
   );
 
   const runBulk = useCallback(
@@ -135,55 +161,55 @@ export function useViewThreadOps() {
             ) ?? Promise.resolve(false),
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
+        // Like the sidebar: later deletes know which threads went first, so a
+        // worktree the batch leaves orphaned still gets its cleanup prompt.
+        const { firstFailure } = await deleteSelectedThreadEntries({
+          entries: rows.map((row) => ({ threadKey: row.key, ref: row.ref })),
+          delete: (entry, deletedThreadKeys) => deleteThread(entry.ref, { deletedThreadKeys }),
+        });
+        if (firstFailure !== null) {
+          const error = squashAtomCommandFailure(firstFailure);
+          errorToast(
+            "Failed to delete threads",
+            error instanceof Error ? error.message : "An error occurred.",
+          );
+        }
+        return;
       }
       for (const row of rows) {
         const { ref } = row;
         switch (action) {
           case "pin":
-            await report("Failed to pin thread", () => pinThread(ref));
+            await runStep(ref, "pin");
             break;
           case "unpin":
-            await report("Failed to unpin thread", () => unpinThread(ref));
+            await runStep(ref, "unpin");
             break;
           case "settle":
-            await report("Failed to settle thread", () => settleThread(ref));
+            await runStep(ref, "settle");
             break;
           case "unsettle":
-            await report("Failed to un-settle thread", () => unsettleThread(ref));
+            await runStep(ref, "unsettle");
             break;
           case "snooze":
-            await report("Failed to snooze thread", () => snoozeUntilTomorrow(ref));
+            await runStep(ref, "snooze");
             break;
           case "unsnooze":
-            await report("Failed to wake thread", () => unsnoozeThread(ref));
+            await runStep(ref, "unsnooze");
             break;
           case "mark-unread":
             markThreadUnread(ref);
             break;
           case "archive":
-            await report("Failed to archive thread", () => archiveThread(ref));
+            await runStep(ref, "archive");
             break;
           case "unarchive":
-            await report("Failed to unarchive thread", () => unarchiveThread(ref));
-            break;
-          case "delete":
-            await report("Failed to delete thread", () => deleteThread(ref));
+            await runStep(ref, "unarchive");
             break;
         }
       }
     },
-    [
-      archiveThread,
-      deleteThread,
-      markThreadUnread,
-      pinThread,
-      settleThread,
-      snoozeUntilTomorrow,
-      unarchiveThread,
-      unpinThread,
-      unsettleThread,
-      unsnoozeThread,
-    ],
+    [deleteThread, markThreadUnread, runStep],
   );
 
   const rename = useCallback(

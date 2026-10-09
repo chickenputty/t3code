@@ -39,6 +39,7 @@ import {
   type InspectorModel,
 } from "./inspectorModel";
 import type { ViewBulkAction } from "./useViewThreadOps";
+import { isWidgetEvent } from "./viewKeys";
 import { StatusDot } from "./ViewLayouts";
 import {
   formatRelativeMs,
@@ -104,7 +105,7 @@ function InspectorBody({ row, mode, nowMs, onClose, onAction, onRename }: Thread
   useEffect(() => {
     if (mode === "modal") return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) onClose();
+      if (event.key === "Escape" && !event.defaultPrevented && !isWidgetEvent(event)) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

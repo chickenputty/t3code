@@ -30,6 +30,7 @@ import { useThreadSearch } from "~/state/queries";
 import { useEnvironments } from "~/state/environments";
 
 import { ThreadInspector } from "./ThreadInspector";
+import { isWidgetEvent } from "./viewKeys";
 import { useSavedViews } from "./useSavedViews";
 import { useThreadPreviews } from "./useThreadPreviews";
 import { type ViewBulkAction, useViewThreadOps } from "./useViewThreadOps";
@@ -68,7 +69,12 @@ export function SavedViewPage({
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       {view ? (
-        <SavedViewContent view={view} openKey={openKey} onOpenKeyChange={onOpenKeyChange} />
+        <SavedViewContent
+          key={view.id}
+          view={view}
+          openKey={openKey}
+          onOpenKeyChange={onOpenKeyChange}
+        />
       ) : (
         <div className="flex h-full flex-col">
           <ViewTopBar viewId={null}>{null}</ViewTopBar>
@@ -140,8 +146,9 @@ function SavedViewContent({
     return map;
   }, [contentSearch.matches]);
 
+  const filteredRows = useMemo(() => filterViewRows(rows, view, nowMs), [nowMs, rows, view]);
   const visibleRows = useMemo(() => {
-    const filtered = filterViewRows(rows, view, nowMs);
+    const filtered = filteredRows;
     const needle = query.trim().toLowerCase();
     const searched =
       needle === ""
@@ -150,7 +157,7 @@ function SavedViewContent({
             (row) => row.title.toLowerCase().includes(needle) || snippets.has(row.key),
           );
     return sortViewRows(searched, view.sorts);
-  }, [nowMs, query, rows, snippets, view]);
+  }, [filteredRows, query, snippets, view.sorts]);
 
   const groupBy = view.layout === "board" && view.groupBy === null ? "project" : view.groupBy;
   const groups = useMemo(
@@ -174,7 +181,13 @@ function SavedViewContent({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && openKey === null && selected.size > 0) {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !isWidgetEvent(event) &&
+        openKey === null &&
+        selected.size > 0
+      ) {
         setSelected(new Set());
       }
     };
@@ -258,7 +271,7 @@ function SavedViewContent({
     },
   };
 
-  const previews = useThreadPreviews(visibleRows, view.preview !== "none");
+  const previews = useThreadPreviews(filteredRows, view.preview !== "none");
   // What each card says under its title: a search match first, else the chosen preview.
   const cardText = useMemo(() => {
     const map = new Map(snippets);
@@ -306,17 +319,26 @@ function SavedViewContent({
           {/* The switcher already names the view; the breadcrumb carries what is in it. */}
           {renaming ? (
             <WorkspaceBreadcrumbItem current className="min-w-0">
-              <DraftInput
-                // biome-ignore lint/a11y/noAutofocus: renaming starts typing at once
-                autoFocus
-                size="compact"
-                aria-label="View name"
-                value={view.name}
-                onCommit={(name) => {
-                  setRenaming(false);
-                  if (name.trim() !== "") updateView({ name: name.trim() });
+              {/* Blur or Escape always ends renaming; DraftInput only commits a changed name. */}
+              <span
+                className="contents"
+                onBlur={() => setRenaming(false)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setRenaming(false);
                 }}
-              />
+              >
+                <DraftInput
+                  // biome-ignore lint/a11y/noAutofocus: renaming starts typing at once
+                  autoFocus
+                  size="compact"
+                  aria-label="View name"
+                  value={view.name}
+                  onCommit={(name) => {
+                    setRenaming(false);
+                    if (name.trim() !== "") updateView({ name: name.trim() });
+                  }}
+                />
+              </span>
             </WorkspaceBreadcrumbItem>
           ) : null}
           <WorkspaceBreadcrumbItem current={!pageInspector}>

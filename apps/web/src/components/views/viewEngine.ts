@@ -534,3 +534,51 @@ export function newSavedViewId(): string {
 export function isEditableGrouping(groupBy: string | null): boolean {
   return groupBy === "section";
 }
+
+export type MoveStep =
+  | "unarchive"
+  | "unsnooze"
+  | "unsettle"
+  | "unpin"
+  | "pin"
+  | "snooze"
+  | "settle"
+  | "archive";
+
+/**
+ * The commands that move a thread into a board section, in order. Pin, snooze
+ * and settle clear the states they replace on the server, so only "active"
+ * undoes everything the thread still carries, and only archived threads are
+ * restored first.
+ */
+export function planSectionMove(
+  thread: {
+    readonly archived: boolean;
+    readonly snoozed: boolean;
+    readonly settled: boolean;
+    readonly pinned: boolean;
+  },
+  target: ViewSection,
+): readonly MoveStep[] {
+  const restore: MoveStep[] = thread.archived && target !== "archived" ? ["unarchive"] : [];
+  switch (target) {
+    case "archived":
+      return thread.archived ? [] : ["archive"];
+    case "pinned":
+      return [
+        ...restore,
+        ...(thread.pinned && !thread.snoozed && !thread.settled ? [] : ["pin" as const]),
+      ];
+    case "snoozed":
+      return [...restore, "snooze"];
+    case "settled":
+      return [...restore, ...(thread.settled ? [] : ["settle" as const])];
+    case "active":
+      return [
+        ...restore,
+        ...(thread.snoozed ? ["unsnooze" as const] : []),
+        ...(thread.settled ? ["unsettle" as const] : []),
+        ...(thread.pinned ? ["unpin" as const] : []),
+      ];
+  }
+}
