@@ -34,6 +34,7 @@ import { DraftInput } from "~/components/ui/draft-input";
 import {
   Menu,
   MenuCheckboxItem,
+  MenuGroup,
   MenuGroupLabel,
   MenuItem,
   MenuPopup,
@@ -532,23 +533,25 @@ function PropertiesControl({ view, update }: { view: SavedView; update: UpdateVi
         <span className="hidden lg:inline">Properties</span>
       </MenuTrigger>
       <MenuPopup align="end" className="max-h-96 min-w-52">
-        <MenuGroupLabel>{view.layout === "table" ? "Columns" : "Shown on cards"}</MenuGroupLabel>
-        {VIEW_PROPERTIES.filter((property) => property.id !== "title").map((property) => (
-          <MenuCheckboxItem
-            key={property.id}
-            checked={shown.has(property.id)}
-            closeOnClick={false}
-            onCheckedChange={(checked) =>
-              update({
-                properties: checked
-                  ? [...view.properties, property.id]
-                  : view.properties.filter((id) => id !== property.id),
-              })
-            }
-          >
-            {property.label}
-          </MenuCheckboxItem>
-        ))}
+        <MenuGroup>
+          <MenuGroupLabel>{view.layout === "table" ? "Columns" : "Shown on cards"}</MenuGroupLabel>
+          {VIEW_PROPERTIES.filter((property) => property.id !== "title").map((property) => (
+            <MenuCheckboxItem
+              key={property.id}
+              checked={shown.has(property.id)}
+              closeOnClick={false}
+              onCheckedChange={(checked) =>
+                update({
+                  properties: checked
+                    ? [...view.properties, property.id]
+                    : view.properties.filter((id) => id !== property.id),
+                })
+              }
+            >
+              {property.label}
+            </MenuCheckboxItem>
+          ))}
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
