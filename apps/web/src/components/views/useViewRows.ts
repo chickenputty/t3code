@@ -17,6 +17,7 @@ import { useEnvironments } from "~/state/environments";
 import type { SidebarThreadSummary } from "~/types";
 import { useUiStateStore } from "~/uiStateStore";
 
+import { stageOfStatus } from "./viewEngine";
 import type { ViewPullRequestState, ViewRow, ViewSection } from "./viewEngine";
 
 /** A clock that ticks once a minute, for relative times and date filters. */
@@ -134,6 +135,13 @@ export function useViewRows(includeArchived: boolean): {
         projectLabel: projectLabels.get(projectKey) ?? "Unknown project",
         section,
         status,
+        stage: stageOfStatus(status),
+        kind:
+          thread.lineage.relationshipToParent === "subagent"
+            ? "subagent"
+            : thread.lineage.relationshipToParent === "fork"
+              ? "fork"
+              : "chat",
         model: thread.modelSelection.model,
         provider: thread.providerInstanceId,
         branch: thread.branch,

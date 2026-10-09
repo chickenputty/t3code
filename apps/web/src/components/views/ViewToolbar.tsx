@@ -676,6 +676,13 @@ function SettingsControl({
         >
           Show archived
         </MenuCheckboxItem>
+        <MenuCheckboxItem
+          variant="switch"
+          checked={view.showSubagents}
+          onCheckedChange={(checked) => update({ showSubagents: checked })}
+        >
+          Show sub-agent chats
+        </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onClick={onRename}>
           <PencilIcon />

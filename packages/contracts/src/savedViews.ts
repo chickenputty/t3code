@@ -67,6 +67,8 @@ export const SavedView = Schema.Struct({
   ),
   showArchived: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSettled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Sub-agent threads stay hidden unless this is on, as in the sidebar. */
+  showSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   hideEmptyGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   openMode: SavedViewOpenMode.pipe(Schema.withDecodingDefault(Effect.succeed("peek" as const))),
 });

@@ -6,6 +6,7 @@ import {
   groupViewRows,
   newSavedView,
   sortViewRows,
+  stageOfStatus,
   type ViewRow,
 } from "./viewEngine";
 
@@ -23,6 +24,8 @@ function row(key: string, overrides: Partial<ViewRow> = {}): ViewRow {
     projectLabel: "Alpha",
     section: "active",
     status: "idle",
+    stage: "done",
+    kind: "chat",
     model: "opus",
     provider: "claude",
     branch: null,
@@ -50,6 +53,14 @@ describe("filterViewRows", () => {
         (r) => r.key,
       ),
     ).toEqual(["a", "b"]);
+  });
+
+  it("hides sub-agent threads unless the view shows them", () => {
+    const rows = [row("a"), row("b", { kind: "subagent" }), row("c", { kind: "fork" })];
+    expect(filterViewRows(rows, baseView, NOW).map((r) => r.key)).toEqual(["a", "c"]);
+    expect(
+      filterViewRows(rows, { ...baseView, showSubagents: true }, NOW).map((r) => r.key),
+    ).toEqual(["a", "b", "c"]);
   });
 
   it("combines conditions with AND or OR", () => {
@@ -135,6 +146,26 @@ describe("sortViewRows", () => {
   it("falls back to latest activity", () => {
     const rows = [row("old", { activityMs: NOW - DAY }), row("new", { activityMs: NOW })];
     expect(sortViewRows(rows, []).map((r) => r.key)).toEqual(["new", "old"]);
+  });
+});
+
+describe("stageOfStatus", () => {
+  it("runs left to right from needing you to done", () => {
+    expect(
+      (["input", "failed", "working", "waiting", "done", "woke", "idle"] as const).map(
+        stageOfStatus,
+      ),
+    ).toEqual(["needs-you", "needs-you", "working", "working", "review", "review", "done"]);
+  });
+
+  it("groups a stage board in that order", () => {
+    const rows = [
+      row("d", { stage: "done" }),
+      row("w", { stage: "working" }),
+      row("n", { stage: "needs-you" }),
+    ];
+    const groups = groupViewRows(rows, "stage", { hideEmpty: false, nowMs: NOW });
+    expect(groups.map((g) => g.key)).toEqual(["needs-you", "working", "review", "done"]);
   });
 });
 

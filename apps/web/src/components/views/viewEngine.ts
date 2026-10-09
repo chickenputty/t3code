@@ -18,6 +18,9 @@ import type { SidebarThreadSummary } from "~/types";
 
 export type ViewSection = "pinned" | "active" | "snoozed" | "settled" | "archived";
 export type ViewPullRequestState = "none" | "open" | "draft" | "merged" | "closed";
+export type ViewKind = "chat" | "subagent" | "fork";
+/** Where a thread sits in its lifecycle, left to right: you, the agent, your review, done. */
+export type ViewStage = "needs-you" | "working" | "review" | "done";
 
 export interface ViewRow {
   readonly key: string;
@@ -28,6 +31,8 @@ export interface ViewRow {
   readonly projectLabel: string;
   readonly section: ViewSection;
   readonly status: SidebarThreadDisplayStatus;
+  readonly stage: ViewStage;
+  readonly kind: ViewKind;
   readonly model: string;
   readonly provider: string;
   readonly branch: string | null;
@@ -69,16 +74,52 @@ export const VIEW_SECTION_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "archived", label: "Archived" },
 ];
 
+/** Lifecycle order, so a status board reads left to right like the stage board. */
 export const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "approval", label: "Needs approval" },
   { value: "input", label: "Needs input" },
   { value: "failed", label: "Failed" },
   { value: "limited", label: "Usage limited" },
-  { value: "woke", label: "Woke" },
-  { value: "done", label: "Done (unread)" },
   { value: "working", label: "Working" },
   { value: "waiting", label: "Waiting" },
+  { value: "woke", label: "Woke" },
+  { value: "done", label: "Done (unread)" },
   { value: "idle", label: "Idle" },
+];
+
+export const VIEW_STAGE_OPTIONS: readonly ViewPropertyOption[] = [
+  { value: "needs-you", label: "Needs you" },
+  { value: "working", label: "Working" },
+  { value: "review", label: "Review" },
+  { value: "done", label: "Done" },
+];
+
+/**
+ * Every hand-off moves a card right: you answer, the agent works, you read the
+ * result, it is done. Only a new turn on a done thread sends it back left.
+ */
+export function stageOfStatus(status: SidebarThreadDisplayStatus): ViewStage {
+  switch (status) {
+    case "approval":
+    case "input":
+    case "failed":
+    case "limited":
+      return "needs-you";
+    case "working":
+    case "waiting":
+      return "working";
+    case "woke":
+    case "done":
+      return "review";
+    case "idle":
+      return "done";
+  }
+}
+
+const KIND_OPTIONS: readonly ViewPropertyOption[] = [
+  { value: "chat", label: "Chat" },
+  { value: "fork", label: "Fork" },
+  { value: "subagent", label: "Sub-agent" },
 ];
 
 const PULL_REQUEST_OPTIONS: readonly ViewPropertyOption[] = [
@@ -123,6 +164,22 @@ export const VIEW_PROPERTIES: readonly ViewProperty[] = [
     groupable: true,
     options: VIEW_STATUS_OPTIONS,
     value: (row) => row.status,
+  },
+  {
+    id: "stage",
+    label: "Stage",
+    type: "enum",
+    groupable: true,
+    options: VIEW_STAGE_OPTIONS,
+    value: (row) => row.stage,
+  },
+  {
+    id: "kind",
+    label: "Type",
+    type: "enum",
+    groupable: true,
+    options: KIND_OPTIONS,
+    value: (row) => row.kind,
   },
   { id: "model", label: "Model", type: "enum", groupable: true, value: (row) => row.model },
   {
@@ -321,13 +378,14 @@ function matchesCondition(
 /** Applies the view's visibility toggles, then its conditions. */
 export function filterViewRows(
   rows: readonly ViewRow[],
-  view: Pick<SavedView, "filter" | "showArchived" | "showSettled">,
+  view: Pick<SavedView, "filter" | "showArchived" | "showSettled" | "showSubagents">,
   nowMs: number,
 ): readonly ViewRow[] {
   const { conjunction, conditions } = view.filter;
   return rows.filter((row) => {
     if (!view.showArchived && row.section === "archived") return false;
     if (!view.showSettled && row.section === "settled") return false;
+    if (!view.showSubagents && row.kind === "subagent") return false;
     if (conditions.length === 0) return true;
     return conjunction === "or"
       ? conditions.some((condition) => matchesCondition(row, condition, nowMs))
@@ -513,6 +571,7 @@ export function newSavedView(layout: SavedViewLayout, id: string, name?: string)
     density: "comfortable",
     showArchived: false,
     showSettled: true,
+    showSubagents: false,
     hideEmptyGroups: true,
     openMode: "peek",
   };

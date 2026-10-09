@@ -245,4 +245,9 @@ Click a thread to see its details, messages, changed files, turns, and token
 usage, then **Resume Chat** to continue it. Ctrl-click or Shift-click selects
 several threads for bulk actions. On a board grouped by **Section**, drag a card
 to pin, settle, snooze, or archive it; other groupings can't be dragged.
+Group a board by **Stage** to see threads move left to right: **Needs you**
+(waiting on an answer, approval, or a failed turn), **Working**, **Review**
+(finished but not yet read), and **Done**.
+Sub-agent threads are hidden, as in the sidebar; turn on **Show sub-agent
+chats** in the **⋯** menu to include them, or filter on **Type**.
 Views are saved on the server, so every device connected to it sees them.
