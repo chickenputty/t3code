@@ -224,3 +224,18 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Browse threads in views
+
+On web and desktop, the menu next to the T3 Code name switches between
+**Threads** (the sidebar and chat) and saved views. A view shows your threads as
+a list, board, gallery, or table and keeps its own filters, sort, grouping, and
+visible properties. Choose **New view** in that menu or the command palette to
+make one; the **⋯** menu in a view changes its layout, card size, preview, and
+how a thread opens, and renames, duplicates, or deletes it.
+
+Click a thread to see its details, messages, changed files, turns, and token
+usage, then **Resume Chat** to continue it. Ctrl-click or Shift-click selects
+several threads for bulk actions. On a board grouped by **Section**, drag a card
+to pin, settle, snooze, or archive it; other groupings can't be dragged.
+Views are saved on the server, so every device connected to it sees them.

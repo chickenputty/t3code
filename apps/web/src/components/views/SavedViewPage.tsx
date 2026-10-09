@@ -31,6 +31,7 @@ import { useEnvironments } from "~/state/environments";
 
 import { ThreadInspector } from "./ThreadInspector";
 import { useSavedViews } from "./useSavedViews";
+import { useThreadPreviews } from "./useThreadPreviews";
 import { type ViewBulkAction, useViewThreadOps } from "./useViewThreadOps";
 import { useViewRows } from "./useViewRows";
 import {
@@ -257,6 +258,19 @@ function SavedViewContent({
     },
   };
 
+  const previews = useThreadPreviews(visibleRows, view.preview !== "none");
+  // What each card says under its title: a search match first, else the chosen preview.
+  const cardText = useMemo(() => {
+    const map = new Map(snippets);
+    if (view.preview === "none") return map;
+    for (const [key, preview] of previews) {
+      if (map.has(key)) continue;
+      const text = view.preview === "first" ? (preview.first ?? preview.last) : preview.last;
+      if (text) map.set(key, text);
+    }
+    return map;
+  }, [previews, snippets, view.preview]);
+
   const layoutProps: ViewLayoutProps = {
     ...handlers,
     view: { ...view, groupBy },
@@ -264,7 +278,7 @@ function SavedViewContent({
     selected,
     openKey,
     nowMs,
-    snippets,
+    snippets: cardText,
   };
 
   const deleteView = async () => {
@@ -288,10 +302,10 @@ function SavedViewContent({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <ViewTopBar viewId={view.id}>
-        <WorkspaceBreadcrumb ariaLabel="View breadcrumb" className="min-w-0 flex-1">
-          <WorkspaceBreadcrumbSeparator />
-          <WorkspaceBreadcrumbItem current className="min-w-0">
-            {renaming ? (
+        <WorkspaceBreadcrumb ariaLabel="View breadcrumb" className="min-w-0 flex-1 ps-1">
+          {/* The switcher already names the view; the breadcrumb carries what is in it. */}
+          {renaming ? (
+            <WorkspaceBreadcrumbItem current className="min-w-0">
               <DraftInput
                 // biome-ignore lint/a11y/noAutofocus: renaming starts typing at once
                 autoFocus
@@ -303,19 +317,10 @@ function SavedViewContent({
                   if (name.trim() !== "") updateView({ name: name.trim() });
                 }}
               />
-            ) : (
-              <button
-                type="button"
-                className="min-w-0 truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={`${view.name}. Double-click to rename.`}
-                onDoubleClick={() => setRenaming(true)}
-              >
-                <WorkspaceBreadcrumbText>{view.name}</WorkspaceBreadcrumbText>
-              </button>
-            )}
-          </WorkspaceBreadcrumbItem>
-          <WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbText className="font-normal tabular-nums">
+            </WorkspaceBreadcrumbItem>
+          ) : null}
+          <WorkspaceBreadcrumbItem current={!pageInspector}>
+            <WorkspaceBreadcrumbText className="tabular-nums">
               {visibleRows.length} thread{visibleRows.length === 1 ? "" : "s"}
               {archivedLoading ? " …" : ""}
             </WorkspaceBreadcrumbText>

@@ -35,7 +35,6 @@ function row(key: string, overrides: Partial<ViewRow> = {}): ViewRow {
     activityMs: NOW - HOUR,
     messages: 3,
     environment: "Local",
-    preview: null,
     ...overrides,
   } as unknown as ViewRow;
 }

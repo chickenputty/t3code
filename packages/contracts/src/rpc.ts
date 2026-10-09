@@ -139,6 +139,9 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  OrchestrationGetThreadPreviewsError,
+  OrchestrationGetThreadPreviewsInput,
+  OrchestrationGetThreadPreviewsResult,
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -1565,6 +1568,15 @@ const WsOrchestrationV2SearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.s
   error: Schema.Union([OrchestrationSearchThreadsError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2GetThreadPreviewsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadPreviews,
+  {
+    payload: OrchestrationGetThreadPreviewsInput,
+    success: OrchestrationGetThreadPreviewsResult,
+    error: Schema.Union([OrchestrationGetThreadPreviewsError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -1951,6 +1963,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
   WsOrchestrationV2SearchThreadsRpc,
+  WsOrchestrationV2GetThreadPreviewsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,

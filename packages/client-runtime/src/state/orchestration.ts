@@ -61,6 +61,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 60_000,
     }),
+    // Fork: card previews. Gate on the `threadPreviews` environment capability.
+    threadPreviews: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-previews",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadPreviews,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+    }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,

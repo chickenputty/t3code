@@ -115,12 +115,12 @@ export function buildInspectorModel(projection: Projection): InspectorModel {
     { path: string; kind: string; additions: number; deletions: number; turns: number }
   >();
   for (const checkpoint of projection.checkpoints) {
-    if (checkpoint.runId !== null) {
-      filesByRun.set(
-        checkpoint.runId,
-        (filesByRun.get(checkpoint.runId) ?? 0) + checkpoint.files.length,
-      );
-    }
+    // Like the review panel: only turn checkpoints, never a scope's baseline.
+    if (checkpoint.runId === null || checkpoint.appRunOrdinal === null) continue;
+    filesByRun.set(
+      checkpoint.runId,
+      (filesByRun.get(checkpoint.runId) ?? 0) + checkpoint.files.length,
+    );
     for (const file of checkpoint.files) {
       const entry = files.get(file.path);
       if (entry) {

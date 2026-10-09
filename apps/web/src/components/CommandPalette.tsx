@@ -1,5 +1,7 @@
 "use client";
 
+import { useSavedViews } from "./views/useSavedViews";
+import { VIEW_LAYOUT_ICONS } from "./views/ViewSwitcher";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -64,6 +66,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  ListIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -740,6 +743,8 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  // Fork: saved thread views open from the palette too.
+  const { views: savedViews, create: createSavedView } = useSavedViews();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -2230,6 +2235,31 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  for (const view of savedViews) {
+    const ViewIcon = VIEW_LAYOUT_ICONS[view.layout];
+    actionItems.push({
+      kind: "action",
+      value: `action:open-view:${view.id}`,
+      searchTerms: ["view", "views", "board", "gallery", "table", "list", view.name.toLowerCase()],
+      title: `Open view: ${view.name}`,
+      icon: <ViewIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
+      },
+    });
+  }
+  actionItems.push({
+    kind: "action",
+    value: "action:new-view",
+    searchTerms: ["new view", "create view", "board", "gallery", "table", "list"],
+    title: "New view",
+    icon: <ListIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      const view = createSavedView("list");
+      await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
+    },
+  });
 
   actionItems.push({
     kind: "action",

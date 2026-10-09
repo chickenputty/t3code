@@ -53,7 +53,7 @@ export interface ViewLayoutProps extends ViewLayoutHandlers {
   readonly selected: ReadonlySet<string>;
   readonly openKey: string | null;
   readonly nowMs: number;
-  /** Message snippets from the content search, by thread key. */
+  /** Text under each card title, by thread key: a search match or a message preview. */
   readonly snippets: ReadonlyMap<string, string>;
 }
 
@@ -91,10 +91,9 @@ function visibleProperties(view: SavedView): readonly ViewProperty[] {
   });
 }
 
-function previewText(view: SavedView, row: ViewRow, snippet: string | undefined): string | null {
-  if (snippet) return snippet;
-  if (view.preview === "none") return null;
-  return row.preview;
+// The page already chose each card's text (search match or preview), so this only reads it.
+function previewText(snippet: string | undefined): string | null {
+  return snippet ?? null;
 }
 
 /** Click opens; a modifier click selects, so cards stay one-click to open. */
@@ -161,7 +160,7 @@ export const ViewCard = memo(function ViewCard({
   dragging,
 }: CardProps) {
   const properties = visibleProperties(view);
-  const preview = previewText(view, row, snippet);
+  const preview = previewText(snippet);
   const compact = view.density === "compact";
   const previewLines =
     view.cardSize === "small"
@@ -238,7 +237,7 @@ export function ListLayout(props: ViewLayoutProps) {
           {grouped ? <GroupHeader group={group} /> : <div className="h-3" />}
           <ul className="divide-y divide-border/60 rounded-lg border border-border/70 bg-card/40">
             {group.rows.map((row) => {
-              const preview = previewText(view, row, snippets.get(row.key));
+              const preview = previewText(snippets.get(row.key));
               return (
                 <li key={row.key} style={OFFSCREEN_ROW}>
                   <div

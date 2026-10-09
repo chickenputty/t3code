@@ -35,7 +35,7 @@ describe("buildInspectorModel", () => {
     expect(model.firstUserMessage).toBe("Fix the bug");
   });
 
-  it("totals tokens per run through attempts and merges files across turns", () => {
+  it("totals tokens per run through attempts and merges turn files, skipping baselines", () => {
     const model = buildInspectorModel(
       projection({
         runs: [
@@ -62,8 +62,21 @@ describe("buildInspectorModel", () => {
           { runId: "r1", type: "assistant_message", title: null },
         ],
         checkpoints: [
-          { runId: "r1", files: [{ path: "a.ts", kind: "modified", additions: 3, deletions: 1 }] },
-          { runId: "r1", files: [{ path: "a.ts", kind: "modified", additions: 2, deletions: 0 }] },
+          {
+            runId: null,
+            appRunOrdinal: null,
+            files: [{ path: "baseline.ts", kind: "added", additions: 900, deletions: 0 }],
+          },
+          {
+            runId: "r1",
+            appRunOrdinal: 1,
+            files: [{ path: "a.ts", kind: "modified", additions: 3, deletions: 1 }],
+          },
+          {
+            runId: "r1",
+            appRunOrdinal: 1,
+            files: [{ path: "a.ts", kind: "modified", additions: 2, deletions: 0 }],
+          },
         ],
         providerThreads: [{ contextUsage: { usedTokens: 4000, maxTokens: 200000 } }],
       }),

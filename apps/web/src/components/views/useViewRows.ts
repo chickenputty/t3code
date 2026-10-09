@@ -146,7 +146,6 @@ export function useViewRows(includeArchived: boolean): {
         activityMs: activityMs(thread),
         messages: thread.visibleItemCount,
         environment: environmentLabels.get(thread.environmentId) ?? thread.environmentId,
-        preview: thread.source.latestVisibleMessage?.text ?? null,
       };
     };
 

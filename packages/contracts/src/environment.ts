@@ -149,6 +149,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   /** Fork: server stores `savedViews` in its settings. */
   savedViews: Schema.optionalKey(Schema.Boolean),
+  /** Fork: server answers orchestration.getThreadPreviews. */
+  threadPreviews: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

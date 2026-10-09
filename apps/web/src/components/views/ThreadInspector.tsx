@@ -278,9 +278,11 @@ function OverviewTab({
           </p>
         </Section>
       ) : null}
-      {row.preview ? (
+      {model && model.messages.length > 0 ? (
         <Section title="Latest message">
-          <p className="line-clamp-10 whitespace-pre-wrap break-words text-sm">{row.preview}</p>
+          <p className="line-clamp-10 whitespace-pre-wrap break-words text-sm">
+            {model.messages.at(-1)!.text}
+          </p>
         </Section>
       ) : null}
     </div>

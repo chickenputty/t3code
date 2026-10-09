@@ -40,8 +40,6 @@ export interface ViewRow {
   readonly activityMs: number;
   readonly messages: number;
   readonly environment: string;
-  /** The latest visible message, the cheapest preview the shell carries. */
-  readonly preview: string | null;
 }
 
 export type ViewPropertyType = "text" | "enum" | "boolean" | "number" | "date";
@@ -150,8 +148,9 @@ export const VIEW_PROPERTIES: readonly ViewProperty[] = [
     options: PULL_REQUEST_OPTIONS,
     value: (row) => row.pullRequest,
     display: (row) =>
+      // Most threads have none; an empty cell reads better than "No pull request" on every row.
       row.pullRequestNumber === null
-        ? optionLabel(PULL_REQUEST_OPTIONS, row.pullRequest)
+        ? ""
         : `#${row.pullRequestNumber} ${optionLabel(PULL_REQUEST_OPTIONS, row.pullRequest).toLowerCase()}`,
   },
   {
