@@ -237,6 +237,37 @@ describe("filterSharedServerPatch", () => {
   );
 });
 
+describe("saved views", () => {
+  const view = {
+    id: "v1",
+    name: "Board",
+    layout: "board" as const,
+    filter: { conjunction: "and" as const, conditions: [] },
+    sorts: [],
+    groupBy: "project",
+    properties: [],
+    cardSize: "medium" as const,
+    preview: "last" as const,
+    density: "comfortable" as const,
+    showArchived: false,
+    showSettled: true,
+    hideEmptyGroups: true,
+    openMode: "peek" as const,
+  };
+
+  it("are a shared preference", () => {
+    expect(splitSharedServerPatch({ savedViews: [view] }).sharedPatch).toEqual({
+      savedViews: [view],
+    });
+  });
+
+  it("only reach servers that store them", () => {
+    const patch = { savedViews: [view], sidebarAutoSettleAfterDays: 7 };
+    expect(filterSharedServerPatch(patch, { savedViews: true })).toEqual(patch);
+    expect(filterSharedServerPatch(patch, {})).toEqual({ sidebarAutoSettleAfterDays: 7 });
+  });
+});
+
 describe("findSharedSettingsMismatches", () => {
   const primarySettings = { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 7 };
 

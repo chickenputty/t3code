@@ -147,6 +147,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server persists model mappings and folds mapped usage into the target model. */
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
+  /** Fork: server stores `savedViews` in its settings. */
+  savedViews: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

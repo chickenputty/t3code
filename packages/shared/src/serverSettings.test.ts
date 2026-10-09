@@ -51,6 +51,32 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(edited, { deviceHosts: [] }).deviceHosts).toEqual([]);
   });
 
+  it("replaces the saved view list and restores defaults with null", () => {
+    const view = (id: string) => ({
+      id,
+      name: id,
+      layout: "list" as const,
+      filter: { conjunction: "and" as const, conditions: [] },
+      sorts: [],
+      groupBy: null,
+      properties: [],
+      cardSize: "medium" as const,
+      preview: "last" as const,
+      density: "comfortable" as const,
+      showArchived: false,
+      showSettled: true,
+      hideEmptyGroups: true,
+      openMode: "peek" as const,
+    });
+    expect(DEFAULT_SERVER_SETTINGS.savedViews).toBeNull();
+    const two = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      savedViews: [view("a"), view("b")],
+    });
+    const one = applyServerSettingsPatch(two, { savedViews: [view("b")] });
+    expect(one.savedViews?.map((saved) => saved.id)).toEqual(["b"]);
+    expect(applyServerSettingsPatch(one, { savedViews: null }).savedViews).toBeNull();
+  });
+
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {

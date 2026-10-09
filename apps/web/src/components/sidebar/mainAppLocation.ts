@@ -14,13 +14,21 @@ export function isSidebarUtilityPage(pathname: string) {
   );
 }
 
+/** Fork: saved thread views take the whole window; leaving one returns to Threads. */
+export function isSavedViewPage(pathname: string) {
+  return pathname.startsWith("/views/");
+}
+
 let mainAppHref: string | null = null;
 
 // Mount once in the app shell. Records the latest main app URL so Back can
 // return there no matter how many utility pages were visited since.
 export function MainAppLocationTracker() {
   const href = useLocation({
-    select: (location) => (isSidebarUtilityPage(location.pathname) ? null : location.href),
+    select: (location) =>
+      isSidebarUtilityPage(location.pathname) || isSavedViewPage(location.pathname)
+        ? null
+        : location.href,
   });
   useEffect(() => {
     if (href !== null) mainAppHref = href;

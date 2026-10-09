@@ -66,9 +66,9 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  readonly onStartRename: () => void;
+  readonly onStartRename: (threadRef: ScopedThreadRef) => void;
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef: inputThreadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -122,7 +122,9 @@ export function useThreadActionMenu(input: {
   });
 
   const openMenu = useCallback(
-    (position: { x: number; y: number }) => {
+    // Fork: saved views share one menu across every card and pass the card's thread here.
+    (position: { x: number; y: number }, overrideThreadRef?: ScopedThreadRef) => {
+      const threadRef = overrideThreadRef ?? inputThreadRef;
       if (threadRef === null) return;
       void (async () => {
         const api = readLocalApi();
@@ -234,7 +236,7 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "rename":
-            onStartRename();
+            onStartRename(threadRef);
             return;
           case "regenerate-title":
             if (isRegeneratingTitle) return;
@@ -344,7 +346,7 @@ export function useThreadActionMenu(input: {
       setThreadAutoSettle,
       settleThread,
       snoozeThread,
-      threadRef,
+      inputThreadRef,
       timestampFormat,
       unsettleThread,
       unsnoozeThread,
