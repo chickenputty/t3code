@@ -51,9 +51,9 @@ window. Leave it empty for Claude Code's default.
 You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter. When you return to a large thread
 after more than an hour, a **Compact** chip with the thread's token count shows
-next to the send button. While it is on, Enter summarizes the history first, then
-sends your message. Click the chip to switch it to **Full** and keep the full
-history for that message. See [commands and skills](./composer.md#commands-and-skills) for using
+next to the send button. Enter still sends with the full history; click the chip
+(it reads **Compacting**) to summarize the history first for your next message.
+See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
 ## Usage limits

@@ -1345,3 +1345,19 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: true,
   });
 }
+
+/**
+ * Whether a send compacts a stale session first. Compacting is opt-in: only an
+ * armed Compact chip triggers it, and a typed /compact is already a compaction.
+ */
+export function shouldCompactBeforeSend(input: {
+  readonly resumeCompactionTokens: number | null;
+  readonly compactArmed: boolean;
+  readonly messageText: string;
+}): boolean {
+  return (
+    input.resumeCompactionTokens !== null &&
+    input.compactArmed &&
+    input.messageText.trim().toLowerCase() !== "/compact"
+  );
+}
