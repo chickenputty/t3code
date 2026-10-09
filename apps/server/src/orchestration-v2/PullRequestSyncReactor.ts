@@ -28,6 +28,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -162,6 +163,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const git = yield* GitManager.GitManager;
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
@@ -179,11 +181,12 @@ export const make = Effect.gen(function* () {
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
-    if (entries.every((entry) => entry.link.snapshot?.state === "merged")) return false;
+    // Settled threads stop watching their pull requests. Unsettling one makes its links due on
+    // the next sweep, since the cadence clock below kept running while it was settled.
+    const active = entries.filter((entry) => isUnsettled(entry.thread));
+    if (active.every((entry) => entry.link.snapshot?.state === "merged")) return false;
     const last = lastSyncedAt.get(key);
-    const open = entries.filter(
-      (entry) => entry.link.snapshot?.state === "open" && isUnsettled(entry.thread),
-    );
+    const open = active.filter((entry) => entry.link.snapshot?.state === "open");
     if (
       open.some(
         (entry) =>
@@ -193,7 +196,7 @@ export const make = Effect.gen(function* () {
     ) {
       return true;
     }
-    // Closed requests can reopen on the host, including after the thread settles.
+    // Closed requests can reopen on the host.
     const interval = open.length > 0 ? IDLE_SYNC_INTERVAL_MS : SLOW_SYNC_INTERVAL_MS;
     return last === undefined || nowMs - last >= interval;
   };
@@ -240,8 +243,10 @@ export const make = Effect.gen(function* () {
         link.snapshot === null ||
         !snapshotFieldsEqual(link.snapshot, fields) ||
         !stacksEqual(link.stack, nextStack);
-      // Persist discovered siblings before a terminal snapshot can trigger settlement.
-      for (const layer of fetchedStack?.stack?.layers ?? []) {
+      // Persist discovered siblings before a terminal snapshot can trigger settlement. A settled
+      // thread that shares this pull request with an active one takes the fresh snapshot, but
+      // gains no links.
+      for (const layer of isUnsettled(thread) ? (fetchedStack?.stack?.layers ?? []) : []) {
         const layerKey = {
           host: normalizeThreadPullRequestKey(link).host,
           repository: link.repository,
@@ -438,6 +443,17 @@ export const make = Effect.gen(function* () {
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
+    // A client reading a pull request, or its branch status, can see it merge or close before
+    // the next sweep does.
+    const stateChanges = Stream.merge(
+      yield* pullRequests.subscribeStateChanges,
+      yield* git.subscribePullRequestStateChanges,
+    );
+    yield* forkParked(
+      Stream.runForEach(stateChanges, requestSync).pipe(
+        Effect.catchCause(logSkipped("pull request state change stream failed", {})),
+      ),
+    );
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         switch (event.type) {

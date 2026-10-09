@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -13,7 +12,11 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeWorkerThreads from "node:worker_threads";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  WorkerProcessSpawner,
+} from "@t3tools/shared/hostProcess";
 
 /**
  * A ChildProcessSpawner that starts processes from a worker thread.
@@ -31,9 +34,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
  * the exit code of a standard command. The server provides it on Windows;
  * everywhere else ProcessRunner keeps the in-process spawner.
  */
-export const WorkerProcessSpawner = Context.Reference<
-  ChildProcessSpawner.ChildProcessSpawner["Service"] | undefined
->("t3/WorkerProcessSpawner", { defaultValue: () => undefined });
+export { WorkerProcessSpawner };
 
 // Plain CommonJS so it runs as an eval worker from any bundle, asar or
 // single executable without a separate entry file.

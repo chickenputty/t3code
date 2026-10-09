@@ -8,7 +8,7 @@ const testState = vi.hoisted(() => ({
   imageDimensions: undefined as { width: number; height: number } | undefined,
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null, useAtomRefresh: () => vi.fn() }));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlRefresh: () => vi.fn(),
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
@@ -22,14 +22,28 @@ vi.mock("../assets/assetUrls", () => ({
     };
   },
 }));
+vi.mock("../state/query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/query")>()),
+  useEnvironmentQuery: () => ({
+    data: null,
+    dataUpdatedAt: 0,
+    error: null,
+    failure: null,
+    isPending: false,
+    isSuccess: false,
+    refresh: vi.fn(),
+  }),
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/session")>()),
   usePreparedConnection: () => ({ _tag: "Loading" }),
+  useEnvironmentScope: () => true,
 }));
-vi.mock("../state/entities", () => ({
+vi.mock("../state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/entities")>()),
   readThreadShell: () => null,
   useProjects: () => [],
   useServerConfigs: () => new Map(),

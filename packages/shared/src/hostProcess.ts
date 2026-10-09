@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeDns from "node:dns";
 import * as NodeOS from "node:os";
 import * as NodeSea from "node:sea";
@@ -116,3 +117,12 @@ export const HostProcessUserId = Context.Reference<number | undefined>(
 );
 
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");
+
+/**
+ * Fork: a ChildProcessSpawner that starts processes from worker threads, so a slow
+ * CreateProcess does not freeze the event loop. The server provides it on Windows
+ * (apps/server/src/workerProcessSpawner.ts); undefined means use the in-process spawner.
+ */
+export const WorkerProcessSpawner = Context.Reference<
+  ChildProcessSpawner.ChildProcessSpawner["Service"] | undefined
+>("t3/WorkerProcessSpawner", { defaultValue: () => undefined });
