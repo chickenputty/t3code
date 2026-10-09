@@ -11,7 +11,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DraftInput } from "~/components/ui/draft-input";
@@ -78,6 +78,8 @@ export function GroupTitle({
   count: ReactNode;
 }) {
   const [renaming, setRenaming] = useState(false);
+  // The closing menu would hand focus back and blur the name field at once.
+  const startingRename = useRef(false);
   const categoryId = group.categoryId;
   if (renaming && categoryId !== undefined && tools) {
     return (
@@ -85,7 +87,10 @@ export function GroupTitle({
         value={group.label}
         label="Category name"
         onCommit={(name) => tools.rename(categoryId, name)}
-        onDone={() => setRenaming(false)}
+        onDone={() => {
+          startingRename.current = false;
+          setRenaming(false);
+        }}
       />
     );
   }
@@ -107,8 +112,13 @@ export function GroupTitle({
           >
             <EllipsisIcon />
           </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem onClick={() => setRenaming(true)}>
+          <MenuPopup align="end" finalFocus={() => !startingRename.current}>
+            <MenuItem
+              onClick={() => {
+                startingRename.current = true;
+                setRenaming(true);
+              }}
+            >
               <PencilIcon />
               Rename category
             </MenuItem>

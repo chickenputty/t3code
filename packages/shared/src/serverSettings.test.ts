@@ -89,6 +89,22 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(one, { savedViews: null }).savedViews).toBeNull();
   });
 
+  it("replaces thread categories so a thread taken out of one stays out", () => {
+    const filed = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      threadCategories: {
+        categories: [{ id: "u100", name: "Update 100" }],
+        assignments: { "env:a": "u100", "env:b": "u100" },
+      },
+    });
+    const removed = applyServerSettingsPatch(filed, {
+      threadCategories: {
+        categories: [{ id: "u100", name: "Update 100" }],
+        assignments: { "env:b": "u100" },
+      },
+    });
+    expect(removed.threadCategories?.assignments).toEqual({ "env:b": "u100" });
+  });
+
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {

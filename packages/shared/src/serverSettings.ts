@@ -385,6 +385,8 @@ export function applyServerSettingsPatch(
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
+    // Whole-value replacement: deepMerge would keep assignments the client removed.
+    ...(patch.threadCategories !== undefined ? { threadCategories: patch.threadCategories } : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
           usageLimitSources: mergeSettingsEntries(
