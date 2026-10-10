@@ -16,9 +16,10 @@ import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { readCustomModelEntries } from "@t3tools/shared/model";
-import { HostProcessPlatform, WorkerProcessSpawner } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createProviderVersionAdvisory } from "./maintenanceResolver.ts";
 import { collectUint8StreamText } from "./collectStreamText.ts";
 
@@ -37,7 +38,7 @@ export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(fu
   code: number | null,
   stderr: string,
 ) {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform !== "win32") return false;
   if (code === 9009) return true;
   return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(stderr));
@@ -111,7 +112,9 @@ export function isCommandMissingCause(error: unknown): boolean {
  * provides one (Windows), so a CLI that is slow to start does not freeze the event loop.
  */
 export const probeSpawner = Effect.gen(function* () {
-  return (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
+  return (
+    (yield* HostProcess.WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner)
+  );
 });
 
 export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>

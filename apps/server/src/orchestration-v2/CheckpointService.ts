@@ -17,11 +17,11 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
+import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -174,7 +174,7 @@ export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdi
 );
 
 function checkpointIdForScopeOrdinal(
-  idAllocator: IdAllocator.IdAllocatorV2Shape,
+  idAllocator: IdAllocator.IdAllocatorV2["Service"],
   input: {
     readonly scopeId: CheckpointScopeId;
     readonly ordinalWithinScope: number;
@@ -187,7 +187,7 @@ function checkpointIdForScopeOrdinal(
 }
 
 function makeRootRunScope(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
@@ -281,7 +281,7 @@ export const layer: Layer.Layer<
     const checkpointSkipSetting: string = yield* Effect.gen(function* () {
       return yield* Config.String("T3CODE_CHECKPOINT_SKIP").pipe(Config.withDefault(""));
     }).pipe(Effect.orElseSucceed(() => ""));
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const checkpointSkip = checkpointSkipSetting
       .split(";")
       .map((value) => normalizeSkipPath(value, platform))
@@ -470,33 +470,49 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(false)),
               ),
             );
+          const refs = {
+            cwd: input.scope.cwd,
+            fromCheckpointRef: previousCheckpointRef,
+            toCheckpointRef: checkpointRef,
+          };
+          // A pull or rebase can change thousands of files the turn did not write.
+          // Keep only the files the turn's own work touched.
           const files = previousExists
-            ? yield* checkpointStore
-                .diffCheckpoints({
-                  cwd: input.scope.cwd,
-                  fromCheckpointRef: previousCheckpointRef,
-                  toCheckpointRef: checkpointRef,
+            ? yield* Effect.all([
+                checkpointStore.diffCheckpoints({
+                  ...refs,
                   fallbackFromToHead: false,
                   ignoreWhitespace: false,
                   format: "numstat",
-                })
-                .pipe(
-                  Effect.map((diff) =>
-                    parseTurnDiffFilesFromNumstat(diff).map((file) => ({
+                }),
+                checkpointStore.listAuthoredPaths(refs).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
+                      scopeId: input.scope.id,
+                      checkpointRef,
+                      cause: String(cause),
+                    }).pipe(Effect.as(null)),
+                  ),
+                ),
+              ]).pipe(
+                Effect.map(([diff, authoredPaths]) =>
+                  parseTurnDiffFilesFromNumstat(diff)
+                    .filter((file) => !isGitImport(file, authoredPaths))
+                    .map((file) => ({
                       path: file.path,
                       kind: "modified",
                       additions: file.additions,
                       deletions: file.deletions,
                     })),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
-                      scopeId: input.scope.id,
-                      checkpointRef,
-                      cause: String(cause),
-                    }).pipe(Effect.as([])),
-                  ),
-                )
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
+                    scopeId: input.scope.id,
+                    checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as([])),
+                ),
+              )
             : [];
 
           return makeCheckpoint({

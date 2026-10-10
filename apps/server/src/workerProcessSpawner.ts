@@ -12,11 +12,7 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeWorkerThreads from "node:worker_threads";
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  WorkerProcessSpawner,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * A ChildProcessSpawner that starts processes from a worker thread.
@@ -34,7 +30,7 @@ import {
  * the exit code of a standard command. The server provides it on Windows;
  * everywhere else ProcessRunner keeps the in-process spawner.
  */
-export { WorkerProcessSpawner };
+export const WorkerProcessSpawner = HostProcess.WorkerProcessSpawner;
 
 // Plain CommonJS so it runs as an eval worker from any bundle, asar or
 // single executable without a separate entry file.
@@ -177,8 +173,8 @@ const unsupported = (feature: string) =>
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const hostEnv = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const hostEnv = yield* HostProcess.Environment;
   const entries = new Map<number, ChildEntry>();
   let nextId = 0;
   const slots: ReadonlyArray<Slot> = Array.from({ length: WORKER_COUNT }, () => ({
@@ -397,7 +393,7 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(
   WorkerProcessSpawner,
   Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     if (platform !== "win32") return undefined;
     return yield* make;
   }),
