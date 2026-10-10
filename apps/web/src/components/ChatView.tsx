@@ -9,7 +9,7 @@ import {
   resolveWorktreeSetupProgress,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
-import { restorePlanFollowUpComposer } from "./ChatView.logic";
+import { restorePlanFollowUpComposer, shouldCompactBeforeSend } from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import {
@@ -7716,9 +7716,9 @@ export default function ChatView(props: ChatViewProps) {
           : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
-  // the composer shows a Compact chip and Enter compacts first; turning the
-  // chip off sends the next message with full history. Held queues and
-  // multi-model sends never compact first, so the offer hides for them.
+  // the composer offers a Compact chip. Compacting is opt-in: Enter sends with
+  // full history unless the user armed the chip (or typed /compact). Held
+  // queues and multi-model sends never compact first, so the offer hides for them.
   const resumeCompactionTokens =
     activeContextWindow &&
     !resumeCompactionPermanentlyDismissed &&
@@ -7734,18 +7734,18 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Threads whose Compact chip is turned off. A send that starts its turn
-  // clears its thread's entry; a failed send keeps it for the retry.
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
+  // Threads whose Compact chip the user armed. A send that starts its turn
+  // disarms its thread; a failed send keeps it armed for the retry.
+  const [compactArmedThreadKeys, setCompactArmedThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
+  const keepFullHistory = !compactArmedThreadKeys.has(routeThreadKey);
   const setKeepFullHistory = useCallback((threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
+    setCompactArmedThreadKeys((current) => {
+      if (current.has(threadKey) === !keep) return current;
       const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
+      if (keep) next.delete(threadKey);
+      else next.add(threadKey);
       return next;
     });
   }, []);
@@ -9297,10 +9297,11 @@ export default function ChatView(props: ChatViewProps) {
     // A stale Claude session compacts before this message so the turn does not re-read the
     // old history. The message queues behind the /compact run, since steering into it is
     // rejected.
-    const compactBeforeSend =
-      resumeCompactionTokens !== null &&
-      !keepFullHistory &&
-      messageTextForSend.toLowerCase() !== "/compact";
+    const compactBeforeSend = shouldCompactBeforeSend({
+      resumeCompactionTokens,
+      compactArmed: !keepFullHistory,
+      messageText: messageTextForSend,
+    });
     const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
     const shouldQueueBehindActiveRun =
       compactBeforeSend || (phase === "running" && dispatchMode === "queue");
@@ -10013,7 +10014,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        setKeepFullHistory(routeThreadKey, false);
+        setKeepFullHistory(routeThreadKey, true);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.

@@ -1,4 +1,8 @@
-import { findRecordedWorktreeSetup, resolveVisibleWorktreeSetup } from "./ChatView.logic";
+import {
+  findRecordedWorktreeSetup,
+  resolveVisibleWorktreeSetup,
+  shouldCompactBeforeSend,
+} from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -2178,5 +2182,44 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("shouldCompactBeforeSend", () => {
+  it("never compacts on a plain send while the chip is only offered", () => {
+    expect(
+      shouldCompactBeforeSend({
+        resumeCompactionTokens: 584_000,
+        compactArmed: false,
+        messageText: "keep going",
+      }),
+    ).toBe(false);
+  });
+
+  it("compacts first once the user arms the chip", () => {
+    expect(
+      shouldCompactBeforeSend({
+        resumeCompactionTokens: 584_000,
+        compactArmed: true,
+        messageText: "keep going",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not stack a compaction on a typed /compact or when nothing is offered", () => {
+    expect(
+      shouldCompactBeforeSend({
+        resumeCompactionTokens: 584_000,
+        compactArmed: true,
+        messageText: " /Compact ",
+      }),
+    ).toBe(false);
+    expect(
+      shouldCompactBeforeSend({
+        resumeCompactionTokens: null,
+        compactArmed: true,
+        messageText: "keep going",
+      }),
+    ).toBe(false);
   });
 });
