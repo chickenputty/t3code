@@ -7,6 +7,8 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  * remains data-driven.
  */
 export type ThreadActionMenuId =
+  | "open-split"
+  | "close-split"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -71,6 +73,12 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  /**
+   * What the split view item offers for this thread: show it beside the
+   * routed thread, or close the split it already sits in. Null hides the item
+   * (the routed thread itself, and the chat header menu).
+   */
+  readonly splitView: "open" | "close" | null;
   readonly branch: string | null;
   /**
    * Project scoping for the thread list. Null on surfaces with no scoped
@@ -104,6 +112,8 @@ export interface ThreadActionMenuState {
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "open-split",
+    "close-split",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -123,6 +133,11 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.splitView === "open"
+      ? [{ id: "open-split" as const, label: "Open in split view", icon: "columns-2" }]
+      : state.splitView === "close"
+        ? [{ id: "close-split" as const, label: "Close split view", icon: "x" }]
+        : []),
     ...(state.branch
       ? [
           {

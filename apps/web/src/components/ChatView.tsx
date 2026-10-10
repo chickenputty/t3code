@@ -307,6 +307,7 @@ import {
   GitBranchIcon,
   TargetIcon,
   WifiOffIcon,
+  XIcon,
 } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -450,6 +451,7 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useChatPane } from "./chat/ChatPaneContext";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -1578,6 +1580,12 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
   } = props;
+  const { isFocusedPane, onClosePane } = useChatPane();
+  // Read by listeners whose effects are too broad to resubscribe on focus changes.
+  const isFocusedPaneRef = useRef(isFocusedPane);
+  useLayoutEffect(() => {
+    isFocusedPaneRef.current = isFocusedPane;
+  }, [isFocusedPane]);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useCallback(
@@ -1842,7 +1850,10 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  // The app-wide handle (the command palette inserts through it) belongs to the
+  // focused pane; an unfocused split pane keeps its composer on a local ref.
+  const sharedComposerRef = useComposerHandleContext();
+  const composerRef = (isFocusedPane ? sharedComposerRef : null) ?? localComposerRef;
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
@@ -4153,7 +4164,7 @@ export default function ChatView(props: ChatViewProps) {
     remoteOpenMode: remoteOpenState.mode,
   });
   useOpenFavoriteEditorShortcut({
-    enabled: showOpenInPicker,
+    enabled: showOpenInPicker && isFocusedPane,
     environmentId: activeThread?.environmentId ?? environmentId,
     keybindings,
     availableEditors,
@@ -6264,13 +6275,12 @@ export default function ChatView(props: ChatViewProps) {
       },
     );
   }, []);
-  useEffect(
-    () =>
-      subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanel();
-      }),
-    [togglePreviewPanel],
-  );
+  useEffect(() => {
+    if (!isFocusedPane) return;
+    return subscribePreviewAction((action) => {
+      if (action === "toggle-panel") togglePreviewPanel();
+    });
+  }, [isFocusedPane, togglePreviewPanel]);
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
       threadId: ThreadId;
@@ -6614,6 +6624,8 @@ export default function ChatView(props: ChatViewProps) {
           }
           if (!["PageUp", "Home", "ArrowUp", "PageDown", "End", "ArrowDown"].includes(event.key))
             return;
+          // Keys aimed at the page body belong to the focused split pane only.
+          if (!scrollNode.contains(event.target) && !isFocusedPaneRef.current) return;
           const scrollDirection = ["PageUp", "Home", "ArrowUp"].includes(event.key) ? -1 : 1;
           if (
             scrollNode.contains(event.target) &&
@@ -6857,7 +6869,8 @@ export default function ChatView(props: ChatViewProps) {
   // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
   // returning to the app does not raise the keyboard.
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport || !isFocusedPane)
+      return;
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -6878,7 +6891,13 @@ export default function ChatView(props: ChatViewProps) {
       window.removeEventListener("focus", onWindowFocus);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, isMobileViewport, terminalUiState.terminalOpen]);
+  }, [
+    activeThread?.id,
+    focusComposer,
+    isFocusedPane,
+    isMobileViewport,
+    terminalUiState.terminalOpen,
+  ]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -8281,6 +8300,7 @@ export default function ChatView(props: ChatViewProps) {
       closeThreadFind();
       focusComposer();
     };
+    if (!isFocusedPane) return;
     window.addEventListener("keydown", handler, true);
     window.addEventListener("keydown", dismissFind);
     return () => {
@@ -8288,6 +8308,7 @@ export default function ChatView(props: ChatViewProps) {
       window.removeEventListener("keydown", dismissFind);
     };
   }, [
+    isFocusedPane,
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
@@ -8341,11 +8362,12 @@ export default function ChatView(props: ChatViewProps) {
 
   // A focused desktop browser page forwards these chords as menu actions.
   useEffect(() => {
+    if (!isFocusedPane) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanel();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximized();
     });
-  }, [toggleRightPanel, toggleRightPanelMaximized]);
+  }, [isFocusedPane, toggleRightPanel, toggleRightPanelMaximized]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.
@@ -8377,13 +8399,14 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
       }
     };
+    if (!isFocusedPane) return;
     window.addEventListener("keydown", keyHandler, true);
     window.addEventListener("paste", handler, true);
     return () => {
       window.removeEventListener("keydown", keyHandler, true);
       window.removeEventListener("paste", handler, true);
     };
-  }, [activeThreadId, composerRef]);
+  }, [activeThreadId, composerRef, isFocusedPane]);
 
   const [pendingRevert, setPendingRevert] = useState<{
     turnCount: number;
@@ -11317,6 +11340,24 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
           {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+          {onClosePane ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-xs"
+                    aria-label="Close split view"
+                    className="mr-1 shrink-0 [-webkit-app-region:no-drag]"
+                    onClick={onClosePane}
+                  >
+                    <XIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Close split view</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}

@@ -9,6 +9,7 @@ import {
 const baseState: ThreadActionMenuState = {
   canOperate: true,
   branch: null,
+  splitView: null,
   projectFilter: null,
   isPinned: false,
   isSettled: false,
@@ -40,6 +41,22 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("offers the split view item that matches the thread's place in the split", () => {
+    expect(ids(baseState)).not.toContain("open-split");
+    expect(ids(baseState)).not.toContain("close-split");
+    expect(ids({ ...baseState, splitView: "open" })[0]).toBe("open-split");
+    expect(ids({ ...baseState, splitView: "close" })[0]).toBe("close-split");
+  });
+
+  it("keeps the split view item available to read-only clients", () => {
+    const item = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      splitView: "open",
+    }).find((candidate) => candidate.id === "open-split");
+    expect(item?.disabled).not.toBe(true);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {
