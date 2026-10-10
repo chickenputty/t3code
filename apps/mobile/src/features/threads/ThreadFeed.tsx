@@ -38,7 +38,7 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { isMarkdownFileLinkLabel, protectFilePathsInMarkdown } from "@t3tools/shared/markdownLinks";
 import { getTextContent, type MarkdownNode } from "react-native-nitro-markdown/headless";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -931,7 +931,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    // Fork: Windows paths are rewritten so the markdown parser keeps them.
+    const markdown = protectFilePathsInMarkdown(
+      renderCodexFileCitationsAsMarkdown(segment.markdown),
+    );
     return hasNativeSelectableMarkdownText() ? (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}

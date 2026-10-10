@@ -70,6 +70,7 @@ import {
   type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectResolveFileReferenceError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
@@ -193,6 +194,7 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceFileReferences from "./workspace/WorkspaceFileReferences.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -1287,6 +1289,7 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceFileReferences = yield* WorkspaceFileReferences.WorkspaceFileReferences;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2662,6 +2665,18 @@ const layerWsRpc = (
                 new ProjectReadFileError({
                   ...input,
                   ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsResolveFileReference]: (input) =>
+          workspaceFileReferences.resolve(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectResolveFileReferenceError({
+                  cwd: input.cwd,
+                  path: input.path,
+                  message: cause.message,
                   cause,
                 }),
             ),

@@ -10,6 +10,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  protectFilePathsInMarkdown,
 } from "@t3tools/shared/markdownLinks";
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
@@ -2368,6 +2369,9 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
+  const resolveFileReference = useAtomQueryRunner(projectEnvironment.resolveFileReference, {
+    reportFailure: false,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -2631,14 +2635,25 @@ function useChatMarkdownState({
           kind: "file",
         },
       });
-      return result._tag === "Success"
-        ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-        : null;
+      const indexMatch =
+        result._tag === "Success"
+          ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
+          : null;
+      if (indexMatch !== null || !/[\\/]/.test(workspaceRelativePath)) return indexMatch;
+      // Fork (chickenputty/t3code): the index skips gitignored folders such as
+      // `.claude/worktrees`, so a path with folders that only exists in another git
+      // worktree of the repo is asked for by name. Returns an absolute host path.
+      const reference = await resolveFileReference({
+        environmentId,
+        input: { cwd, path: workspaceRelativePath },
+      });
+      return reference._tag === "Success" ? reference.value.path : null;
     },
-    [cwd, environmentId, searchProjectEntries],
+    [cwd, environmentId, resolveFileReference, searchProjectEntries],
   );
   // A relative path resolves to the workspace root, which is often not where
-  // the file is, so ask the index before opening. Absolute host paths open as-is.
+  // the file is, so ask the index (then the repo's other git worktrees) before
+  // opening; a match may come back absolute. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
@@ -3530,13 +3545,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
 } satisfies Components;
 
 function ChatMarkdown({
-  text,
+  text: sourceText,
   className,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  // Fork: Windows paths are rewritten so CommonMark keeps them. A file preview
+  // that toggles task lists writes source offsets back, so it parses as written.
+  const editsSource = props.onTaskListChange !== undefined;
+  const text = useMemo(
+    () => (editsSource ? sourceText : protectFilePathsInMarkdown(sourceText)),
+    [editsSource, sourceText],
+  );
   const {
     componentState,
     handleCopy,

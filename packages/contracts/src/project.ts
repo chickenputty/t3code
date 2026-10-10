@@ -449,6 +449,36 @@ export const ProjectReadFileResult = Schema.Struct({
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
+/**
+ * Fork (chickenputty/t3code): where a file reference from a chat message lives. The
+ * path is workspace-relative (either separator) or absolute.
+ */
+export const ProjectResolveFileReferenceInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectResolveFileReferenceInput = typeof ProjectResolveFileReferenceInput.Type;
+
+/**
+ * `path` is an absolute host path. "exact" means it exists where the reference
+ * points; "worktree" means it exists only in another git worktree of the repo.
+ */
+export const ProjectResolveFileReferenceResult = Schema.Struct({
+  path: Schema.NullOr(TrimmedNonEmptyString),
+  source: Schema.NullOr(Schema.Literals(["exact", "worktree"])),
+});
+export type ProjectResolveFileReferenceResult = typeof ProjectResolveFileReferenceResult.Type;
+
+export class ProjectResolveFileReferenceError extends Schema.TaggedError<ProjectResolveFileReferenceError>()(
+  "ProjectResolveFileReferenceError",
+  {
+    cwd: TrimmedNonEmptyString,
+    path: TrimmedNonEmptyString,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const ProjectFileFailure = Schema.Literals([
   "workspace_path_outside_root",
   "resolved_path_outside_root",

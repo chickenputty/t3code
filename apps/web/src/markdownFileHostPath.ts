@@ -2,10 +2,12 @@
  * Where a chat file chip's file really is on the environment host. A bare
  * filename (`thumb.png`) resolves against the workspace root, which is rarely
  * where it lives, so the workspace index is asked first, as the files panel
- * does. Preview, open in editor, open file, open parent folder and the copy
+ * does; a path with folders the index does not have is then looked for in the
+ * repository's other git worktrees. Preview, open in editor, open file, open parent folder and the copy
  * actions all go through here so they agree on one path.
  */
 import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 
 import type { MarkdownFileLinkMeta } from "./markdown-links";
@@ -33,7 +35,10 @@ export interface MarkdownFileHostPath {
 export async function resolveMarkdownFileHostPath(input: {
   readonly meta: MarkdownFileLinkMeta;
   readonly cwd: string | undefined;
-  /** Workspace-relative match for a bare filename, or null. */
+  /**
+   * The file the reference names: workspace-relative from the index, or an
+   * absolute host path when it lives in another git worktree. Null when not found.
+   */
   readonly findWorkspaceMatch: (workspaceRelativePath: string) => Promise<string | null>;
 }): Promise<MarkdownFileHostPath> {
   const { meta, cwd } = input;
@@ -44,7 +49,8 @@ export async function resolveMarkdownFileHostPath(input: {
   if (match && cwd) {
     return {
       absolutePath: resolvePathLinkTarget(match, cwd),
-      relativePath: match,
+      // A match in another worktree keeps the link's own repo-relative path.
+      relativePath: isAbsolutePath(match) ? meta.workspaceRelativePath : match,
       matched: true,
     };
   }

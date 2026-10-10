@@ -87,6 +87,13 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
+    // Fork (chickenputty/t3code): finds a chat file reference, in the workspace or in
+    // another git worktree of its repository.
+    resolveFileReference: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:resolve-file-reference",
+      tag: WS_METHODS.projectsResolveFileReference,
+      staleTimeMs: 15_000,
+    }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,
