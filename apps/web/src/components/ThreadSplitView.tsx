@@ -3,6 +3,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import ChatView from "./ChatView";
+import { Button } from "./ui/button";
 import { ChatPaneContext, type ChatPaneValue } from "./chat/ChatPaneContext";
 import { cn } from "~/lib/utils";
 import { useThreadShell } from "../state/entities";
@@ -194,7 +195,19 @@ function SecondaryThreadPane({ threadRef }: { threadRef: ScopedThreadRef }) {
     if (missing) closeSplit();
   }, [closeSplit, missing]);
 
-  if (thread === null || missing) return null;
+  if (missing) return null;
+  // Not loaded yet, or its environment never loads (removed, disabled, offline).
+  // The split is saved across launches, so always offer a way to close it here.
+  if (thread === null) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+        <span>This thread is not loaded.</span>
+        <Button size="compact" variant="outline" onClick={closeSplit}>
+          Close split view
+        </Button>
+      </div>
+    );
+  }
   return (
     <ChatView
       key={scopedThreadKey(threadRef)}
