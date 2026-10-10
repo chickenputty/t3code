@@ -12,9 +12,16 @@ describe("needsWorkspaceBasenameLookup", () => {
     expect(needsWorkspaceBasenameLookup("Makefile")).toBe(true);
   });
 
-  it("leaves anything with a directory alone", () => {
-    expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
+  it("flags relative paths with folders", () => {
+    expect(needsWorkspaceBasenameLookup("core/retrain-verdicts.md")).toBe(true);
+    expect(needsWorkspaceBasenameLookup("core\\retrain-verdicts.md")).toBe(true);
+    expect(needsWorkspaceBasenameLookup("./core/retrain-verdicts.md")).toBe(true);
+  });
+
+  it("leaves absolute, parent-relative and empty paths alone", () => {
+    expect(needsWorkspaceBasenameLookup("C:\\Users\\Adam\\notes.md")).toBe(false);
+    expect(needsWorkspaceBasenameLookup("/home/adam/notes.md")).toBe(false);
+    expect(needsWorkspaceBasenameLookup("../notes.md")).toBe(false);
     expect(needsWorkspaceBasenameLookup(".")).toBe(false);
     expect(needsWorkspaceBasenameLookup("..")).toBe(false);
     expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
@@ -71,6 +78,43 @@ describe("pickWorkspaceBasenameMatch", () => {
     expect(
       pickWorkspaceBasenameMatch("ChatView.tsx", [
         { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("pickWorkspaceBasenameMatch with folders", () => {
+  const verdicts = {
+    path: ".claude/skills/ps99-art/core/retrain-verdicts.md",
+    kind: "file" as const,
+  };
+
+  it("finds a path written relative to a subfolder", () => {
+    expect(pickWorkspaceBasenameMatch("core\\retrain-verdicts.md", [verdicts])).toBe(verdicts.path);
+  });
+
+  it("prefers the exact workspace path over a deeper match", () => {
+    expect(
+      pickWorkspaceBasenameMatch("core/retrain-verdicts.md", [
+        verdicts,
+        { path: "core/retrain-verdicts.md", kind: "file" },
+      ]),
+    ).toBe("core/retrain-verdicts.md");
+  });
+
+  it("matches whole folder names, not name endings", () => {
+    expect(
+      pickWorkspaceBasenameMatch("core/retrain-verdicts.md", [
+        { path: "hardcore/retrain-verdicts.md", kind: "file" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null when several folders end the same way", () => {
+    expect(
+      pickWorkspaceBasenameMatch("core/retrain-verdicts.md", [
+        verdicts,
+        { path: "old/core/retrain-verdicts.md", kind: "file" },
       ]),
     ).toBeNull();
   });

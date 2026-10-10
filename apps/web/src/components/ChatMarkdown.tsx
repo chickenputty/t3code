@@ -2637,8 +2637,8 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  // A bare filename resolves to the workspace root, which is rarely where the
-  // file is, so ask the index before opening. Absolute host paths open as-is.
+  // A relative path resolves to the workspace root, which is often not where
+  // the file is, so ask the index before opening. Absolute host paths open as-is.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
