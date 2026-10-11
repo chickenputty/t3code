@@ -8,6 +8,7 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { SavedView, SavedViewThreadsSort } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   DEFAULT_SIDEBAR_PROJECT_SORT,
@@ -35,6 +36,7 @@ import {
   threadsFilterKeys,
   threadsGroupRef,
   threadsPropertiesText,
+  withLocalArrangement,
 } from "./threadsViewArrangement";
 
 /** Starts every non-project group key, so they never collide with project keys. */
@@ -52,17 +54,34 @@ function keyOf(thread: ThreadIdentity): string {
 }
 
 export function useThreadsViewOptions() {
-  const { views, update: updateView, duplicate, remove } = useSavedViews();
+  const { views, canSave, update: updateView, duplicate, remove } = useSavedViews();
   const activeViewId = useExplorerStore((state) => state.activeViewId);
   const setActiveViewId = useExplorerStore((state) => state.setActiveViewId);
   const pruneCollapsedKeys = useSidebarViewStore((state) => state.pruneCollapsedKeys);
+  // Where views cannot be saved, the options menu arranges this device's list instead.
+  const local = useSidebarViewStore(
+    useShallow((state) => ({
+      groupByProject: state.groupByProject,
+      pinsStayGrouped: state.pinsStayGrouped,
+      sort: state.sort,
+      projectSort: state.projectSort,
+      toggleGroupByProject: state.toggleGroupByProject,
+      togglePinsStayGrouped: state.togglePinsStayGrouped,
+      setSortField: state.setSortField,
+      setSortReversed: state.setSortReversed,
+      setProjectSortField: state.setProjectSortField,
+      setProjectSortReversed: state.setProjectSortReversed,
+    })),
+  );
   const view = useMemo((): SavedView => {
     const active = resolveActiveExplorerView(views, activeViewId);
     // Only a Threads layout arranges this list; anything else reads the built-in one.
-    return active.layout === "threads"
-      ? active
-      : resolveActiveExplorerView(views, BUILT_IN_THREADS_VIEW_ID);
-  }, [activeViewId, views]);
+    const shown =
+      active.layout === "threads"
+        ? active
+        : resolveActiveExplorerView(views, BUILT_IN_THREADS_VIEW_ID);
+    return canSave ? shown : withLocalArrangement(shown, local);
+  }, [activeViewId, canSave, local, views]);
 
   const groupProperty = view.groupBy === null ? undefined : viewProperty(view.groupBy);
   const groupBy = groupProperty?.groupable ? groupProperty.id : null;
@@ -151,9 +170,25 @@ export function useThreadsViewOptions() {
         const kept = `${VIEW_GROUP_KEY_PREFIX}${patch.groupBy}:`;
         pruneCollapsedKeys((key) => !key.startsWith(VIEW_GROUP_KEY_PREFIX) || key.startsWith(kept));
       }
-      updateView(view.id, patch);
+      if (canSave) {
+        updateView(view.id, patch);
+        return;
+      }
+      // Only the options menu shows here: project grouping, sorts and pins.
+      if (patch.groupBy !== undefined && (patch.groupBy === "project") !== local.groupByProject) {
+        local.toggleGroupByProject();
+      }
+      const threads = patch.threads;
+      if (threads === undefined) return;
+      if (threads.pinsStayGrouped !== local.pinsStayGrouped) local.togglePinsStayGrouped();
+      const sort = readSort(threads.sort, local.sort);
+      local.setSortField(sort.field);
+      local.setSortReversed(sort.reversed);
+      const projectSort = readSort(threads.projectSort, local.projectSort);
+      local.setProjectSortField(projectSort.field);
+      local.setProjectSortReversed(projectSort.reversed);
     },
-    [pruneCollapsedKeys, updateView, view.groupBy, view.id],
+    [canSave, local, pruneCollapsedKeys, updateView, view.groupBy, view.id],
   );
 
   /** Copies the view and shows the copy. */
@@ -180,6 +215,8 @@ export function useThreadsViewOptions() {
 
   return {
     view,
+    /** False where views cannot be saved: only the options menu shows, on this device's list. */
+    canSave,
     visibleThreadKeys,
     /** Any grouping: project, or the view's other property through `groupOf`. */
     groupByProject: groupBy !== null,

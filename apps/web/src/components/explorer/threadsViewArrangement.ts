@@ -12,7 +12,9 @@ import {
   filterViewRows,
   formatViewPropertyValue,
   groupViewRows,
+  synthesizeThreadsView,
   viewProperty,
+  type LocalThreadsArrangement,
   type ViewRow,
 } from "../views/viewEngine";
 
@@ -73,4 +75,29 @@ export function threadsPropertiesText(
     if (value !== "") values.push(value);
   }
   return values.join(" · ");
+}
+
+/**
+ * The view as this device arranges it, for a connection that cannot save
+ * views: project grouping, sorts and pins come from the device's own sidebar
+ * arrangement, which is what its options menu writes there. Another grouping
+ * the view brings stays while project grouping is off.
+ */
+export function withLocalArrangement(view: SavedView, local: LocalThreadsArrangement): SavedView {
+  const synthesized = synthesizeThreadsView(local);
+  return {
+    ...view,
+    groupBy: local.groupByProject ? "project" : view.groupBy === "project" ? null : view.groupBy,
+    threads: synthesized.threads,
+  };
+}
+
+/** A short line for the view's toolbar row: its filter count and grouping, or null. */
+export function threadsViewSummary(view: Pick<SavedView, "filter" | "groupBy">): string | null {
+  const parts: string[] = [];
+  const filters = view.filter.conditions.length;
+  if (filters > 0) parts.push(filters === 1 ? "1 filter" : `${filters} filters`);
+  const group = view.groupBy === null ? undefined : viewProperty(view.groupBy);
+  if (group?.groupable) parts.push(`By ${group.label.toLowerCase()}`);
+  return parts.length === 0 ? null : parts.join(", ");
 }

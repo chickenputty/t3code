@@ -3,8 +3,9 @@
  * and its indent, pins stay grouped, project icons and their style, topic emoji,
  * thread and project sort, thread and project row height), and the header row
  * each project group opens with. Grouping, sorts and pins write the active
- * Threads view; the view's filter, group and properties controls sit beside
- * the menu.
+ * Threads view (or this device's arrangement where views cannot be saved);
+ * the view's filter, group, properties and settings sit on their own row
+ * under the search row, so search keeps its width.
  */
 import {
   type SavedView,
@@ -62,6 +63,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { ThreadsViewOptions } from "~/components/explorer/useThreadsViewOptions";
 import { ThreadsViewSettings } from "~/components/explorer/ThreadsViewSettings";
 import { FilterControl, GroupControl, PropertiesControl } from "~/components/views/ViewToolbar";
+import { threadsViewSummary } from "~/components/explorer/threadsViewArrangement";
 
 /** A submenu's current choice, right-aligned before its chevron. */
 function MenuSubValue(props: { children: ReactNode }) {
@@ -82,9 +84,30 @@ function withSortReversed(sort: SidebarThreadSort, reversed: boolean): SidebarTh
     : { field: sort.field, reversed };
 }
 
-/** The Threads view's filter, group and properties controls, then its options menu. */
+/**
+ * The Threads view's filter, group, properties and settings: a slim row under
+ * the search row, its summary on the left. Hidden where views cannot be saved.
+ */
+export function SidebarViewToolbar(props: { options: ThreadsViewOptions }) {
+  const { view, update, optionsFor, canSave } = props.options;
+  if (!canSave) return null;
+  const summary = threadsViewSummary(view);
+  return (
+    <div className="flex h-6 items-center gap-0.5 ps-2">
+      <span className="min-w-0 flex-1 truncate text-2xs text-sidebar-muted-foreground">
+        {summary}
+      </span>
+      <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
+      <GroupControl view={view} update={update} compact />
+      <PropertiesControl view={view} update={update} compact />
+      <ThreadsViewSettings options={props.options} />
+    </div>
+  );
+}
+
+/** The header's view options menu: grouping, sorts, pins and row settings. */
 export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
-  const { view, update, optionsFor, sort, projectSort, pinsStayGrouped } = props.options;
+  const { view, update, sort, projectSort, pinsStayGrouped } = props.options;
   // Any grouping draws headers; the menu's switch is the project one.
   const grouped = props.options.groupByProject;
   const groupByProject = view.groupBy === "project";
@@ -93,10 +116,6 @@ export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
 
   return (
     <>
-      <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
-      <GroupControl view={view} update={update} compact />
-      <PropertiesControl view={view} update={update} compact />
-      <ThreadsViewSettings options={props.options} />
       <SidebarViewOptionsMenu
         grouped={grouped}
         groupByProject={groupByProject}

@@ -291,6 +291,7 @@ import {
   SidebarStatusGlyph,
   SearchScopeToggle,
   SidebarViewControls,
+  SidebarViewToolbar,
   ThreadTopicEmoji,
 } from "./sidebar/SidebarViewControls";
 import { threadEmojiForTitle } from "./sidebar/threadEmoji";
@@ -5457,6 +5458,8 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {/* Fork: the Threads view's filter, group and properties, a row of their own. */}
+            <SidebarViewToolbar options={threadsView} />
           </SidebarGroup>
         }
       >

@@ -5,6 +5,8 @@ import {
   threadsFilterKeys,
   threadsGroupRef,
   threadsPropertiesText,
+  threadsViewSummary,
+  withLocalArrangement,
 } from "./threadsViewArrangement";
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();
@@ -110,5 +112,58 @@ describe("threadsPropertiesText", () => {
     expect(
       threadsPropertiesText(row("a", { model: "opus" }), ["model", "branch", "messages"], NOW),
     ).toBe("opus · 3");
+  });
+});
+
+describe("withLocalArrangement", () => {
+  const local = {
+    groupByProject: true,
+    pinsStayGrouped: true,
+    sort: { field: "activity", reversed: true },
+    projectSort: { field: "opened", reversed: false },
+  } as const;
+
+  it("takes project grouping, sorts and pins from the device", () => {
+    const view = { ...newSavedView("threads", "copy"), groupBy: null };
+    const arranged = withLocalArrangement(view, local);
+    expect(arranged.groupBy).toBe("project");
+    expect(arranged.threads).toEqual({
+      sort: { field: "activity", reversed: true },
+      projectSort: { field: "opened", reversed: false },
+      pinsStayGrouped: true,
+    });
+  });
+
+  it("keeps the view's own grouping while project grouping is off", () => {
+    const view = { ...newSavedView("threads", "copy"), groupBy: "status" };
+    expect(withLocalArrangement(view, { ...local, groupByProject: false }).groupBy).toBe("status");
+    const byProject = { ...view, groupBy: "project" };
+    expect(withLocalArrangement(byProject, { ...local, groupByProject: false }).groupBy).toBeNull();
+  });
+
+  it("keeps the view's filter and properties", () => {
+    const view = { ...newSavedView("threads", "copy"), properties: ["model"] };
+    expect(withLocalArrangement(view, local).properties).toEqual(["model"]);
+  });
+});
+
+describe("threadsViewSummary", () => {
+  const view = newSavedView("threads", "copy");
+  const condition = { property: "status", operator: "any_of", value: ["working"] };
+
+  it("is empty for a plain view", () => {
+    expect(threadsViewSummary({ ...view, groupBy: null })).toBeNull();
+  });
+
+  it("counts filters and names the grouping", () => {
+    expect(threadsViewSummary({ ...view, groupBy: "status" })).toBe("By status");
+    const filter = (count: number) => ({
+      ...view.filter,
+      conditions: Array(count).fill(condition),
+    });
+    expect(threadsViewSummary({ filter: filter(1), groupBy: null })).toBe("1 filter");
+    expect(threadsViewSummary({ filter: filter(2), groupBy: "project" })).toBe(
+      "2 filters, By project",
+    );
   });
 });
