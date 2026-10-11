@@ -254,6 +254,11 @@ describe("saved views", () => {
     showSubagents: false,
     hideEmptyGroups: true,
     openMode: "peek" as const,
+    threads: {
+      sort: { field: "manual" as const, reversed: false },
+      projectSort: { field: "activity" as const, reversed: false },
+      pinsStayGrouped: false,
+    },
   };
 
   it("are a shared preference", () => {

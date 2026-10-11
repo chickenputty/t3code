@@ -112,6 +112,11 @@ describe("serverSettings helpers", () => {
       showSubagents: false,
       hideEmptyGroups: true,
       openMode: "peek" as const,
+      threads: {
+        sort: { field: "manual" as const, reversed: false },
+        projectSort: { field: "activity" as const, reversed: false },
+        pinsStayGrouped: false,
+      },
     });
     expect(DEFAULT_SERVER_SETTINGS.savedViews).toBeNull();
     const two = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
