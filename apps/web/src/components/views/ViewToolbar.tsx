@@ -264,7 +264,7 @@ function ConditionValue({
   }
 }
 
-function FilterControl({
+export function FilterControl({
   view,
   update,
   optionsFor,
@@ -545,7 +545,7 @@ function SortControl({
 
 // ── Group and properties ───────────────────────────────────────────────────
 
-function GroupControl({
+export function GroupControl({
   view,
   update,
   compact,
@@ -604,7 +604,7 @@ function GroupControl({
   );
 }
 
-function PropertiesControl({
+export function PropertiesControl({
   view,
   update,
   compact,

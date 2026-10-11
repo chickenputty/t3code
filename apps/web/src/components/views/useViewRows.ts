@@ -20,13 +20,18 @@ import { useUiStateStore } from "~/uiStateStore";
 import { stageOfStatus } from "./viewEngine";
 import type { ViewPullRequestState, ViewRow, ViewSection } from "./viewEngine";
 
+const NO_ROWS: readonly ViewRow[] = [];
+
 /** A clock that ticks once a minute, for relative times and date filters. */
-export function useMinuteClock(): number {
+export function useMinuteClock(enabled = true): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!enabled) return;
+    // Catch up on time that passed while paused (a no-op on first mount).
+    setNow((previous) => (Date.now() - previous >= 60_000 ? Date.now() : previous));
     const id = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [enabled]);
   return now;
 }
 
@@ -75,27 +80,33 @@ function pullRequestOf(thread: SidebarThreadSummary): {
 /**
  * Every thread a view can show, as resolved rows. Archived threads are only
  * fetched while `includeArchived` is on, since they arrive on their own feed.
+ * With `enabled` off it builds nothing and skips the clock and the visit
+ * subscription, so a caller that needs rows only sometimes costs nothing else.
  */
 export function useViewRows(
   includeArchived: boolean,
   categories: Pick<ThreadCategories, "categories" | "assignments">,
+  enabled = true,
 ): {
   readonly rows: readonly ViewRow[];
   readonly nowMs: number;
   readonly archivedLoading: boolean;
 } {
-  const nowMs = useMinuteClock();
+  const nowMs = useMinuteClock(enabled);
   const shells = useThreadShells();
   const projects = useProjects();
   const { environments } = useEnvironments();
-  const lastVisitedById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const lastVisitedById = useUiStateStore((state) =>
+    enabled ? state.threadLastVisitedAtById : null,
+  );
   const environmentIds = useMemo<readonly EnvironmentId[]>(
     () => (includeArchived ? environments.map((environment) => environment.environmentId) : []),
     [environments, includeArchived],
   );
   const archived = useArchivedThreadSnapshots(environmentIds);
 
-  const rows = useMemo(() => {
+  const rows = useMemo((): readonly ViewRow[] => {
+    if (!enabled || lastVisitedById === null) return NO_ROWS;
     const projectLabels = new Map<string, string>();
     for (const project of projects) {
       projectLabels.set(`${project.environmentId}:${project.id}`, project.title);
@@ -197,6 +208,7 @@ export function useViewRows(
     archived.snapshots,
     categories.assignments,
     categories.categories,
+    enabled,
     environments,
     includeArchived,
     lastVisitedById,
