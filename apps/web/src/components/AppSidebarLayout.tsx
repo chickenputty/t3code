@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import * as Schema from "effect/Schema";
 import {
   useEffect,
   useState,
@@ -10,7 +9,7 @@ import {
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
-import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
+import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
   resolveShortcutCommand,
@@ -33,20 +32,23 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
-import ThreadSidebar from "./Sidebar";
+// Fork: the sidebar is an explorer showing the active saved view.
+import { ExplorerSidebarContent } from "./explorer/ExplorerSidebarContent";
+import { explorerWidthStorageKey, readExplorerWidth } from "./explorer/explorerWidth";
+import { useActiveExplorerView } from "./explorer/useActiveExplorerView";
+import { BUILT_IN_THREADS_VIEW_ID } from "./views/viewEngine";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { isSavedViewPage, MainAppLocationTracker } from "./sidebar/mainAppLocation";
+import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { ThreadVisitRecorder } from "./sidebar/ThreadHistoryButtons";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
 import {
   clampThreadSidebarWidth,
-  resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
   resolveThreadSidebarMinimumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
-  THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+  THREAD_SIDEBAR_MIN_WIDTH,
 } from "./threadSidebarWidth";
 import {
   Sidebar,
@@ -69,17 +71,8 @@ function readViewportWidth(): number {
   return window.innerWidth;
 }
 
-function readInitialThreadSidebarWidth(): number {
-  try {
-    return resolveInitialThreadSidebarWidth(
-      getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
-      window.innerWidth,
-    );
-  } catch (error) {
-    console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
-  }
-}
+// Fork: settings and the legacy sidebar keep the Threads view's width.
+const THREADS_WIDTH_SOURCE = { id: BUILT_IN_THREADS_VIEW_ID, layout: "threads" } as const;
 
 function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
@@ -237,10 +230,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
-  // Fork: a saved view owns the whole window below its top bar.
-  const isOnSavedView = isSavedViewPage(pathname);
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
-  const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
+  // Fork: each explorer view keeps its own sidebar width.
+  const activeExplorerView = useActiveExplorerView();
+  const widthSource =
+    isOnSettings || legacySidebarEnabled
+      ? THREADS_WIDTH_SOURCE
+      : { id: activeExplorerView.id, layout: activeExplorerView.layout };
+  const sidebarWidthStorageKey = explorerWidthStorageKey(widthSource.id);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readExplorerWidth(widthSource, window.innerWidth, THREAD_SIDEBAR_MIN_WIDTH),
+  );
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
@@ -248,13 +248,19 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const [brandWidth, setBrandWidth] = useState(0);
   const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
+  // Fork: switching views swaps in that view's width during render, before paint.
+  const [widthSourceId, setWidthSourceId] = useState(widthSource.id);
+  if (widthSourceId !== widthSource.id) {
+    setWidthSourceId(widthSource.id);
+    setSidebarWidth(readExplorerWidth(widthSource, viewportWidth, sidebarMinimumWidth));
+  }
   const resetSidebarWidth = () => {
     try {
-      removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
+      removeLocalStorageItem(sidebarWidthStorageKey);
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setSidebarWidth(readExplorerWidth(widthSource, viewportWidth, sidebarMinimumWidth));
   };
   const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
     const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
@@ -317,38 +323,38 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
-        {isOnSavedView ? null : (
-          <Sidebar
-            side="left"
-            collapsible="offcanvas"
-            data-app-sidebar=""
-            role="navigation"
-            aria-label={isOnSettings ? "Settings" : "Threads"}
-            resizable={{
-              maxWidth: sidebarMaximumWidth,
-              minWidth: sidebarMinimumWidth,
-              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                nextWidth <= currentWidth ||
-                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-              onResize: setSidebarWidth,
-            }}
-          >
-            {isOnSettings ? (
-              <>
-                <SidebarChromeHeader isElectron={isElectron} />
-                <SettingsSidebarNav pathname={pathname} />
-              </>
-            ) : legacySidebarEnabled ? (
-              <LegacyThreadSidebar />
-            ) : (
-              <ThreadSidebar />
-            )}
-            <SidebarRail onDoubleClick={resetSidebarWidth} />
-          </Sidebar>
-        )}
+        <Sidebar
+          side="left"
+          collapsible="offcanvas"
+          data-app-sidebar=""
+          role="navigation"
+          aria-label={isOnSettings ? "Settings" : "Threads"}
+          resizable={{
+            maxWidth: sidebarMaximumWidth,
+            minWidth: sidebarMinimumWidth,
+            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+              nextWidth <= currentWidth ||
+              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            // Fork: the active view's width key.
+            storageKey: sidebarWidthStorageKey,
+            onResize: setSidebarWidth,
+          }}
+        >
+          {isOnSettings ? (
+            <>
+              <SidebarChromeHeader isElectron={isElectron} />
+              <SettingsSidebarNav pathname={pathname} />
+            </>
+          ) : legacySidebarEnabled ? (
+            <LegacyThreadSidebar />
+          ) : (
+            // Fork: the explorer shows the active saved view.
+            <ExplorerSidebarContent />
+          )}
+          <SidebarRail onDoubleClick={resetSidebarWidth} />
+        </Sidebar>
         {children}
-        {isOnSavedView ? null : <SidebarControl />}
+        <SidebarControl />
         <NavigationHistoryShortcuts />
         {/* Fork: keeps the thread history behind the chat header's back and forward buttons. */}
         <ThreadVisitRecorder />

@@ -44,7 +44,7 @@ function readStoredWidth(key: string): number | null {
 }
 
 export function readExplorerWidth(
-  view: SavedView,
+  view: Pick<SavedView, "id" | "layout">,
   viewportWidth: number,
   minimumWidth: number,
 ): number {

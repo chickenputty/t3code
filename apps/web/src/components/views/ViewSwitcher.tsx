@@ -1,10 +1,9 @@
 /**
- * Fork (chickenputty/t3code): the view dropdown beside the brand. "Threads"
- * is today's sidebar and chat; every other entry is a saved view that takes
- * the whole window below the top bar.
+ * Fork (chickenputty/t3code): the view dropdown beside the brand. Picking a
+ * view shows it in the sidebar explorer in place; the built-in Threads view
+ * (the native thread list) is always listed first.
  */
 import type { SavedViewLayout } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   Columns3Icon,
@@ -14,7 +13,7 @@ import {
   PlusIcon,
   Table2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -27,8 +26,8 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
-import { useNavigateToMainApp } from "~/components/sidebar/mainAppLocation";
-import { useSidebar } from "~/components/ui/sidebar";
+import { useExplorerStore } from "~/components/explorer/explorerStore";
+import { useActiveExplorerView } from "~/components/explorer/useActiveExplorerView";
 
 import { useSavedViews } from "./useSavedViews";
 import { VIEW_LAYOUT_LABELS } from "./viewEngine";
@@ -43,20 +42,12 @@ export const VIEW_LAYOUT_ICONS: Record<SavedViewLayout, typeof ListIcon> = {
 
 const LAYOUTS: readonly SavedViewLayout[] = ["list", "board", "gallery", "table"];
 
-export function ViewSwitcher({ currentViewId }: { readonly currentViewId: string | null }) {
-  const navigate = useNavigate();
-  const navigateToMainApp = useNavigateToMainApp();
+export function ViewSwitcher() {
   const { views, create, canSave } = useSavedViews();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const current = useActiveExplorerView();
+  const setActiveViewId = useExplorerStore((state) => state.setActiveViewId);
   const [open, setOpen] = useState(false);
-  const current = currentViewId === null ? null : views.find((view) => view.id === currentViewId);
-  const CurrentIcon = current ? VIEW_LAYOUT_ICONS[current.layout] : MessagesSquareIcon;
-
-  const openView = (viewId: string) => {
-    // The switcher also sits in the mobile sidebar sheet; a view replaces it.
-    if (isMobile) setOpenMobile(false);
-    void navigate({ to: "/views/$viewId", params: { viewId } });
-  };
+  const CurrentIcon = VIEW_LAYOUT_ICONS[current.layout];
 
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -71,30 +62,27 @@ export function ViewSwitcher({ currentViewId }: { readonly currentViewId: string
         }
       >
         <CurrentIcon />
-        <span className="truncate">{current?.name ?? "Threads"}</span>
+        <span className="truncate">{current.name}</span>
         <ChevronDownIcon className="size-3 opacity-70" />
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-56">
-        <MenuItem
-          onClick={() => {
-            if (currentViewId !== null) void navigateToMainApp();
-          }}
-          data-active={currentViewId === null}
-        >
-          <MessagesSquareIcon />
-          Threads
-        </MenuItem>
-        <MenuSeparator />
-        {views.map((view) => {
+        {views.map((view, index) => {
           const Icon = VIEW_LAYOUT_ICONS[view.layout];
           return (
-            <MenuItem key={view.id} onClick={() => openView(view.id)}>
-              <Icon />
-              <span className="min-w-0 flex-1 truncate">{view.name}</span>
-              {view.id === currentViewId ? (
-                <span className="text-muted-foreground text-xs">Current</span>
-              ) : null}
-            </MenuItem>
+            <Fragment key={view.id}>
+              <MenuItem
+                onClick={() => setActiveViewId(view.id)}
+                data-active={view.id === current.id}
+              >
+                <Icon />
+                <span className="min-w-0 flex-1 truncate">{view.name}</span>
+                {view.id === current.id ? (
+                  <span className="text-muted-foreground text-xs">Current</span>
+                ) : null}
+              </MenuItem>
+              {/* The built-in Threads view leads the list on its own. */}
+              {index === 0 && views.length > 1 ? <MenuSeparator /> : null}
+            </Fragment>
           );
         })}
         {canSave ? <MenuSeparator /> : null}
@@ -108,7 +96,7 @@ export function ViewSwitcher({ currentViewId }: { readonly currentViewId: string
               {LAYOUTS.map((layout) => {
                 const Icon = VIEW_LAYOUT_ICONS[layout];
                 return (
-                  <MenuItem key={layout} onClick={() => openView(create(layout).id)}>
+                  <MenuItem key={layout} onClick={() => setActiveViewId(create(layout).id)}>
                     <Icon />
                     {VIEW_LAYOUT_LABELS[layout]}
                   </MenuItem>

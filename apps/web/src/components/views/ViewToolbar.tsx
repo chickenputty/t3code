@@ -1,7 +1,8 @@
 /**
- * Fork (chickenputty/t3code): a saved view's own controls, in its top bar:
- * filter, sort, group, visible properties and the view's settings menu.
- * Edits write straight to the saved view; text fields commit on blur.
+ * Fork (chickenputty/t3code): a saved view's own controls: filter, sort,
+ * group, visible properties and the view's settings menu. In the sidebar
+ * (`compact`) they are icon buttons with tooltips. Edits write straight to
+ * the saved view; text fields commit on blur.
  */
 import type {
   SavedView,
@@ -9,7 +10,6 @@ import type {
   SavedViewDensity,
   SavedViewFilterCondition,
   SavedViewLayout,
-  SavedViewOpenMode,
   SavedViewPreview,
   SavedViewSort,
 } from "@t3tools/contracts";
@@ -27,7 +27,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { cloneElement, type ReactElement, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DraftInput } from "~/components/ui/draft-input";
@@ -54,9 +54,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import { VIEW_LAYOUT_ICONS } from "./ViewSwitcher";
 import {
+  BUILT_IN_THREADS_VIEW_ID,
   VIEW_LAYOUT_LABELS,
   VIEW_OPERATORS,
   VIEW_PROPERTIES,
@@ -84,14 +86,30 @@ const DENSITY_LABELS: Record<SavedViewDensity, string> = {
   compact: "Compact",
   comfortable: "Comfortable",
 };
-const OPEN_MODE_LABELS: Record<SavedViewOpenMode, string> = {
-  peek: "Side peek",
-  modal: "Center modal",
-  page: "Full page",
-};
 
 function MenuSubValue({ children }: { children: ReactNode }) {
   return <span className="flex-1 ps-4 text-end text-muted-foreground text-xs">{children}</span>;
+}
+
+/** A control's trigger: labelled in a wide toolbar, an icon with a tooltip when compact. */
+function ToolbarTrigger({
+  compact,
+  label,
+  trigger,
+  children,
+}: {
+  compact: boolean;
+  label: string;
+  trigger: ReactElement;
+  children: ReactNode;
+}) {
+  if (!compact) return cloneElement(trigger, undefined, children);
+  return (
+    <Tooltip>
+      <TooltipTrigger render={trigger}>{children}</TooltipTrigger>
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 function MiniSelect({
@@ -250,10 +268,12 @@ function FilterControl({
   view,
   update,
   optionsFor,
+  compact,
 }: {
   view: SavedView;
   update: UpdateView;
   optionsFor: (property: ViewProperty) => readonly ViewPropertyOption[];
+  compact: boolean;
 }) {
   const { conditions, conjunction } = view.filter;
   const setConditions = (next: readonly SavedViewFilterCondition[]) =>
@@ -262,13 +282,27 @@ function FilterControl({
     setConditions(conditions.map((existing, at) => (at === index ? condition : existing)));
   return (
     <Popover>
-      <PopoverTrigger
-        render={<Button variant={conditions.length > 0 ? "secondary" : "ghost-muted"} size="xs" />}
+      <ToolbarTrigger
+        compact={compact}
+        label={conditions.length > 0 ? `Filter (${conditions.length})` : "Filter"}
+        trigger={
+          <PopoverTrigger
+            render={
+              <Button
+                variant={conditions.length > 0 ? "secondary" : "ghost-muted"}
+                size={compact ? "icon-xs" : "xs"}
+                aria-label="Filter"
+              />
+            }
+          />
+        }
       >
         <FilterIcon />
-        <span className="hidden lg:inline">Filter</span>
-        {conditions.length > 0 ? <span className="tabular-nums">{conditions.length}</span> : null}
-      </PopoverTrigger>
+        {compact ? null : <span className="hidden lg:inline">Filter</span>}
+        {conditions.length > 0 && !compact ? (
+          <span className="tabular-nums">{conditions.length}</span>
+        ) : null}
+      </ToolbarTrigger>
       <PopoverPopup align="end" className="w-[min(36rem,calc(100vw-2rem))]">
         <div className="flex flex-col gap-2 py-1">
           {conditions.length > 1 ? (
@@ -381,17 +415,39 @@ function FilterControl({
 
 // ── Sort ───────────────────────────────────────────────────────────────────
 
-function SortControl({ view, update }: { view: SavedView; update: UpdateView }) {
+function SortControl({
+  view,
+  update,
+  compact,
+}: {
+  view: SavedView;
+  update: UpdateView;
+  compact: boolean;
+}) {
   const setSorts = (next: readonly SavedViewSort[]) => update({ sorts: [...next] });
   const unused = VIEW_PROPERTIES.filter(
     (property) => !view.sorts.some((sort) => sort.property === property.id),
   );
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant="ghost-muted" size="xs" />}>
+      <ToolbarTrigger
+        compact={compact}
+        label="Sort"
+        trigger={
+          <PopoverTrigger
+            render={
+              <Button
+                variant={view.sorts.length > 0 && compact ? "secondary" : "ghost-muted"}
+                size={compact ? "icon-xs" : "xs"}
+                aria-label="Sort"
+              />
+            }
+          />
+        }
+      >
         <ArrowDownUpIcon />
-        <span className="hidden lg:inline">Sort</span>
-      </PopoverTrigger>
+        {compact ? null : <span className="hidden lg:inline">Sort</span>}
+      </ToolbarTrigger>
       <PopoverPopup align="end" className="w-[min(26rem,calc(100vw-2rem))]">
         <div className="flex flex-col gap-2 py-1">
           {view.sorts.length === 0 ? (
@@ -489,15 +545,39 @@ function SortControl({ view, update }: { view: SavedView; update: UpdateView }) 
 
 // ── Group and properties ───────────────────────────────────────────────────
 
-function GroupControl({ view, update }: { view: SavedView; update: UpdateView }) {
+function GroupControl({
+  view,
+  update,
+  compact,
+}: {
+  view: SavedView;
+  update: UpdateView;
+  compact: boolean;
+}) {
   const groupable = VIEW_PROPERTIES.filter((property) => property.groupable);
   const current = view.groupBy === null ? null : viewProperty(view.groupBy);
   return (
     <Menu>
-      <MenuTrigger render={<Button variant={current ? "secondary" : "ghost-muted"} size="xs" />}>
+      <ToolbarTrigger
+        compact={compact}
+        label={current ? `Group: ${current.label}` : "Group"}
+        trigger={
+          <MenuTrigger
+            render={
+              <Button
+                variant={current ? "secondary" : "ghost-muted"}
+                size={compact ? "icon-xs" : "xs"}
+                aria-label="Group"
+              />
+            }
+          />
+        }
+      >
         <LayersIcon />
-        <span className="hidden lg:inline">{current ? `Group: ${current.label}` : "Group"}</span>
-      </MenuTrigger>
+        {compact ? null : (
+          <span className="hidden lg:inline">{current ? `Group: ${current.label}` : "Group"}</span>
+        )}
+      </ToolbarTrigger>
       <MenuPopup align="end" className="min-w-52">
         <MenuRadioGroup
           value={view.groupBy ?? ""}
@@ -524,14 +604,36 @@ function GroupControl({ view, update }: { view: SavedView; update: UpdateView })
   );
 }
 
-function PropertiesControl({ view, update }: { view: SavedView; update: UpdateView }) {
+function PropertiesControl({
+  view,
+  update,
+  compact,
+}: {
+  view: SavedView;
+  update: UpdateView;
+  compact: boolean;
+}) {
   const shown = new Set(view.properties);
   return (
     <Menu>
-      <MenuTrigger render={<Button variant="ghost-muted" size="xs" />}>
+      <ToolbarTrigger
+        compact={compact}
+        label="Properties"
+        trigger={
+          <MenuTrigger
+            render={
+              <Button
+                variant="ghost-muted"
+                size={compact ? "icon-xs" : "xs"}
+                aria-label="Properties"
+              />
+            }
+          />
+        }
+      >
         <SlidersHorizontalIcon />
-        <span className="hidden lg:inline">Properties</span>
-      </MenuTrigger>
+        {compact ? null : <span className="hidden lg:inline">Properties</span>}
+      </ToolbarTrigger>
       <MenuPopup align="end" className="max-h-96 min-w-52">
         <MenuGroup>
           <MenuGroupLabel>{view.layout === "table" ? "Columns" : "Shown on cards"}</MenuGroupLabel>
@@ -589,6 +691,85 @@ function RadioSub<T extends string>({
   );
 }
 
+/** Layout, card and visibility settings of a card view (list, board, gallery, table). */
+function CardSettingsItems({ view, update }: { view: SavedView; update: UpdateView }) {
+  return (
+    <>
+      <MenuSub>
+        <MenuSubTrigger>
+          Layout
+          <MenuSubValue>{VIEW_LAYOUT_LABELS[view.layout]}</MenuSubValue>
+        </MenuSubTrigger>
+        <MenuSubPopup className="min-w-40">
+          <MenuRadioGroup
+            value={view.layout}
+            onValueChange={(value) => {
+              const layout = value as SavedViewLayout;
+              // A board needs columns; keep the grouping the view had, or project.
+              update(
+                layout === "board" && view.groupBy === null
+                  ? { layout, groupBy: "project" }
+                  : { layout },
+              );
+            }}
+          >
+            {LAYOUTS.map((layout) => {
+              const Icon = VIEW_LAYOUT_ICONS[layout];
+              return (
+                <MenuRadioItem key={layout} value={layout}>
+                  <Icon className="size-4 text-muted-foreground" />
+                  {VIEW_LAYOUT_LABELS[layout]}
+                </MenuRadioItem>
+              );
+            })}
+          </MenuRadioGroup>
+        </MenuSubPopup>
+      </MenuSub>
+      <RadioSub
+        label="Card size"
+        value={view.cardSize}
+        labels={CARD_SIZE_LABELS}
+        onChange={(cardSize) => update({ cardSize })}
+      />
+      <RadioSub
+        label="Preview"
+        value={view.preview}
+        labels={PREVIEW_LABELS}
+        onChange={(preview) => update({ preview })}
+      />
+      <RadioSub
+        label="Density"
+        value={view.density}
+        labels={DENSITY_LABELS}
+        onChange={(density) => update({ density })}
+      />
+      <MenuSeparator />
+      <MenuCheckboxItem
+        variant="switch"
+        checked={view.showSettled}
+        onCheckedChange={(checked) => update({ showSettled: checked })}
+      >
+        Show settled
+      </MenuCheckboxItem>
+      <MenuCheckboxItem
+        variant="switch"
+        checked={view.showArchived}
+        onCheckedChange={(checked) => update({ showArchived: checked })}
+      >
+        Show archived
+      </MenuCheckboxItem>
+      <MenuCheckboxItem
+        variant="switch"
+        checked={view.showSubagents}
+        onCheckedChange={(checked) => update({ showSubagents: checked })}
+      >
+        Show sub-agent chats
+      </MenuCheckboxItem>
+      <MenuSeparator />
+    </>
+  );
+}
+
 function SettingsControl({
   view,
   update,
@@ -602,103 +783,41 @@ function SettingsControl({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
+  const builtIn = view.id === BUILT_IN_THREADS_VIEW_ID;
   return (
     <Menu>
-      <MenuTrigger
-        render={<Button variant="ghost-muted" size="icon-xs" aria-label="View settings" />}
-      >
-        <EllipsisIcon />
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={<Button variant="ghost-muted" size="icon-xs" aria-label="View settings" />}
+            />
+          }
+        >
+          <EllipsisIcon />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">View settings</TooltipPopup>
+      </Tooltip>
       <MenuPopup align="end" className="min-w-60">
-        <MenuSub>
-          <MenuSubTrigger>
-            Layout
-            <MenuSubValue>{VIEW_LAYOUT_LABELS[view.layout]}</MenuSubValue>
-          </MenuSubTrigger>
-          <MenuSubPopup className="min-w-40">
-            <MenuRadioGroup
-              value={view.layout}
-              onValueChange={(value) => {
-                const layout = value as SavedViewLayout;
-                // A board needs columns; keep the grouping the view had, or project.
-                update(
-                  layout === "board" && view.groupBy === null
-                    ? { layout, groupBy: "project" }
-                    : { layout },
-                );
-              }}
-            >
-              {LAYOUTS.map((layout) => {
-                const Icon = VIEW_LAYOUT_ICONS[layout];
-                return (
-                  <MenuRadioItem key={layout} value={layout}>
-                    <Icon className="size-4 text-muted-foreground" />
-                    {VIEW_LAYOUT_LABELS[layout]}
-                  </MenuRadioItem>
-                );
-              })}
-            </MenuRadioGroup>
-          </MenuSubPopup>
-        </MenuSub>
-        <RadioSub
-          label="Card size"
-          value={view.cardSize}
-          labels={CARD_SIZE_LABELS}
-          onChange={(cardSize) => update({ cardSize })}
-        />
-        <RadioSub
-          label="Preview"
-          value={view.preview}
-          labels={PREVIEW_LABELS}
-          onChange={(preview) => update({ preview })}
-        />
-        <RadioSub
-          label="Density"
-          value={view.density}
-          labels={DENSITY_LABELS}
-          onChange={(density) => update({ density })}
-        />
-        <RadioSub
-          label="Open threads in"
-          value={view.openMode}
-          labels={OPEN_MODE_LABELS}
-          onChange={(openMode) => update({ openMode })}
-        />
-        <MenuSeparator />
-        <MenuCheckboxItem
-          variant="switch"
-          checked={view.showSettled}
-          onCheckedChange={(checked) => update({ showSettled: checked })}
-        >
-          Show settled
-        </MenuCheckboxItem>
-        <MenuCheckboxItem
-          variant="switch"
-          checked={view.showArchived}
-          onCheckedChange={(checked) => update({ showArchived: checked })}
-        >
-          Show archived
-        </MenuCheckboxItem>
-        <MenuCheckboxItem
-          variant="switch"
-          checked={view.showSubagents}
-          onCheckedChange={(checked) => update({ showSubagents: checked })}
-        >
-          Show sub-agent chats
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        <MenuItem onClick={onRename}>
-          <PencilIcon />
-          Rename view
-        </MenuItem>
+        {/* The native Threads list has none of the card settings. */}
+        {view.layout === "threads" ? null : <CardSettingsItems view={view} update={update} />}
+        {builtIn ? null : (
+          <MenuItem onClick={onRename}>
+            <PencilIcon />
+            Rename view
+          </MenuItem>
+        )}
         <MenuItem onClick={onDuplicate}>
           <CopyIcon />
           Duplicate view
         </MenuItem>
-        <MenuItem variant="destructive" onClick={onDelete}>
-          <Trash2Icon />
-          Delete view
-        </MenuItem>
+        {/* The built-in Threads view always exists and keeps its name. */}
+        {builtIn ? null : (
+          <MenuItem variant="destructive" onClick={onDelete}>
+            <Trash2Icon />
+            Delete view
+          </MenuItem>
+        )}
       </MenuPopup>
     </Menu>
   );
@@ -711,14 +830,19 @@ export function ViewToolbar(props: {
   onRename: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Icon buttons with tooltips, for the sidebar. */
+  compact?: boolean;
 }) {
   const { view, update } = props;
+  const compact = props.compact ?? false;
+  // The native Threads list sorts itself; it takes filter, group and properties.
+  const threadsLayout = view.layout === "threads";
   return (
     <div className="flex shrink-0 items-center gap-0.5">
-      <FilterControl view={view} update={update} optionsFor={props.optionsFor} />
-      <SortControl view={view} update={update} />
-      <GroupControl view={view} update={update} />
-      <PropertiesControl view={view} update={update} />
+      <FilterControl view={view} update={update} optionsFor={props.optionsFor} compact={compact} />
+      {threadsLayout ? null : <SortControl view={view} update={update} compact={compact} />}
+      <GroupControl view={view} update={update} compact={compact} />
+      <PropertiesControl view={view} update={update} compact={compact} />
       <SettingsControl
         view={view}
         update={update}

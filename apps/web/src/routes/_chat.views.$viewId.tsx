@@ -1,28 +1,33 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { SavedViewPage } from "../components/views/SavedViewPage";
+import { useExplorerStore } from "../components/explorer/explorerStore";
+import { readMainAppHref } from "../components/sidebar/mainAppLocation";
+import { buildThreadRouteParams } from "../threadRoutes";
 
 export interface SavedViewSearch {
-  /** The scoped key of the thread open in the inspector, so the open item is linkable. */
+  /** The scoped key of a thread to open beside the view. */
   readonly open?: string;
 }
 
+/**
+ * Fork (chickenputty/t3code): a deep link to a saved view. Views live in the
+ * sidebar explorer, so this picks the view and goes on to the thread in
+ * `?open=`, else the last main app location, else the thread list.
+ */
 export const Route = createFileRoute("/_chat/views/$viewId")({
   validateSearch: (raw: Record<string, unknown>): SavedViewSearch =>
     typeof raw.open === "string" && raw.open !== "" ? { open: raw.open } : {},
-  component: SavedViewRouteView,
+  beforeLoad: ({ params, search }) => {
+    useExplorerStore.getState().setActiveViewId(params.viewId);
+    const openRef = search.open === undefined ? null : parseScopedThreadKey(search.open);
+    if (openRef !== null) {
+      throw redirect({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(openRef),
+        replace: true,
+      });
+    }
+    throw redirect({ href: readMainAppHref() ?? "/", replace: true });
+  },
 });
-
-function SavedViewRouteView() {
-  const { viewId } = Route.useParams();
-  const { open } = Route.useSearch();
-  const navigate = useNavigate({ from: Route.fullPath });
-  const setOpenKey = useCallback(
-    (key: string | null) => {
-      void navigate({ search: key === null ? {} : { open: key }, replace: true });
-    },
-    [navigate],
-  );
-  return <SavedViewPage viewId={viewId} openKey={open ?? null} onOpenKeyChange={setOpenKey} />;
-}

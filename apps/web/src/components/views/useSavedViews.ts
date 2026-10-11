@@ -1,29 +1,48 @@
 import type { SavedView, SavedViewLayout } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   usePrimarySettings,
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "~/hooks/useSettings";
+import { useSidebarViewStore } from "~/components/sidebar/sidebarViewStore";
 
 import { createPendingSetting } from "./pendingSetting";
-import { DEFAULT_SAVED_VIEWS, newSavedView, newSavedViewId } from "./viewEngine";
+import { duplicateSavedView, removeSavedView, updateSavedView } from "./savedViewList";
+import {
+  DEFAULT_SAVED_VIEWS,
+  newSavedView,
+  newSavedViewId,
+  withBuiltInThreadsView,
+} from "./viewEngine";
 
 // A new view must exist before the page that opens it reads the list.
 const pending = createPendingSetting<readonly SavedView[]>();
 
 /**
  * The saved views on the primary server, or the defaults until the first
- * edit. Every write replaces the whole list; the server keeps it in
- * `settings.json` and other servers get a copy through shared settings.
+ * edit, always led by the built-in Threads view (stored, or built from this
+ * device's sidebar arrangement until it is first edited). Every write
+ * replaces the whole stored list; the server keeps it in `settings.json` and
+ * other servers get a copy through shared settings.
  */
 export function useSavedViews() {
   const stored = usePrimarySettings((settings) => settings.savedViews);
   const canSave = usePrimarySettingsAvailable();
   const updateSettings = useUpdatePrimarySettings();
   const optimistic = pending.usePending(stored);
-  const views = optimistic ?? stored ?? DEFAULT_SAVED_VIEWS;
+  const storedViews = optimistic ?? stored ?? DEFAULT_SAVED_VIEWS;
+  const local = useSidebarViewStore(
+    useShallow((state) => ({
+      groupByProject: state.groupByProject,
+      pinsStayGrouped: state.pinsStayGrouped,
+      sort: state.sort,
+      projectSort: state.projectSort,
+    })),
+  );
+  const views = useMemo(() => withBuiltInThreadsView(storedViews, local), [local, storedViews]);
 
   const write = useCallback(
     (next: readonly SavedView[]) => {
@@ -35,10 +54,10 @@ export function useSavedViews() {
 
   const actions = useMemo(() => {
     // Always build on the newest list, including writes not yet echoed.
-    const current = () => pending.read() ?? views;
+    const current = () => pending.read() ?? storedViews;
     return {
       update(id: string, patch: Partial<Omit<SavedView, "id">>) {
-        write(current().map((view) => (view.id === id ? { ...view, ...patch } : view)));
+        write(updateSavedView(current(), id, patch, local));
       },
       create(layout: SavedViewLayout): SavedView {
         const view = newSavedView(layout, newSavedViewId());
@@ -46,19 +65,17 @@ export function useSavedViews() {
         return view;
       },
       duplicate(id: string): SavedView | null {
-        const list = current();
-        const source = list.find((view) => view.id === id);
-        if (!source) return null;
-        const copy = { ...source, id: newSavedViewId(), name: `${source.name} copy` };
-        const index = list.indexOf(source);
-        write([...list.slice(0, index + 1), copy, ...list.slice(index + 1)]);
-        return copy;
+        const result = duplicateSavedView(current(), id, newSavedViewId(), local);
+        if (!result) return null;
+        write(result.list);
+        return result.copy;
       },
+      /** The built-in Threads view always exists; removing it does nothing. */
       remove(id: string) {
-        write(current().filter((view) => view.id !== id));
+        write(removeSavedView(current(), id));
       },
     };
-  }, [views, write]);
+  }, [local, storedViews, write]);
 
   return { views, canSave, ...actions };
 }
