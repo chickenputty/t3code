@@ -498,8 +498,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   );
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = useCallback(
-    (patch: UnifiedSettingsPatch) => {
+    // Fork: resolves false when a server write was refused or failed, so a caller
+    // holding an optimistic copy (saved views) can drop it instead of showing it.
+    (patch: UnifiedSettingsPatch): Promise<boolean> => {
       const { serverPatch, clientPatch } = splitPatch(patch);
+      const serverWrites: Array<Promise<boolean>> = []; // Fork
 
       const canWriteServerPatch =
         environmentId === null ||
@@ -512,6 +515,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           title: "Setting not saved",
           description: `This connection lacks permission to change settings on ${environments.find((target) => target.environmentId === environmentId)?.label ?? "the selected environment"}.`,
         });
+        serverWrites.push(Promise.resolve(false)); // Fork
       }
       if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
         const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
@@ -524,12 +528,16 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           });
         if (Object.keys(localPatch).length > 0) {
           if (environmentId) {
-            void persistServerSettings({
-              environmentId,
-              input: { patch: localPatch },
-            });
+            // Fork: kept so the caller learns whether it landed.
+            serverWrites.push(
+              persistServerSettings({
+                environmentId,
+                input: { patch: localPatch },
+              }).then((result) => result._tag !== "Failure" || isAtomCommandInterrupted(result)),
+            );
           } else {
             warnUnsaved();
+            serverWrites.push(Promise.resolve(false)); // Fork
           }
         }
         if (Object.keys(sharedPatch).length > 0) {
@@ -575,15 +583,18 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                   ? "Update older servers to save this setting."
                   : undefined,
             );
+            serverWrites.push(Promise.resolve(false)); // Fork
           } else {
-            void Promise.all(
+            const outcomesPromise = Promise.all(
               writes.map(async (request) => ({
                 label:
                   environments.find((target) => target.environmentId === request.environmentId)
                     ?.label ?? request.environmentId,
+                environmentId: request.environmentId, // Fork
                 result: await persist(request),
               })),
-            ).then((outcomes) => {
+            );
+            void outcomesPromise.then((outcomes) => {
               const failures = outcomes.flatMap(({ label, result }) => {
                 if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
                 const error = squashAtomCommandFailure(result);
@@ -605,12 +616,28 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                 ].join("\n"),
               });
             });
+            // Fork: landed when the selected target saved it (or every target, without one).
+            serverWrites.push(
+              outcomesPromise.then((outcomes) => {
+                const own =
+                  environmentId === null
+                    ? outcomes
+                    : outcomes.filter((outcome) => outcome.environmentId === environmentId);
+                return (
+                  own.length > 0 &&
+                  own.every(
+                    ({ result }) => result._tag !== "Failure" || isAtomCommandInterrupted(result),
+                  )
+                );
+              }),
+            );
           }
         }
       }
       if (Object.keys(clientPatch).length > 0) {
         void persistClientSettingsPatch(clientPatch);
       }
+      return Promise.all(serverWrites).then((landed) => landed.every(Boolean)); // Fork
     },
     [environmentId, environments, persist, persistServerSettings, sharedSettingsSyncTargetIds],
   );

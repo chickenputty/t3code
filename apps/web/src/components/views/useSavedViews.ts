@@ -47,7 +47,10 @@ export function useSavedViews() {
   const write = useCallback(
     (next: readonly SavedView[]) => {
       pending.set(next);
-      updateSettings({ savedViews: [...next] });
+      void updateSettings({ savedViews: [...next] }).then((landed) => {
+        // A refused or failed write never echoes back; stop showing it as saved.
+        if (!landed && pending.read() === next) pending.set(null);
+      });
     },
     [updateSettings],
   );
