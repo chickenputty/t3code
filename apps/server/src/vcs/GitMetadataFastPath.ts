@@ -400,7 +400,46 @@ async function fingerprintFiles(files: ReadonlyArray<string>): Promise<string> {
   return stats.map((stat) => (stat ? `${stat.mtimeMs}:${stat.size}:${stat.ino}` : "-")).join("|");
 }
 
+export interface GitProcessResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Runs `git` in `cwd`; rejects when it cannot start, times out or overflows. */
+export type GitProcessRunner = (
+  args: ReadonlyArray<string>,
+  options: {
+    readonly cwd: string;
+    readonly env?: NodeJS.ProcessEnv | undefined;
+    readonly timeoutMs: number;
+    readonly maxOutputBytes: number;
+  },
+) => Promise<GitProcessResult>;
+
+// Fork (chickenputty/t3code): the server points this at its spawn workers, so the
+// verdict and config checks below never start git on the event loop. Unset (tests,
+// other hosts) they use execFile as before.
+let gitProcessRunner: GitProcessRunner | null = null;
+export const setGitProcessRunner = (runner: GitProcessRunner | null) => {
+  gitProcessRunner = runner;
+};
+
 function listOuterConfig(): Promise<string> {
+  const args = ["config", "--list", "--show-scope", "--show-origin", "-z"];
+  const runner = gitProcessRunner;
+  if (runner !== null) {
+    return withOwnGitProcess(() =>
+      runner(args, {
+        cwd: NodeOS.tmpdir(),
+        timeoutMs: 10_000,
+        maxOutputBytes: 4 * 1024 * 1024,
+      }).then((result) => {
+        if (result.exitCode !== 0) throw new Error(`git config --list exited ${result.exitCode}`);
+        return result.stdout;
+      }),
+    );
+  }
   return withOwnGitProcess(
     () =>
       new Promise((resolve, reject) => {
@@ -634,6 +673,17 @@ interface GitVerdict {
 const verdicts = new Map<string, { readonly at: number; readonly verdict: Promise<GitVerdict> }>();
 
 function askGit(args: ReadonlyArray<string>): Promise<GitVerdict> {
+  const runner = gitProcessRunner;
+  if (runner !== null) {
+    return withOwnGitProcess(() =>
+      runner(args, {
+        cwd: NodeOS.tmpdir(),
+        env: { ...process.env, LC_ALL: "C" },
+        timeoutMs: 10_000,
+        maxOutputBytes: 64 * 1024,
+      }),
+    );
+  }
   return withOwnGitProcess(
     () =>
       new Promise((resolve, reject) => {
@@ -1013,10 +1063,10 @@ const byteOrder = (left: string, right: string) =>
  * an object: the refs git iterates for a pattern without wildcards.
  */
 async function listBranchRefs(repo: Repository, prefix: string): Promise<ReadonlyArray<string>> {
-  const packed = await readPackedRefs(repo.commonDir);
   const refs = new Set<string>();
-  for (const ref of packed.keys()) if (ref.startsWith(prefix)) refs.add(ref);
-
+  // Loose refs first, then packed-refs, as git reads them: `git pack-refs` writes
+  // packed-refs before it deletes the loose files, so a ref moving between the two
+  // is always seen in one of them.
   const visit = async (parent: string, keep: (name: string) => boolean): Promise<void> => {
     const dir = NodePath.join(repo.commonDir, ...parent.split("/"));
     await assertNoSymlinks(dir);
@@ -1052,6 +1102,8 @@ async function listBranchRefs(repo: Repository, prefix: string): Promise<Readonl
   const slash = prefix.lastIndexOf("/");
   const base = prefix.slice(slash + 1);
   await visit(prefix.slice(0, slash), (name) => name.startsWith(base));
+  const packed = await readPackedRefs(repo.commonDir);
+  for (const ref of packed.keys()) if (ref.startsWith(prefix)) refs.add(ref);
   return [...refs];
 }
 
@@ -1111,15 +1163,17 @@ async function shortTrackingName(repo: Repository, ref: string): Promise<string>
   if (ref.endsWith("/HEAD")) unsure("upstream is a remote HEAD");
   const short = ref.slice("refs/remotes/".length);
   const rivals = [`refs/${short}`, `refs/tags/${short}`, `refs/heads/${short}`, `${ref}/HEAD`];
-  const packed = await readPackedRefs(repo.commonDir);
+  // Loose files before packed-refs, the order `git pack-refs` cannot slip a ref past.
   for (const rival of rivals) {
-    if (!isSafeRefName(rival) || packed.has(rival)) unsure("ambiguous short name");
+    if (!isSafeRefName(rival)) unsure("unsafe rival ref");
     if (await statOrNull(NodePath.join(repo.commonDir, ...rival.split("/"))))
       unsure("ambiguous short name");
   }
   for (const dir of new Set([repo.gitDir, repo.commonDir])) {
     if (await statOrNull(NodePath.join(dir, ...short.split("/")))) unsure("ambiguous short name");
   }
+  const packed = await readPackedRefs(repo.commonDir);
+  if (rivals.some((rival) => packed.has(rival))) unsure("ambiguous short name");
   return short;
 }
 

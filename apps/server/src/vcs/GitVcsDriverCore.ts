@@ -112,6 +112,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+import { runProcessWithSpawner } from "../processRunner.ts";
 import { WorkerProcessSpawner } from "../workerProcessSpawner.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -1012,8 +1013,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // Git runs about once a second; on Windows a blocking spawn would stall the server.
-  const commandSpawner =
-    (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
+  const workerSpawner = yield* WorkerProcessSpawner;
+  const commandSpawner = workerSpawner ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
+  // The fast path's own git checks (repository verdicts, outer config) start on the
+  // same workers, so they never stall the event loop either.
+  if (workerSpawner !== undefined) {
+    GitMetadataFastPath.setGitProcessRunner((args, options) =>
+      Effect.runPromise(
+        runProcessWithSpawner(workerSpawner, {
+          command: "git",
+          args,
+          cwd: options.cwd,
+          env: options.env,
+          timeout: Duration.millis(options.timeoutMs),
+          maxOutputBytes: options.maxOutputBytes,
+        }).pipe(
+          Effect.map((output) => ({
+            exitCode: output.code ?? -1,
+            stdout: output.stdout,
+            stderr: output.stderr,
+          })),
+        ),
+      ),
+    );
+  }
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcess.Platform;

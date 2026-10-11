@@ -42,6 +42,21 @@ describe("WorkerProcessSpawner", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.live("runs a process from a plain promise, as the git fast path's runner does", () =>
+    Effect.gen(function* () {
+      const spawner = yield* WorkerProcessSpawner.make;
+      const result = yield* Effect.promise(() =>
+        Effect.runPromise(
+          ProcessRunner.runProcessWithSpawner(
+            spawner,
+            node("process.stdout.write('from worker'); process.exit(2)"),
+          ),
+        ),
+      );
+      expect(result).toMatchObject({ stdout: "from worker", code: 2 });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("pipes stdin to the child", () =>
     Effect.gen(function* () {
       const runner = yield* ProcessRunner.ProcessRunner;

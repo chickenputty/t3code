@@ -11,6 +11,7 @@ import {
   parseGitConfig,
   rememberGitAnswer,
   resetGitFastPathCaches,
+  setGitProcessRunner,
   tryAnswerGitCommand,
   withinReadBudget,
 } from "./GitMetadataFastPath.ts";
@@ -155,6 +156,26 @@ describe("GitMetadataFastPath", () => {
     }
     // Guards against the fast path silently declining everything.
     expect(answered).toBeGreaterThan(60);
+  });
+
+  it("starts its own git checks through the runner it is given", async () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    setGitProcessRunner(async (args, options) => {
+      calls.push(args);
+      const result = NodeChildProcess.spawnSync("git", [...args], {
+        cwd: options.cwd,
+        env: options.env ?? process.env,
+        encoding: "utf8",
+      });
+      return { exitCode: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+    });
+    try {
+      const fast = await tryAnswerGitCommand({ cwd: repos.plain!, args: ["remote"] });
+      expect(fast?.stdout).toBe(git(repos.plain!, "remote"));
+      expect(calls.length).toBeGreaterThan(0);
+    } finally {
+      setGitProcessRunner(null);
+    }
   });
 
   it("accepts the -C and --git-dir forms the drivers use", async () => {

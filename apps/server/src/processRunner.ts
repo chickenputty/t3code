@@ -389,12 +389,17 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
+/** Runs one process through `spawner`, for callers that hold a spawner rather than the service. */
+export const runProcessWithSpawner = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  input: ProcessRunInput,
+) => finalizeRunProcess(runProcessCore(spawner, input), input);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = (yield* WorkerProcessSpawner) ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
 
-  const run: ProcessRunner["Service"]["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+  const run: ProcessRunner["Service"]["run"] = (input) => runProcessWithSpawner(spawner, input);
 
   return ProcessRunner.of({
     run,
