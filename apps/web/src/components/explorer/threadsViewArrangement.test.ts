@@ -159,7 +159,7 @@ describe("threadsViewSummary", () => {
     expect(threadsViewSummary({ ...view, groupBy: "status" })).toBe("By status");
     const filter = (count: number) => ({
       ...view.filter,
-      conditions: Array(count).fill(condition),
+      conditions: Array.from({ length: count }, () => condition),
     });
     expect(threadsViewSummary({ filter: filter(1), groupBy: null })).toBe("1 filter");
     expect(threadsViewSummary({ filter: filter(2), groupBy: "project" })).toBe(
