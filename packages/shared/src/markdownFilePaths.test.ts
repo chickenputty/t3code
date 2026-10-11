@@ -108,6 +108,17 @@ describe("protectFilePathsInMarkdown", () => {
     ]);
   });
 
+  it("links a path in angle brackets, which CommonMark reads as text", () => {
+    expect(
+      links(
+        String.raw`Open <C:/Users/Adam/rbxcdn-m0/docs/no-cdn.md> or <C:\Users\me\Pet Vault\notes.md>.`,
+      ).map((link) => link.slice(1)),
+    ).toEqual([
+      ["file:///C:/Users/Adam/rbxcdn-m0/docs/no-cdn.md", "C:/Users/Adam/rbxcdn-m0/docs/no-cdn.md"],
+      ["file:///C:/Users/me/Pet Vault/notes.md", String.raw`C:\Users\me\Pet Vault\notes.md`],
+    ]);
+  });
+
   it("leaves code, link labels, URLs and non-paths alone", () => {
     const untouched = [
       "```\nC:\\a b\\c.png\n```",
@@ -132,7 +143,7 @@ describe("protectFilePathsInMarkdown", () => {
 
   it("is idempotent", () => {
     const once = protectFilePathsInMarkdown(
-      String.raw`![a](C:\x y\z.png) and C:\p\q.md and [b](<C:\m n\o.md>)`,
+      String.raw`![a](C:\x y\z.png) and C:\p\q.md and [b](<C:\m n\o.md>) and <C:\r s\t.md>`,
     );
     expect(protectFilePathsInMarkdown(once)).toBe(once);
   });

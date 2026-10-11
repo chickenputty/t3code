@@ -553,6 +553,14 @@ function protectProse(text: string): string {
       continue;
     }
     if (char === "<") {
+      // `<C:/x.md>` is not an autolink (a scheme needs two letters), so it
+      // would show as text; link it like a prose path.
+      const bracketed = /^<([A-Za-z]:[\\/][^<>\n]*)>/.exec(text.slice(index))?.[1];
+      if (bracketed && !/^\s|\s$/.test(bracketed)) {
+        result += `[${escapeMarkdownLabel(bracketed)}](<${bracketed.replaceAll("\\", "/")}>)`;
+        index += bracketed.length + 2;
+        continue;
+      }
       // An autolink or an HTML tag (attributes may quote a path) stays as written.
       const tag = /^<(?:[^\s<>]+>|[A-Za-z/!][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>)/.exec(
         text.slice(index),
