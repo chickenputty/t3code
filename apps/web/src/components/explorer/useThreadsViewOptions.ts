@@ -73,7 +73,7 @@ export function useThreadsViewOptions() {
       setProjectSortReversed: state.setProjectSortReversed,
     })),
   );
-  const view = useMemo((): SavedView => {
+  const resolvedView = useMemo((): SavedView => {
     const active = resolveActiveExplorerView(views, activeViewId);
     // Only a Threads layout arranges this list; anything else reads the built-in one.
     const shown =
@@ -82,6 +82,10 @@ export function useThreadsViewOptions() {
         : resolveActiveExplorerView(views, BUILT_IN_THREADS_VIEW_ID);
     return canSave ? shown : withLocalArrangement(shown, local);
   }, [activeViewId, canSave, local, views]);
+  // Every saved view edit re-decodes the whole list; an unchanged view keeps its
+  // identity, so an edit to another view rebuilds none of the rows below.
+  const viewKey = JSON.stringify(resolvedView);
+  const view = useMemo(() => JSON.parse(viewKey) as SavedView, [viewKey]);
 
   const groupProperty = view.groupBy === null ? undefined : viewProperty(view.groupBy);
   const groupBy = groupProperty?.groupable ? groupProperty.id : null;

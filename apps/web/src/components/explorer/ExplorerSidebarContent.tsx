@@ -3,13 +3,23 @@
  * A Threads layout is upstream's thread list; every other layout is a card
  * view sized to the sidebar.
  */
+import { memo } from "react";
+
 import ThreadSidebar from "../Sidebar";
 import { SidebarViewPanel } from "../views/SidebarViewPanel";
-import { useActiveExplorerView } from "./useActiveExplorerView";
+import { useActiveExplorerView, useActiveExplorerViewIdentity } from "./useActiveExplorerView";
+
+// Takes no props: a saved view edit re-renders it only through its own subscriptions.
+const MemoThreadSidebar = memo(ThreadSidebar);
 
 export function ExplorerSidebarContent() {
-  const view = useActiveExplorerView();
-  if (view.layout === "threads") return <ThreadSidebar />;
+  const { id, layout } = useActiveExplorerViewIdentity();
+  if (layout === "threads") return <MemoThreadSidebar />;
   // Keyed so search, selection and renaming start fresh in each view.
-  return <SidebarViewPanel key={view.id} view={view} />;
+  return <ActiveViewPanel key={id} />;
+}
+
+function ActiveViewPanel() {
+  const view = useActiveExplorerView();
+  return <SidebarViewPanel view={view} />;
 }

@@ -36,7 +36,7 @@ import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import { ExplorerRevealer } from "./explorer/ExplorerRevealer";
 import { ExplorerSidebarContent } from "./explorer/ExplorerSidebarContent";
 import { explorerWidthStorageKey, readExplorerWidth } from "./explorer/explorerWidth";
-import { useActiveExplorerView } from "./explorer/useActiveExplorerView";
+import { useActiveExplorerViewIdentity } from "./explorer/useActiveExplorerView";
 import { BUILT_IN_THREADS_VIEW_ID } from "./views/viewEngine";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -233,7 +233,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   // Fork: each explorer view keeps its own sidebar width.
-  const activeExplorerView = useActiveExplorerView();
+  const activeExplorerView = useActiveExplorerViewIdentity();
   const widthSource =
     isOnSettings || legacySidebarEnabled
       ? THREADS_WIDTH_SOURCE
@@ -329,7 +329,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           collapsible="offcanvas"
           data-app-sidebar=""
           role="navigation"
-          aria-label={isOnSettings ? "Settings" : "Threads"}
+          // Fork: named for the view the explorer shows.
+          aria-label={
+            isOnSettings ? "Settings" : legacySidebarEnabled ? "Threads" : activeExplorerView.name
+          }
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: sidebarMinimumWidth,

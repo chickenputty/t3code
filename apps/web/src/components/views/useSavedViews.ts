@@ -1,4 +1,6 @@
 import type { SavedView, SavedViewLayout } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type { ServerSettings } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -8,6 +10,7 @@ import {
   useUpdatePrimarySettings,
 } from "~/hooks/useSettings";
 import { useSidebarViewStore } from "~/components/sidebar/sidebarViewStore";
+import { primaryServerSettingsAtom } from "~/state/server";
 
 import { createPendingSetting } from "./pendingSetting";
 import { duplicateSavedView, removeSavedView, updateSavedView } from "./savedViewList";
@@ -84,4 +87,23 @@ export function useSavedViews() {
   }, [local, storedViews, write]);
 
   return { views, canSave, ...actions };
+}
+
+/**
+ * One primitive fact about the stored views (pending write included, built-in
+ * Threads view not), for components that must not re-render on every view
+ * edit. `select` should be stable.
+ */
+export function useSavedViewsValue<R extends string | number | boolean | null>(
+  select: (stored: readonly SavedView[]) => R,
+): R {
+  const fromPending = pending.useSelect((list) => (list === null ? undefined : select(list)));
+  const fromStored = useAtomValue(
+    primaryServerSettingsAtom,
+    useCallback(
+      (settings: ServerSettings) => select(settings.savedViews ?? DEFAULT_SAVED_VIEWS),
+      [select],
+    ),
+  );
+  return fromPending === undefined ? fromStored : fromPending;
 }

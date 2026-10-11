@@ -3,14 +3,57 @@
  * falling back to the built-in Threads view when none is chosen or the chosen
  * one is gone.
  */
-import type { SavedView } from "@t3tools/contracts";
-import { useMemo } from "react";
+import type { SavedView, SavedViewLayout } from "@t3tools/contracts";
+import { useCallback, useMemo } from "react";
 
-import { useSavedViews } from "../views/useSavedViews";
+import {
+  DEFAULT_SIDEBAR_PROJECT_SORT,
+  MANUAL_SIDEBAR_THREAD_SORT,
+} from "~/components/sidebar/sidebarArrangement";
+
+import { useSavedViews, useSavedViewsValue } from "../views/useSavedViews";
+import { type LocalThreadsArrangement, withBuiltInThreadsView } from "../views/viewEngine";
 import { resolveActiveExplorerView, useExplorerStore } from "./explorerStore";
 
 export function useActiveExplorerView(): SavedView {
   const { views } = useSavedViews();
   const activeViewId = useExplorerStore((state) => state.activeViewId);
   return useMemo(() => resolveActiveExplorerView(views, activeViewId), [activeViewId, views]);
+}
+
+export interface ExplorerViewIdentity {
+  readonly id: string;
+  readonly layout: SavedViewLayout;
+  readonly name: string;
+}
+
+// Only the built-in view's id, layout and fixed name are read; its arrangement is not.
+const ANY_ARRANGEMENT: LocalThreadsArrangement = {
+  groupByProject: false,
+  pinsStayGrouped: false,
+  sort: MANUAL_SIDEBAR_THREAD_SORT,
+  projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
+};
+
+/**
+ * The active view's id, layout and name alone: re-renders only when one of
+ * them changes, not on every edit to a saved view.
+ */
+export function useActiveExplorerViewIdentity(): ExplorerViewIdentity {
+  const activeViewId = useExplorerStore((state) => state.activeViewId);
+  const select = useCallback(
+    (stored: readonly SavedView[]) => {
+      const view = resolveActiveExplorerView(
+        withBuiltInThreadsView(stored, ANY_ARRANGEMENT),
+        activeViewId,
+      );
+      return JSON.stringify([view.id, view.layout, view.name]);
+    },
+    [activeViewId],
+  );
+  const key = useSavedViewsValue(select);
+  return useMemo(() => {
+    const [id, layout, name] = JSON.parse(key) as [string, SavedViewLayout, string];
+    return { id, layout, name };
+  }, [key]);
 }
