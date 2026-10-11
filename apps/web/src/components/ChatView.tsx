@@ -453,6 +453,10 @@ import {
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useChatPane } from "./chat/ChatPaneContext";
+// Fork: thread pane tabs.
+import { ThreadPaneTabBody } from "./thread/ThreadPaneTabBody";
+import { ThreadPaneTabStrip } from "./thread/ThreadPaneTabStrip";
+import { useShownThreadPaneTab } from "./thread/threadPaneTabStore";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -4099,6 +4103,9 @@ export default function ChatView(props: ChatViewProps) {
     backgroundSubmissionPending,
     hasWorktreeSetupCard: worktreeSetup !== null,
   });
+  // Fork: thread pane tabs, for server threads past the empty hero composer.
+  const threadPaneTabsEnabled = isServerThread && !isDraftHeroState;
+  const threadPaneTab = useShownThreadPaneTab(threadPaneTabsEnabled);
   const draftHeroTransition = useDraftHeroLayoutTransition(
     isDraftHeroState,
     panelAnimationsActive,
@@ -11422,6 +11429,8 @@ export default function ChatView(props: ChatViewProps) {
               : {})}
           />
         </header>
+        {/* Fork: thread pane tabs */}
+        <ThreadPaneTabStrip threadRef={activeThreadRef} enabled={threadPaneTabsEnabled} />
 
         {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -11585,9 +11594,16 @@ export default function ChatView(props: ChatViewProps) {
                   ? {}
                   : { historyControls: threadHistoryControls })}
               />
+              {/* Fork: thread pane tabs */}
+              <ThreadPaneTabBody
+                threadRef={activeThreadRef}
+                enabled={threadPaneTabsEnabled}
+                bottomInset={composerTimelineInset}
+              />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && !isThreadFindActive && (
+              {/* Fork: hidden while a thread pane tab covers the timeline. */}
+              {showScrollToBottom && !isThreadFindActive && threadPaneTab === "chat" && (
                 <div
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}
