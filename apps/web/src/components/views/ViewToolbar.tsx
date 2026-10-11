@@ -554,7 +554,10 @@ export function GroupControl({
   update: UpdateView;
   compact: boolean;
 }) {
-  const groupable = VIEW_PROPERTIES.filter((property) => property.groupable);
+  // Sections are the native Threads list's own shelves, so it never groups by them.
+  const groupable = VIEW_PROPERTIES.filter(
+    (property) => property.groupable && !(view.layout === "threads" && property.id === "section"),
+  );
   const current = view.groupBy === null ? null : viewProperty(view.groupBy);
   return (
     <Menu>
