@@ -14,7 +14,7 @@ import { useMinuteClock, useViewRows } from "~/components/views/useViewRows";
 import { useThreadCategories } from "~/components/views/useThreadCategories";
 import { type ViewBulkAction, useViewThreadOps } from "~/components/views/useViewThreadOps";
 import type { ViewRow } from "~/components/views/viewEngine";
-import { useThreadProjection } from "~/state/entities";
+import { useThreadProjection, useThreadShell } from "~/state/entities";
 
 import { ThreadActivityTab } from "./ThreadActivityTab";
 import { ThreadFilesTab } from "./ThreadFilesTab";
@@ -58,20 +58,17 @@ function PaneTabContent({
   const model = useMemo(() => (thread ? buildInspectorModel(thread.projection) : null), [thread]);
   const nowMs = useMinuteClock();
   if (tab === "overview") return <PaneOverview threadRef={threadRef} model={model} />;
-  if (model === null) {
-    return (
-      <div className="flex items-center gap-2 text-muted-foreground text-sm">
-        <Spinner className="size-4" />
-        Loading conversation…
-      </div>
-    );
-  }
+  if (model === null) return <PaneLoading />;
   if (tab === "files") return <ThreadFilesTab model={model} />;
   if (tab === "activity") return <ThreadActivityTab model={model} nowMs={nowMs} />;
   return <ThreadUsageTab model={model} />;
 }
 
-/** The Overview needs the thread's view row, built the same way saved views build theirs. */
+/**
+ * The Overview needs the thread's view row, built the same way saved views
+ * build theirs. A thread missing from the live shells (archived) is looked up
+ * in the archived feed, so its Overview still offers Unarchive.
+ */
 function PaneOverview({
   threadRef,
   model,
@@ -80,7 +77,8 @@ function PaneOverview({
   model: InspectorModel | null;
 }) {
   const categories = useThreadCategories();
-  const { rows, nowMs } = useViewRows(false, categories);
+  const live = useThreadShell(threadRef) !== null;
+  const { rows, nowMs, archivedLoading } = useViewRows(!live, categories);
   const key = scopedThreadKey(threadRef);
   const row = useMemo(() => rows.find((candidate) => candidate.key === key) ?? null, [key, rows]);
   const ops = useViewThreadOps();
@@ -89,7 +87,20 @@ function PaneOverview({
     [ops],
   );
   if (row === null) {
-    return <p className="text-muted-foreground text-sm">This thread is not loaded.</p>;
+    return archivedLoading ? (
+      <PaneLoading />
+    ) : (
+      <p className="text-muted-foreground text-sm">This thread is not loaded.</p>
+    );
   }
   return <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />;
+}
+
+function PaneLoading() {
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground text-sm">
+      <Spinner className="size-4" />
+      Loading conversation…
+    </div>
+  );
 }

@@ -50,8 +50,8 @@ export function ThreadActivityTab({ model, nowMs }: { model: InspectorModel; now
                 {run.activity
                   .filter((item) => item.title)
                   .slice(0, 8)
-                  .map((item, index) => (
-                    <li key={index} className="truncate text-muted-foreground">
+                  .map((item) => (
+                    <li key={item.id} className="truncate text-muted-foreground">
                       {item.title}
                     </li>
                   ))}
