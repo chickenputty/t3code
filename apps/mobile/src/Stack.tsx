@@ -1,3 +1,6 @@
+import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
+import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
+import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
 import {
   createV5StackNavigator as createNativeStackNavigator,
   createV5SheetStackNavigator,
@@ -27,6 +30,14 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
+import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
+import {
+  PullRequestRouteScreen,
+  PullRequestFileRouteScreen,
+  PullRequestFilesRouteScreen,
+} from "./features/pull-requests/PullRequestRouteScreen";
+import { PullRequestReviewSheet } from "./features/pull-requests/PullRequestReviewSheet";
+import { PullRequestReviewersScreen } from "./features/pull-requests/PullRequestReviewersScreen";
 import {
   RenderErrorBoundary,
   RenderFailureView,
@@ -58,7 +69,6 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
-import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -102,6 +112,7 @@ import {
 import { ScheduledTaskEditorProvider } from "./features/settings/scheduled-task-editor";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
+import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
@@ -308,6 +319,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "keyboard",
       options: {
         title: "Keyboard",
+      },
+    }),
+    SettingsMicrophone: createNativeStackScreen({
+      screen: SettingsMicrophoneRouteScreen,
+      linking: "microphone",
+      options: {
+        title: "Microphone",
       },
     }),
     SettingsFollowUp: createNativeStackScreen({
@@ -544,6 +562,8 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
+  "PullRequestReview",
+  "PullRequestInlineComment",
   "ConnectOnboarding",
   "Connections",
   "ConnectionsNew",
@@ -686,13 +706,72 @@ const RootStackConfig = createWorkspaceStackNavigator({
   },
   screens: {
     Home: createNativeStackScreen({
-      screen: HomeRouteScreen,
+      screen: WorkspaceRootScreen,
       linking: "",
       options: {
         ...GLASS_HEADER_OPTIONS,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
+      },
+    }),
+    PullRequest: createNativeStackScreen({
+      screen: PullRequestRouteScreen,
+      linking: {
+        path: "pull-requests/:environmentId/:projectId/:repository/:number",
+        parse: { number: Number },
+      },
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequestGuideStop: createNativeStackScreen({
+      screen: PullRequestGuideStopScreen,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequestFile: createNativeStackScreen({
+      screen: PullRequestFileRouteScreen,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequestFiles: createNativeStackScreen({
+      screen: PullRequestFilesRouteScreen,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.6, 0.92],
+        sheetGrabberVisible: true,
+        headerShown: false,
+      },
+    }),
+    PullRequestReviewers: createNativeStackScreen({
+      screen: PullRequestReviewersScreen,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.75, 0.92],
+        sheetGrabberVisible: true,
+        headerBackVisible: false,
+      },
+    }),
+    PullRequestDiscussion: createNativeStackScreen({
+      screen: PullRequestDiscussionScreen,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequestInlineComment: createNativeStackScreen({
+      screen: PullRequestInlineCommentScreen,
+      options: {
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.75, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
+        headerShown: false,
+      },
+    }),
+    PullRequestReview: createNativeStackScreen({
+      screen: PullRequestReviewSheet,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.75, 0.92],
+        sheetGrabberVisible: true,
+        headerShown: false,
       },
     }),
     Thread: createNativeStackScreen({
@@ -897,6 +976,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ConnectionsNewRouteScreen,
       linking: "connections/new",
       options: {
+        // Keep the iOS header visible from the first render so the sheet's
+        // native header stack mounts without remounting the pairing form.
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
+        title: "Add Environment",
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,

@@ -95,13 +95,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }, [onAdvance]);
 
   useEffect(() => {
-    if (disabled && autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-      autoAdvanceTimerRef.current = null;
-    }
-  }, [disabled]);
-
-  useEffect(() => {
     if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
       return;
     }
@@ -122,14 +115,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     progress.selectedOptionValues,
   ]);
 
-  // Clear auto-advance timer on unmount
+  // A delayed answer only advances its own question, while permission remains granted.
   useEffect(() => {
-    return () => {
+    const clearAutoAdvance = () => {
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);
+        autoAdvanceTimerRef.current = null;
       }
     };
-  }, []);
+    if (disabled || activeQuestion?.id === undefined) clearAutoAdvance();
+    return clearAutoAdvance;
+  }, [activeQuestion?.id, disabled]);
 
   const handleOptionSelection = useCallback(
     (questionId: string, optionValue: string) => {
