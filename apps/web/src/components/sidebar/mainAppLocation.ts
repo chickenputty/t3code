@@ -20,7 +20,11 @@ let mainAppHref: string | null = null;
 // return there no matter how many utility pages were visited since.
 export function MainAppLocationTracker() {
   const href = useLocation({
-    select: (location) => (isSidebarUtilityPage(location.pathname) ? null : location.href),
+    select: (location) =>
+      // Fork: a `/views/<id>` deep link only picks a view, then leaves for this href.
+      isSidebarUtilityPage(location.pathname) || location.pathname.startsWith("/views/")
+        ? null
+        : location.href,
   });
   useEffect(() => {
     if (href !== null) mainAppHref = href;
