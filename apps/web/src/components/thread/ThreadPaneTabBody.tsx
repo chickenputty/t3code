@@ -4,17 +4,16 @@
  * bottom for the composer overlay, so the composer stays live on every tab.
  * Nothing mounts while the Chat tab is shown.
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
 import { Spinner } from "~/components/ui/spinner";
 import { buildInspectorModel, type InspectorModel } from "~/components/views/inspectorModel";
-import { useMinuteClock, useViewRows } from "~/components/views/useViewRows";
+import { useMinuteClock, useViewRow } from "~/components/views/useViewRows";
 import { useThreadCategories } from "~/components/views/useThreadCategories";
 import { type ViewBulkAction, useViewThreadOps } from "~/components/views/useViewThreadOps";
 import type { ViewRow } from "~/components/views/viewEngine";
-import { useThreadProjection, useThreadShell } from "~/state/entities";
+import { useThreadProjection } from "~/state/entities";
 
 import { ThreadActivityTab } from "./ThreadActivityTab";
 import { ThreadFilesTab } from "./ThreadFilesTab";
@@ -66,8 +65,9 @@ function PaneTabContent({
 
 /**
  * The Overview needs the thread's view row, built the same way saved views
- * build theirs. A thread missing from the live shells (archived) is looked up
- * in the archived feed, so its Overview still offers Unarchive.
+ * build theirs, for this thread alone. A thread missing from the live shells
+ * (archived) is looked up in its environment's archived feed, so its Overview
+ * still offers Unarchive.
  */
 function PaneOverview({
   threadRef,
@@ -77,10 +77,7 @@ function PaneOverview({
   model: InspectorModel | null;
 }) {
   const categories = useThreadCategories();
-  const live = useThreadShell(threadRef) !== null;
-  const { rows, nowMs, archivedLoading } = useViewRows(!live, categories);
-  const key = scopedThreadKey(threadRef);
-  const row = useMemo(() => rows.find((candidate) => candidate.key === key) ?? null, [key, rows]);
+  const { row, nowMs, archivedLoading } = useViewRow(threadRef, categories);
   const ops = useViewThreadOps();
   const onAction = useCallback(
     (target: ViewRow, action: ViewBulkAction) => void ops.runBulk([target], action),
