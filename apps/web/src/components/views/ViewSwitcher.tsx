@@ -38,6 +38,7 @@ export const VIEW_LAYOUT_ICONS: Record<SavedViewLayout, typeof ListIcon> = {
   board: Columns3Icon,
   gallery: LayoutGridIcon,
   table: Table2Icon,
+  threads: MessagesSquareIcon,
 };
 
 const LAYOUTS: readonly SavedViewLayout[] = ["list", "board", "gallery", "table"];

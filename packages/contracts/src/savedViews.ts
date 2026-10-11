@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 /**
  * Saved thread views: Notion-style list, board, gallery and table layouts
@@ -10,8 +11,23 @@ import * as Schema from "effect/Schema";
  * unions: a client meets ids from a newer client and ignores what it does
  * not know instead of failing to decode the whole settings file.
  */
-export const SavedViewLayout = Schema.Literals(["list", "board", "gallery", "table"]);
+const KNOWN_SAVED_VIEW_LAYOUTS = ["list", "board", "gallery", "table", "threads"] as const;
+export const SavedViewLayout = Schema.Literals(KNOWN_SAVED_VIEW_LAYOUTS);
 export type SavedViewLayout = typeof SavedViewLayout.Type;
+
+/** A layout from a newer build decodes as a list instead of failing the whole view. */
+const ForwardCompatibleSavedViewLayout = Schema.String.pipe(
+  Schema.decodeTo(
+    SavedViewLayout,
+    SchemaTransformation.transform({
+      decode: (layout): SavedViewLayout =>
+        (KNOWN_SAVED_VIEW_LAYOUTS as readonly string[]).includes(layout)
+          ? (layout as SavedViewLayout)
+          : "list",
+      encode: (layout) => layout,
+    }),
+  ),
+);
 
 export const SavedViewOpenMode = Schema.Literals(["peek", "modal", "page"]);
 export type SavedViewOpenMode = typeof SavedViewOpenMode.Type;
@@ -49,10 +65,33 @@ export const SavedViewSort = Schema.Struct({
 });
 export type SavedViewSort = typeof SavedViewSort.Type;
 
+/**
+ * Sort as the sidebar stores it. The field is a plain string (the web side
+ * validates it against its sidebar sort fields) so a newer field never fails
+ * the decode.
+ */
+export const SavedViewThreadsSort = Schema.Struct({
+  field: Schema.String,
+  reversed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SavedViewThreadsSort = typeof SavedViewThreadsSort.Type;
+
+/** Options of the threads layout, the sidebar's arrangement as a saved view. */
+export const SavedViewThreadsOptions = Schema.Struct({
+  sort: SavedViewThreadsSort.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ field: "manual", reversed: false })),
+  ),
+  projectSort: SavedViewThreadsSort.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ field: "activity", reversed: false })),
+  ),
+  pinsStayGrouped: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SavedViewThreadsOptions = typeof SavedViewThreadsOptions.Type;
+
 export const SavedView = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
-  layout: SavedViewLayout,
+  layout: ForwardCompatibleSavedViewLayout,
   filter: SavedViewFilter.pipe(
     Schema.withDecodingDefault(Effect.succeed({ conjunction: "and" as const, conditions: [] })),
   ),
@@ -71,6 +110,15 @@ export const SavedView = Schema.Struct({
   showSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   hideEmptyGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   openMode: SavedViewOpenMode.pipe(Schema.withDecodingDefault(Effect.succeed("peek" as const))),
+  threads: SavedViewThreadsOptions.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        sort: { field: "manual", reversed: false },
+        projectSort: { field: "activity", reversed: false },
+        pinsStayGrouped: false,
+      }),
+    ),
+  ),
 });
 export type SavedView = typeof SavedView.Type;
 

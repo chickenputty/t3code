@@ -14,7 +14,11 @@ import type {
   ThreadCategory,
 } from "@t3tools/contracts";
 
-import type { SidebarThreadDisplayStatus } from "~/components/sidebar/sidebarArrangement";
+import type {
+  SidebarProjectSort,
+  SidebarThreadDisplayStatus,
+  SidebarThreadSort,
+} from "~/components/sidebar/sidebarArrangement";
 import type { SidebarThreadSummary } from "~/types";
 
 export type ViewSection = "pinned" | "active" | "snoozed" | "settled" | "archived";
@@ -653,6 +657,7 @@ export const VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   board: "Board",
   gallery: "Gallery",
   table: "Table",
+  threads: "Threads",
 };
 
 export function newSavedView(layout: SavedViewLayout, id: string, name?: string): SavedView {
@@ -675,7 +680,47 @@ export function newSavedView(layout: SavedViewLayout, id: string, name?: string)
     showSubagents: false,
     hideEmptyGroups: true,
     openMode: "peek",
+    threads: {
+      sort: { field: "manual", reversed: false },
+      projectSort: { field: "activity", reversed: false },
+      pinsStayGrouped: false,
+    },
   };
+}
+
+/** The sidebar's own arrangement as a view; always first in the view list. */
+export const BUILT_IN_THREADS_VIEW_ID = "threads";
+
+export interface LocalThreadsArrangement {
+  readonly groupByProject: boolean;
+  readonly pinsStayGrouped: boolean;
+  readonly sort: SidebarThreadSort;
+  readonly projectSort: SidebarProjectSort;
+}
+
+export function synthesizeThreadsView(local: LocalThreadsArrangement): SavedView {
+  return {
+    ...newSavedView("threads", BUILT_IN_THREADS_VIEW_ID),
+    groupBy: local.groupByProject ? "project" : null,
+    properties: [],
+    threads: {
+      sort: { field: local.sort.field, reversed: local.sort.reversed },
+      projectSort: { field: local.projectSort.field, reversed: local.projectSort.reversed },
+      pinsStayGrouped: local.pinsStayGrouped,
+    },
+  };
+}
+
+/** The Threads view first: the stored one (keeping the fixed name) or one built from this device. */
+export function withBuiltInThreadsView(
+  views: readonly SavedView[],
+  local: LocalThreadsArrangement,
+): readonly SavedView[] {
+  const stored = views.find((view) => view.id === BUILT_IN_THREADS_VIEW_ID);
+  const threads = stored
+    ? { ...stored, name: VIEW_LAYOUT_LABELS.threads }
+    : synthesizeThreadsView(local);
+  return [threads, ...views.filter((view) => view.id !== BUILT_IN_THREADS_VIEW_ID)];
 }
 
 /** Shown until the user edits a view, when the whole list is first written. */
