@@ -96,6 +96,27 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
+const timedOutSnapshot: ServerProvider = {
+  ...refreshedSnapshot,
+  version: null,
+  status: "error",
+  auth: { status: "unknown" },
+  checkedAt: "2026-04-10T00:00:05.000Z",
+  message: "Timed out while checking provider status.",
+};
+
+/** A provider whose probes answer from `probes` in order, refreshed every minute. */
+const makeHoldTestProvider = (probes: Ref.Ref<ReadonlyArray<ServerProvider>>) =>
+  makeManagedServerProvider<TestSettings>({
+    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+    getSettings: Effect.succeed({ enabled: true }),
+    streamSettings: Stream.empty,
+    haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+    initialSnapshot: () => Effect.succeed(initialSnapshot),
+    checkProvider: Ref.modify(probes, ([next, ...rest]) => [next!, rest] as const),
+    refreshInterval: "1 minute",
+  });
+
 /** A host whose settings never change and whose background demand is fixed. */
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
@@ -683,44 +704,64 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("keeps a ready status through one failed probe, then publishes the failure", () =>
+  it.effect(
+    "keeps a ready status through one failed background probe, then publishes the failure",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const probes = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+            refreshedSnapshot,
+            timedOutSnapshot,
+            refreshedSnapshotSecond,
+            timedOutSnapshot,
+            timedOutSnapshot,
+          ]);
+          const provider = yield* makeHoldTestProvider(probes);
+          yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+          const tick = Effect.gen(function* () {
+            yield* TestClock.adjust("1 minute");
+            yield* Effect.yieldNow;
+            return yield* provider.getSnapshot;
+          });
+
+          // One failure keeps the last good snapshot, and a good probe clears the hold.
+          assert.strictEqual((yield* tick).status, "ready");
+          assert.strictEqual((yield* tick).message, refreshedSnapshotSecond.message);
+          // A second failure in a row is published.
+          assert.strictEqual((yield* tick).status, "ready");
+          assert.strictEqual((yield* tick).status, "error");
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("a Refresh the user asked for shows the failed probe", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const failedSnapshot: ServerProvider = {
-          ...refreshedSnapshot,
-          version: null,
-          status: "error",
-          auth: { status: "unknown" },
-          checkedAt: "2026-04-10T00:00:05.000Z",
-          message: "Timed out while checking provider status.",
-        };
         const probes = yield* Ref.make<ReadonlyArray<ServerProvider>>([
           refreshedSnapshot,
-          failedSnapshot,
-          refreshedSnapshotSecond,
-          failedSnapshot,
-          failedSnapshot,
+          timedOutSnapshot,
         ]);
-        const provider = yield* makeManagedServerProvider<TestSettings>({
-          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-          getSettings: Effect.succeed({ enabled: true }),
-          streamSettings: Stream.empty,
-          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.modify(probes, ([next, ...rest]) => [next!, rest] as const),
-          refreshInterval: "1 hour",
-        });
+        const provider = yield* makeHoldTestProvider(probes);
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
-
-        // One failure keeps the last good snapshot, and a good probe clears the hold.
-        assert.strictEqual((yield* provider.refresh).status, "ready");
-        assert.strictEqual((yield* provider.refresh).message, refreshedSnapshotSecond.message);
-        // A second failure in a row is published.
-        assert.strictEqual((yield* provider.refresh).status, "ready");
         assert.strictEqual((yield* provider.refresh).status, "error");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("publishes a failure that names a different version at once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probes = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+          refreshedSnapshot,
+          { ...timedOutSnapshot, version: "0.9.0", message: "Version 0.9.0 is unsupported." },
+        ]);
+        const provider = yield* makeHoldTestProvider(probes);
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        yield* TestClock.adjust("1 minute");
+        yield* Effect.yieldNow;
         assert.strictEqual((yield* provider.getSnapshot).status, "error");
       }),
-    ).pipe(Effect.provide(layerAlwaysRunTest)),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
   it.effect("publishes a missing CLI at once", () =>
@@ -735,18 +776,12 @@ describe("makeManagedServerProvider", () => {
             message: "CLI was not found on PATH.",
           },
         ]);
-        const provider = yield* makeManagedServerProvider<TestSettings>({
-          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-          getSettings: Effect.succeed({ enabled: true }),
-          streamSettings: Stream.empty,
-          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.modify(probes, ([next, ...rest]) => [next!, rest] as const),
-          refreshInterval: "1 hour",
-        });
+        const provider = yield* makeHoldTestProvider(probes);
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
-        assert.strictEqual((yield* provider.refresh).status, "error");
+        yield* TestClock.adjust("1 minute");
+        yield* Effect.yieldNow;
+        assert.strictEqual((yield* provider.getSnapshot).status, "error");
       }),
-    ).pipe(Effect.provide(layerAlwaysRunTest)),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 });

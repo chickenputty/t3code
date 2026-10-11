@@ -28,23 +28,28 @@ interface ProviderSnapshotState {
 
 /**
  * Fork (chickenputty/t3code): one failed status probe of a ready provider is
- * usually a slow CLI start on a busy machine, not a broken install. When the
- * probe could not learn anything (auth unknown), the last good snapshot answers
- * once more; a second failure in a row is published. A definite answer such as
- * a logout, a probe after a settings change, or a missing CLI always is.
+ * usually a slow CLI start on a busy machine, not a broken install. When a
+ * background probe could not learn anything (auth unknown, version unknown or
+ * unchanged), the last good snapshot answers once more; a second failure in a
+ * row is published. A definite answer (a logout, a missing CLI, a new version
+ * that is too old), a probe after a settings change and a Refresh the user
+ * asked for always are.
  */
 export function shouldHoldLastGoodSnapshot(input: {
   readonly published: ServerProvider;
   readonly probed: ServerProvider;
   readonly settingsChanged: boolean;
   readonly holdingLastGood: boolean;
+  readonly userRequested: boolean;
 }): boolean {
   return (
+    !input.userRequested &&
     !input.settingsChanged &&
     !input.holdingLastGood &&
     input.published.status === "ready" &&
     (input.probed.status === "error" || input.probed.status === "warning") &&
     input.probed.auth.status === "unknown" &&
+    (input.probed.version === null || input.probed.version === input.published.version) &&
     input.probed.enabled &&
     input.probed.installed
   );
@@ -153,7 +158,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: { readonly forceRefresh?: boolean; readonly userRequested?: boolean },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
@@ -185,6 +190,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         probed: probedSnapshot,
         settingsChanged,
         holdingLastGood: state.holdingLastGood,
+        userRequested: options?.userRequested === true,
       })
         ? ([state.snapshot, { ...state, holdingLastGood: true }] as const)
         : ([null, state] as const),
@@ -238,8 +244,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
   });
-  const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+  const applySnapshot = (
+    nextSettings: Settings,
+    options?: { readonly forceRefresh?: boolean; readonly userRequested?: boolean },
+  ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   /**
    * Runtime usage updates arrive between probes. They patch only
@@ -267,9 +275,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }
     });
 
-  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
+  /** `userRequested`: a Refresh someone asked for shows the probe's answer, never a held one. */
+  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* (userRequested: boolean) {
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    return yield* applySnapshot(nextSettings, { forceRefresh: true, userRequested });
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {
@@ -330,7 +339,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
               ? hasProviderStatusDemand.pipe(
                   Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
+                    shouldRefresh ? refreshSnapshot(false).pipe(Effect.asVoid) : Effect.void,
                   ),
                 )
               : Effect.void,
@@ -349,7 +358,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: refreshSnapshot(true).pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
