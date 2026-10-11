@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  DEFAULT_SIDEBAR_PROJECT_SORT,
+  MANUAL_SIDEBAR_THREAD_SORT,
+} from "~/components/sidebar/sidebarArrangement";
+import {
+  BUILT_IN_THREADS_VIEW_ID,
   dateBucket,
   filterViewRows,
   groupViewRows,
@@ -8,7 +13,9 @@ import {
   planGroupDrop,
   sortViewRows,
   stageOfStatus,
+  synthesizeThreadsView,
   type ViewRow,
+  withBuiltInThreadsView,
 } from "./viewEngine";
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();
@@ -252,5 +259,39 @@ describe("custom categories", () => {
       kind: "section",
       section: "pinned",
     });
+  });
+});
+
+describe("synthesizeThreadsView", () => {
+  it("mirrors the device's sidebar arrangement", () => {
+    const view = synthesizeThreadsView({
+      groupByProject: true,
+      pinsStayGrouped: true,
+      sort: { field: "activity", reversed: false },
+      projectSort: { field: "name", reversed: true },
+    });
+    expect(view).toMatchObject({
+      id: BUILT_IN_THREADS_VIEW_ID,
+      name: "Threads",
+      layout: "threads",
+      groupBy: "project",
+      threads: {
+        sort: { field: "activity", reversed: false },
+        projectSort: { field: "name", reversed: true },
+        pinsStayGrouped: true,
+      },
+    });
+  });
+  it("puts the stored Threads view first, or a synthesized one", () => {
+    const local = {
+      groupByProject: false,
+      pinsStayGrouped: false,
+      sort: MANUAL_SIDEBAR_THREAD_SORT,
+      projectSort: DEFAULT_SIDEBAR_PROJECT_SORT,
+    };
+    const board = newSavedView("board", "b");
+    expect(withBuiltInThreadsView([board], local).map((v) => v.id)).toEqual(["threads", "b"]);
+    const stored = { ...synthesizeThreadsView(local), name: "Mine" };
+    expect(withBuiltInThreadsView([board, stored], local)[0]?.name).toBe("Threads");
   });
 });

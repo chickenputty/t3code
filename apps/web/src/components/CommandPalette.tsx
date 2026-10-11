@@ -1,5 +1,7 @@
 "use client";
 
+import { useExplorerStore } from "./explorer/explorerStore";
+import { isSidebarUtilityPage, useNavigateToMainApp } from "./sidebar/mainAppLocation";
 import { useSavedViews } from "./views/useSavedViews";
 import { VIEW_LAYOUT_ICONS } from "./views/ViewSwitcher";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
@@ -766,6 +768,13 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   // Fork: saved thread views open from the palette too.
   const { views: savedViews, create: createSavedView, canSave: canSaveViews } = useSavedViews();
+  const showExplorerView = useExplorerStore((state) => state.showView);
+  const navigateToMainApp = useNavigateToMainApp();
+  // A utility page's sidebar is its own nav, so a view opens back in the main app.
+  const openExplorerView = async (viewId: string) => {
+    showExplorerView(viewId);
+    if (isSidebarUtilityPage(pathname)) await navigateToMainApp();
+  };
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -2276,8 +2285,9 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["view", "views", "board", "gallery", "table", "list", view.name.toLowerCase()],
       title: `Open view: ${view.name}`,
       icon: <ViewIcon className={ITEM_ICON_CLASS} />,
+      // Fork: views show in the sidebar explorer, beside the open thread.
       run: async () => {
-        await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
+        await openExplorerView(view.id);
       },
     });
   }
@@ -2289,8 +2299,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New view",
       icon: <ListIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        const view = createSavedView("list");
-        await navigate({ to: "/views/$viewId", params: { viewId: view.id } });
+        await openExplorerView(createSavedView("list").id);
       },
     });
 

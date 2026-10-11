@@ -29,6 +29,12 @@ export function createPendingSetting<T>() {
   return {
     set,
     read,
+    /** One fact read from the pending value; re-renders only when it changes. */
+    useSelect<R extends string | number | boolean | null | undefined>(
+      select: (value: T | null) => R,
+    ): R {
+      return useSyncExternalStore(subscribe, () => select(read()));
+    },
     /** The pending value while one is in flight; cleared when `stored` matches it. */
     usePending(stored: T | null): T | null {
       const value = useSyncExternalStore(subscribe, read);

@@ -72,9 +72,12 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
 });
 let renderer: ReactTestRenderer | undefined;
 
+// Fork: the last save's outcome, for the saved-or-not tests below.
+let lastSave: Promise<boolean> | undefined;
+
 function SettingsEditor() {
   const updateSettings = useUpdatePrimarySettings();
-  return <button onClick={() => updateSettings(patch)}>Save shared setting</button>;
+  return <button onClick={() => (lastSave = updateSettings(patch))}>Save shared setting</button>;
 }
 
 function saveSharedSettings() {
@@ -246,4 +249,33 @@ describe("shared settings writes", () => {
       }
     },
   );
+});
+
+// Fork: callers holding an optimistic copy (saved views) learn whether the write landed.
+describe("shared settings save outcome", () => {
+  it("resolves false when the primary rejects the save", async () => {
+    state.persist.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
+    );
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    await expect(lastSave).resolves.toBe(false);
+  });
+
+  it("resolves true when the primary saves, even if a remote fails", async () => {
+    state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+    state.persist.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
+    );
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    await expect(lastSave).resolves.toBe(true);
+  });
+
+  it("resolves false when this connection lacks the grant", async () => {
+    state.registry!.set(state.sessions.get(primaryId)!, AsyncResult.success(session([])));
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    await expect(lastSave).resolves.toBe(false);
+  });
 });

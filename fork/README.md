@@ -183,6 +183,12 @@ migrates the database forward the way a nightly does. To go back to the official
 latest official release from pingdotgg/t3code; if it cannot read the newer database, restore the
 snapshot from `backups` while T3 Code is closed.
 
+Rolling back behind the explorer sidebar (agent/explorer-sidebar, 2026-10-11) costs saved views.
+Builds from it store a view with the `threads` layout (the built-in Threads view, and its copies)
+in `savedViews`. An older build cannot read that layout, so it sees no saved views at all, and its
+first view edit writes its own list over them. Copy `savedViews` out of the server's
+`settings.json` before rolling back if you want them back later.
+
 ## Setup on a new machine
 
 1. `irm https://vite.plus/ps1 | iex`, then move its two `vite-plus` PATH entries to the end of the

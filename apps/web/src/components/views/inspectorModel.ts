@@ -24,7 +24,11 @@ export interface InspectorRun {
   readonly completedMs: number | null;
   readonly durationMs: number | null;
   /** Tool calls, commands, file edits and the like: every item that is not a message. */
-  readonly activity: readonly { readonly type: string; readonly title: string | null }[];
+  readonly activity: readonly {
+    readonly id: string;
+    readonly type: string;
+    readonly title: string | null;
+  }[];
   readonly filesChanged: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -101,11 +105,11 @@ export function buildInspectorModel(projection: Projection): InspectorModel {
     }
   }
 
-  const activityByRun = new Map<string, { type: string; title: string | null }[]>();
+  const activityByRun = new Map<string, { id: string; type: string; title: string | null }[]>();
   for (const item of projection.turnItems) {
     if (item.runId === null || MESSAGE_ITEM_TYPES.has(item.type)) continue;
     const list = activityByRun.get(item.runId) ?? [];
-    list.push({ type: item.type, title: item.title });
+    list.push({ id: item.id, type: item.type, title: item.title });
     activityByRun.set(item.runId, list);
   }
 

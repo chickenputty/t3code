@@ -234,17 +234,28 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 
 ## Browse threads in views
 
-On web and desktop, the menu next to the T3 Code name switches between
-**Threads** (the sidebar and chat) and saved views. A view shows your threads as
-a list, board, gallery, or table and keeps its own filters, sort, grouping, and
-visible properties. Choose **New view** in that menu or the command palette to
-make one; the **⋯** menu in a view changes its layout, card size, preview, and
-how a thread opens, and renames, duplicates, or deletes it.
+On web and desktop, the sidebar shows one view at a time beside your chat. Pick
+a view from the view switcher next to the T3 Code name, or with **Open view** in
+the command palette. **Threads** is the usual thread list; other views show your
+threads as a list, board, gallery, or table with their own filters, sort,
+grouping, and visible properties. Choose **New view** in the switcher or the
+command palette to make one. Each view remembers its own sidebar width: drag the
+sidebar's edge to resize it, or double-click the edge to reset it.
 
-Click a thread to see its details, messages, changed files, turns, and token
-usage, then **Resume Chat** to continue it. Ctrl-click or Shift-click selects
-several threads for bulk actions. On a board grouped by **Section**, drag a card
-to pin, settle, snooze, or archive it.
+The **⋯** (view settings) menu renames, duplicates, or deletes a view, and
+changes a card view's layout, card size, preview, and density. **Threads**
+itself can't be renamed or deleted, but you can duplicate it. In **Threads** and its copies,
+**Filter** hides threads, **Group** groups them by a property such as status or
+model, and **Properties** shows details such as the model or branch under each
+thread. The view options menu still sorts the list and groups it by project.
+
+Click a thread in any view to open it in the chat. Ctrl-click or Shift-click
+selects several threads for bulk actions. On a board grouped by **Section**,
+drag a card to pin, settle, snooze, or archive it.
+
+Above a chat, **Overview**, **Files**, **Activity**, and **Usage** show the
+thread's details, changed files, turns, and token usage; **Chat** returns to the
+conversation. The composer stays usable on every tab.
 
 To keep related threads together across projects, make a category: choose
 **New category** at the end of a board grouped by **Project** or **Category**,

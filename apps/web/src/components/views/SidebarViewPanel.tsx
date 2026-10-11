@@ -1,36 +1,33 @@
 /**
- * Fork (chickenputty/t3code): one saved view, filling the window below the
- * shared top bar. The top bar keeps the brand and view switcher where the
- * Threads view has them; the rest of it belongs to this view.
+ * Fork (chickenputty/t3code): a saved card view (list, board, gallery or
+ * table) inside the sidebar explorer. The brand row keeps the view switcher,
+ * a compact toolbar and search sit under it, and the layout scrolls below.
+ * Opening a card shows its thread in the chat on the right; the card of the
+ * thread in the route is highlighted. Rows are computed here, so a busy board
+ * never re-renders the chat.
  */
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { SavedView, ThreadCategory } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
+import { useExplorerStore } from "~/components/explorer/explorerStore";
+import { SidebarChromeFooter, SidebarChromeHeader } from "~/components/sidebar/SidebarChrome";
 import { Button } from "~/components/ui/button";
 import { DraftInput } from "~/components/ui/draft-input";
 import { Input } from "~/components/ui/input";
-import { SidebarInset } from "~/components/ui/sidebar";
-import { SidebarBrand } from "~/components/sidebar/SidebarChrome";
-import { useNavigateToMainApp } from "~/components/sidebar/mainAppLocation";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-  WorkspaceBreadcrumbText,
-} from "~/components/WorkspaceBreadcrumb";
+import { useSidebar } from "~/components/ui/sidebar";
 import { isElectron } from "~/env";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
-import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { useThreadSearch } from "~/state/queries";
 import { useEnvironments } from "~/state/environments";
+import { buildThreadRouteParams, resolveThreadRouteRef } from "~/threadRoutes";
+import { resolveSidebarSplitViewAction, useThreadSplitStore } from "~/threadSplitStore";
 
 import { type CategoryTools, CategoryPicker } from "./CategoryControls";
-import { ThreadInspector } from "./ThreadInspector";
 import { isWidgetEvent } from "./viewKeys";
 import { useSavedViews } from "./useSavedViews";
 import { useThreadCategories } from "./useThreadCategories";
@@ -44,7 +41,6 @@ import {
   TableLayout,
   type ViewLayoutProps,
 } from "./ViewLayouts";
-import { ViewSwitcher } from "./ViewSwitcher";
 import { ViewToolbar } from "./ViewToolbar";
 import {
   filterViewRows,
@@ -57,71 +53,11 @@ import {
   type ViewRow,
 } from "./viewEngine";
 
-export function SavedViewPage({
-  viewId,
-  openKey,
-  onOpenKeyChange,
-}: {
-  readonly viewId: string;
-  readonly openKey: string | null;
-  readonly onOpenKeyChange: (key: string | null) => void;
-}) {
-  const { views } = useSavedViews();
-  const view = views.find((candidate) => candidate.id === viewId);
-  const navigateToMainApp = useNavigateToMainApp();
-  return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
-      {view ? (
-        <SavedViewContent
-          key={view.id}
-          view={view}
-          openKey={openKey}
-          onOpenKeyChange={onOpenKeyChange}
-        />
-      ) : (
-        <div className="flex h-full flex-col">
-          <ViewTopBar viewId={null}>{null}</ViewTopBar>
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
-            This view no longer exists.
-            <Button variant="outline" size="sm" onClick={() => void navigateToMainApp()}>
-              Back to Threads
-            </Button>
-          </div>
-        </div>
-      )}
-    </SidebarInset>
-  );
-}
-
-function ViewTopBar({ viewId, children }: { viewId: string | null; children: ReactNode }) {
-  return (
-    <header
-      className={cn(
-        "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-2 border-border/60 border-b pr-(--workspace-gutter-end) wco:pr-(--workspace-native-controls-inset)",
-        isElectron && "drag-region",
-      )}
-    >
-      <div className="flex h-8 shrink-0 items-center gap-2 max-md:ps-3">
-        <SidebarBrand onBackdrop={false} />
-        <ViewSwitcher currentViewId={viewId} />
-      </div>
-      {children}
-    </header>
-  );
-}
-
-function SavedViewContent({
-  view,
-  openKey,
-  onOpenKeyChange,
-}: {
-  view: SavedView;
-  openKey: string | null;
-  onOpenKeyChange: (key: string | null) => void;
-}) {
+export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
   const navigate = useNavigate();
-  const navigateToMainApp = useNavigateToMainApp();
   const { views, update, duplicate, remove } = useSavedViews();
+  const setActiveViewId = useExplorerStore((state) => state.setActiveViewId);
+  const { isMobile, setOpenMobile } = useSidebar();
   const ops = useViewThreadOps();
   const categories = useThreadCategories();
   const { rows, nowMs, archivedLoading } = useViewRows(view.showArchived, categories);
@@ -130,6 +66,14 @@ function SavedViewContent({
   const [renaming, setRenaming] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [anchorKey, setAnchorKey] = useState<string | null>(null);
+  // The thread in the route is the open card.
+  const openKey = useParams({
+    strict: false,
+    select: (params) => {
+      const ref = resolveThreadRouteRef(params);
+      return ref === null ? null : scopedThreadKey(ref);
+    },
+  });
 
   const updateView = useCallback(
     (patch: Partial<Omit<SavedView, "id">>) => update(view.id, patch),
@@ -152,12 +96,11 @@ function SavedViewContent({
 
   const filteredRows = useMemo(() => filterViewRows(rows, view, nowMs), [nowMs, rows, view]);
   const visibleRows = useMemo(() => {
-    const filtered = filteredRows;
     const needle = query.trim().toLowerCase();
     const searched =
       needle === ""
-        ? filtered
-        : filtered.filter(
+        ? filteredRows
+        : filteredRows.filter(
             (row) => row.title.toLowerCase().includes(needle) || snippets.has(row.key),
           );
     return sortViewRows(searched, view.sorts);
@@ -184,8 +127,6 @@ function SavedViewContent({
     ],
   );
   const orderedRows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
-  const rowByKey = useMemo(() => new Map(rows.map((row) => [row.key, row])), [rows]);
-  const openRow = openKey === null ? undefined : rowByKey.get(openKey);
   const selectedRows = useMemo(
     () => orderedRows.filter((row) => selected.has(row.key)),
     [orderedRows, selected],
@@ -197,7 +138,6 @@ function SavedViewContent({
         event.key === "Escape" &&
         !event.defaultPrevented &&
         !isWidgetEvent(event) &&
-        openKey === null &&
         selected.size > 0
       ) {
         setSelected(new Set());
@@ -205,14 +145,19 @@ function SavedViewContent({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openKey, selected.size]);
+  }, [selected.size]);
 
-  const { openMenu } = useThreadActionMenu({
-    threadRef: null,
-    projectCwd: null,
-    // Rename happens in the inspector's title field.
-    onStartRename: (ref) => onOpenKeyChange(scopedThreadKey(ref)),
-  });
+  const openThread = useCallback(
+    (ref: ViewRow["ref"]) => {
+      if (isMobile) setOpenMobile(false);
+      void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+    },
+    [isMobile, navigate, setOpenMobile],
+  );
+
+  // No onStartRename: a card cannot rename inline, so the menu leaves Rename out
+  // (the open thread's header and the table's title cell rename instead).
+  const { openMenu } = useThreadActionMenu({ threadRef: null, projectCwd: null });
 
   const optionsFor = useCallback(
     (property: ViewProperty): readonly ViewPropertyOption[] => {
@@ -244,15 +189,21 @@ function SavedViewContent({
     ViewLayoutProps,
     "view" | "groups" | "selected" | "openKey" | "nowMs" | "snippets" | "categoryTools"
   > = {
-    onOpen: (row) =>
-      onOpenKeyChange(openKey === row.key && view.openMode === "peek" ? null : row.key),
+    onOpen: (row) => openThread(row.ref),
     onContextMenu: (row: ViewRow, event: MouseEvent) => {
       event.preventDefault();
       if (row.section === "archived") {
-        onOpenKeyChange(row.key);
+        openThread(row.ref);
         return;
       }
-      openMenu({ x: event.clientX, y: event.clientY }, row.ref);
+      openMenu({ x: event.clientX, y: event.clientY }, row.ref, {
+        splitView: resolveSidebarSplitViewAction({
+          threadKey: row.key,
+          routeThreadKey: openKey,
+          secondaryThreadKey: useThreadSplitStore.getState().secondaryThreadKey,
+          isMobile,
+        }),
+      });
     },
     onToggleSelect: (row: ViewRow, event: MouseEvent) => {
       setSelected((current) => {
@@ -339,130 +290,85 @@ function SavedViewContent({
         readLocalApi()?.dialogs.confirm(`Delete the view "${view.name}"?`) ?? Promise.resolve(true),
     );
     if (confirmed._tag === "Failure" || !confirmed.value) return;
+    // The built-in Threads view leads the list, so a neighbour always exists.
     const index = views.findIndex((candidate) => candidate.id === view.id);
     const fallback = views[index + 1] ?? views[index - 1];
     remove(view.id);
-    if (fallback && fallback.id !== view.id) {
-      void navigate({ to: "/views/$viewId", params: { viewId: fallback.id }, search: {} });
-    } else {
-      void navigateToMainApp();
-    }
+    setActiveViewId(fallback?.id ?? null);
   };
 
-  const pageInspector = openRow !== undefined && view.openMode === "page";
-
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <ViewTopBar viewId={view.id}>
-        <WorkspaceBreadcrumb ariaLabel="View breadcrumb" className="min-w-0 flex-1 ps-1">
-          {/* The switcher already names the view; the breadcrumb carries what is in it. */}
+    <>
+      <SidebarChromeHeader isElectron={isElectron} />
+      <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-2">
+        <div className="flex min-w-0 items-center gap-1">
           {renaming ? (
-            <WorkspaceBreadcrumbItem current className="min-w-0">
-              {/* Blur or Escape always ends renaming; DraftInput only commits a changed name. */}
-              <span
-                className="contents"
-                onBlur={() => setRenaming(false)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setRenaming(false);
+            // Blur or Escape always ends renaming; DraftInput only commits a changed name.
+            <span
+              className="min-w-0 flex-1"
+              onBlur={() => setRenaming(false)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setRenaming(false);
+              }}
+            >
+              <DraftInput
+                // biome-ignore lint/a11y/noAutofocus: renaming starts typing at once
+                autoFocus
+                size="compact"
+                aria-label="View name"
+                value={view.name}
+                onCommit={(name) => {
+                  setRenaming(false);
+                  if (name.trim() !== "") updateView({ name: name.trim() });
                 }}
-              >
-                <DraftInput
-                  // biome-ignore lint/a11y/noAutofocus: renaming starts typing at once
-                  autoFocus
-                  size="compact"
-                  aria-label="View name"
-                  value={view.name}
-                  onCommit={(name) => {
-                    setRenaming(false);
-                    if (name.trim() !== "") updateView({ name: name.trim() });
-                  }}
-                />
-              </span>
-            </WorkspaceBreadcrumbItem>
-          ) : null}
-          <WorkspaceBreadcrumbItem current={!pageInspector}>
-            <WorkspaceBreadcrumbText className="tabular-nums">
+              />
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate ps-1 text-muted-foreground text-xs tabular-nums">
               {visibleRows.length} thread{visibleRows.length === 1 ? "" : "s"}
               {archivedLoading ? " …" : ""}
-            </WorkspaceBreadcrumbText>
-          </WorkspaceBreadcrumbItem>
-          {openRow && pageInspector ? (
-            <>
-              <WorkspaceBreadcrumbSeparator />
-              <WorkspaceBreadcrumbItem current className="min-w-0">
-                <WorkspaceBreadcrumbText>{openRow.title}</WorkspaceBreadcrumbText>
-              </WorkspaceBreadcrumbItem>
-            </>
-          ) : null}
-        </WorkspaceBreadcrumb>
-        <div className="relative hidden w-56 shrink sm:block">
-          <Input
-            type="search"
-            size="compact"
-            aria-label="Search this view"
-            placeholder="Search titles and messages"
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
+            </span>
+          )}
+          <ViewToolbar
+            compact
+            view={view}
+            update={updateView}
+            optionsFor={optionsFor}
+            onRename={() => setRenaming(true)}
+            onDuplicate={() => {
+              const copy = duplicate(view.id);
+              if (copy) setActiveViewId(copy.id);
+            }}
+            onDelete={() => void deleteView()}
           />
         </div>
-        <ViewToolbar
-          view={view}
-          update={updateView}
-          optionsFor={optionsFor}
-          onRename={() => setRenaming(true)}
-          onDuplicate={() => {
-            const copy = duplicate(view.id);
-            if (copy)
-              void navigate({ to: "/views/$viewId", params: { viewId: copy.id }, search: {} });
-          }}
-          onDelete={() => void deleteView()}
+        <Input
+          type="search"
+          size="compact"
+          aria-label="Search this view"
+          placeholder="Search titles and messages"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
         />
-      </ViewTopBar>
+      </div>
       <div className="relative min-h-0 flex-1">
-        {pageInspector ? (
-          <ThreadInspector
-            row={openRow}
-            mode="page"
-            nowMs={nowMs}
-            onClose={() => onOpenKeyChange(null)}
-            onAction={(row, action) => runAction([row], action)}
-            onRename={(row, title) => void ops.rename(row.ref, title)}
-          />
-        ) : (
-          <div
-            className={cn(
-              "h-full",
-              view.layout === "board" ? "overflow-hidden" : "overflow-y-auto",
-            )}
-          >
-            {visibleRows.length === 0 ? (
-              <div className="flex h-full items-center justify-center p-8 text-muted-foreground text-sm">
-                {query.trim() !== ""
-                  ? "No threads match this search."
-                  : "No threads match this view."}
-              </div>
-            ) : view.layout === "board" ? (
-              <BoardLayout {...layoutProps} />
-            ) : view.layout === "gallery" ? (
-              <GalleryLayout {...layoutProps} />
-            ) : view.layout === "table" ? (
-              <TableLayout {...layoutProps} />
-            ) : (
-              <ListLayout {...layoutProps} />
-            )}
-          </div>
-        )}
-        {openRow && view.openMode !== "page" ? (
-          <ThreadInspector
-            key={openRow.key}
-            row={openRow}
-            mode={view.openMode}
-            nowMs={nowMs}
-            onClose={() => onOpenKeyChange(null)}
-            onAction={(row, action) => runAction([row], action)}
-            onRename={(row, title) => void ops.rename(row.ref, title)}
-          />
-        ) : null}
+        <div className="h-full overflow-auto">
+          {visibleRows.length === 0 ? (
+            <div className="flex h-full items-center justify-center p-6 text-center text-muted-foreground text-sm">
+              {query.trim() !== ""
+                ? "No threads match this search."
+                : "No threads match this view."}
+            </div>
+          ) : view.layout === "board" ? (
+            <BoardLayout {...layoutProps} />
+          ) : view.layout === "gallery" ? (
+            <GalleryLayout {...layoutProps} />
+          ) : view.layout === "table" ? (
+            <TableLayout {...layoutProps} />
+          ) : (
+            <ListLayout {...layoutProps} />
+          )}
+        </div>
         {selectedRows.length > 0 ? (
           <BulkBar
             rows={selectedRows}
@@ -490,7 +396,8 @@ function SavedViewContent({
           />
         ) : null}
       </div>
-    </div>
+      <SidebarChromeFooter />
+    </>
   );
 }
 
@@ -515,7 +422,7 @@ function BulkBar({
 }) {
   const archivedOnly = rows.every((row) => row.section === "archived");
   return (
-    <div className="-translate-x-1/2 absolute bottom-4 left-1/2 z-30 flex max-w-[calc(100%-2rem)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-popover px-2 py-1.5 shadow-lg">
+    <div className="-translate-x-1/2 absolute bottom-3 left-1/2 z-30 flex max-w-[calc(100%-1rem)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-popover px-2 py-1.5 shadow-lg">
       <span className="shrink-0 px-2 text-sm tabular-nums">{rows.length} selected</span>
       {archivedOnly ? (
         <Button variant="ghost" size="xs" onClick={() => onAction("unarchive")}>

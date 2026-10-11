@@ -8,11 +8,13 @@ import { createContext, useContext } from "react";
  */
 export interface ChatPaneValue {
   readonly isFocusedPane: boolean;
+  /** Fork: which pane this is, for state kept per pane (the thread pane tab). */
+  readonly paneId: "primary" | "secondary";
   /** Set on the secondary pane of a split; the header shows a close button. */
   readonly onClosePane?: (() => void) | undefined;
 }
 
-const SINGLE_PANE: ChatPaneValue = { isFocusedPane: true };
+const SINGLE_PANE: ChatPaneValue = { isFocusedPane: true, paneId: "primary" };
 
 export const ChatPaneContext = createContext<ChatPaneValue>(SINGLE_PANE);
 

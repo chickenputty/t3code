@@ -66,8 +66,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           The padding keeps the brand's focus ring inside the clip. */}
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
         <SidebarBrand onBackdrop={backdropVariant !== null} />
-        {/* Fork: saved thread views. Threads is this sidebar and the chat. */}
-        <ViewSwitcher currentViewId={null} />
+        {/* Fork: saved thread views; the sidebar shows the one picked here. */}
+        <ViewSwitcher />
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
             <Badge data-environment-identification="pill" size="sm" variant="secondary">

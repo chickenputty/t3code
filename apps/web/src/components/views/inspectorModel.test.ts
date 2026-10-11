@@ -58,8 +58,8 @@ describe("buildInspectorModel", () => {
           { runAttemptId: "a1", turnTokenUsage: { inputTokens: 10, outputTokens: 5 } },
         ],
         turnItems: [
-          { runId: "r1", type: "command_execution", title: "vp test" },
-          { runId: "r1", type: "assistant_message", title: null },
+          { id: "i1", runId: "r1", type: "command_execution", title: "vp test" },
+          { id: "i2", runId: "r1", type: "assistant_message", title: null },
         ],
         checkpoints: [
           {
@@ -88,7 +88,7 @@ describe("buildInspectorModel", () => {
       filesChanged: 2,
       durationMs: 10_000,
     });
-    expect(run?.activity).toEqual([{ type: "command_execution", title: "vp test" }]);
+    expect(run?.activity).toEqual([{ id: "i1", type: "command_execution", title: "vp test" }]);
     expect(model.files).toEqual([
       { path: "a.ts", kind: "modified", additions: 5, deletions: 1, turns: 2 },
     ]);

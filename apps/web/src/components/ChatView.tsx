@@ -453,6 +453,10 @@ import {
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useChatPane } from "./chat/ChatPaneContext";
+// Fork: thread pane tabs.
+import { ThreadPaneTabBody } from "./thread/ThreadPaneTabBody";
+import { ThreadPaneTabStrip } from "./thread/ThreadPaneTabStrip";
+import { useShownThreadPaneTab, useThreadPaneTabStore } from "./thread/threadPaneTabStore";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -1582,7 +1586,8 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
   } = props;
-  const { isFocusedPane, onClosePane } = useChatPane();
+  // Fork: paneId for the thread pane tabs.
+  const { isFocusedPane, onClosePane, paneId } = useChatPane();
   // Read by listeners whose effects are too broad to resubscribe on focus changes.
   const isFocusedPaneRef = useRef(isFocusedPane);
   useLayoutEffect(() => {
@@ -4099,6 +4104,9 @@ export default function ChatView(props: ChatViewProps) {
     backgroundSubmissionPending,
     hasWorktreeSetupCard: worktreeSetup !== null,
   });
+  // Fork: thread pane tabs, for server threads past the empty hero composer.
+  const threadPaneTabsEnabled = isServerThread && !isDraftHeroState;
+  const threadPaneTab = useShownThreadPaneTab(threadPaneTabsEnabled);
   const draftHeroTransition = useDraftHeroLayoutTransition(
     isDraftHeroState,
     panelAnimationsActive,
@@ -8028,6 +8036,18 @@ export default function ChatView(props: ChatViewProps) {
     : EMPTY_PROVIDER_SKILLS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
+  // Fork: find searches the timeline, so opening it brings the Chat tab back,
+  // and leaving the Chat tab closes it.
+  const onThreadFindOpenChange = useCallback(
+    (open: boolean) => {
+      setIsThreadFindActive(open);
+      if (open) useThreadPaneTabStore.getState().setTab(paneId, "chat");
+    },
+    [paneId],
+  );
+  useEffect(() => {
+    if (threadPaneTab !== "chat") threadFindControlsRef.current?.close();
+  }, [threadPaneTab]);
   const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
   const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
   // The details popover hangs off the header over the find bar; opening find dismisses it.
@@ -11422,6 +11442,8 @@ export default function ChatView(props: ChatViewProps) {
               : {})}
           />
         </header>
+        {/* Fork: thread pane tabs */}
+        <ThreadPaneTabStrip threadRef={activeThreadRef} enabled={threadPaneTabsEnabled} />
 
         {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -11436,7 +11458,7 @@ export default function ChatView(props: ChatViewProps) {
               content: serverProjection ?? undefined,
             }}
             controlsRef={threadFindControlsRef}
-            onOpenChange={setIsThreadFindActive}
+            onOpenChange={onThreadFindOpenChange}
             detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
             composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
@@ -11482,7 +11504,11 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            {/* Fork: inert while a thread pane tab covers it. */}
+            <div
+              className="relative flex min-h-0 flex-1 flex-col bg-background"
+              inert={threadPaneTab !== "chat"}
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -11587,7 +11613,8 @@ export default function ChatView(props: ChatViewProps) {
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && !isThreadFindActive && (
+              {/* Fork: hidden while a thread pane tab covers the timeline. */}
+              {showScrollToBottom && !isThreadFindActive && threadPaneTab === "chat" && (
                 <div
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}
@@ -11609,6 +11636,13 @@ export default function ChatView(props: ChatViewProps) {
                 </div>
               )}
             </div>
+
+            {/* Fork: thread pane tabs, over the timeline and under the composer. */}
+            <ThreadPaneTabBody
+              threadRef={activeThreadRef}
+              enabled={threadPaneTabsEnabled}
+              bottomInset={composerTimelineInset}
+            />
 
             {/* Input bar — centered for an empty draft, docked after sending. */}
             <div

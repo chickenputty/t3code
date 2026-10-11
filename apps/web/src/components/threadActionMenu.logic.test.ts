@@ -4,6 +4,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   type ThreadActionMenuState,
+  withoutThreadActionMenuItem,
 } from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
@@ -259,5 +260,20 @@ describe("buildDraftActionMenuItems", () => {
     const items = buildDraftActionMenuItems({ hasPath: true, hasBranch: false, hasProject: false });
     expect(items.map((item) => item.id)).toEqual(["copy", "discard"]);
     expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
+  });
+});
+
+describe("withoutThreadActionMenuItem", () => {
+  it("drops rename and keeps its separator on the next item", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const renameIndex = items.findIndex((item) => item.id === "rename");
+    const next = withoutThreadActionMenuItem(items, "rename");
+    expect(next.some((item) => item.id === "rename")).toBe(false);
+    expect(next).toHaveLength(items.length - 1);
+    expect(next[renameIndex]).toEqual({ ...items[renameIndex + 1], separatorBefore: true });
+  });
+  it("returns the menu unchanged when the item is absent", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    expect(withoutThreadActionMenuItem(items, "open-split")).toBe(items);
   });
 });

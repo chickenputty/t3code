@@ -14,11 +14,6 @@ export function isSidebarUtilityPage(pathname: string) {
   );
 }
 
-/** Fork: saved thread views take the whole window; leaving one returns to Threads. */
-export function isSavedViewPage(pathname: string) {
-  return pathname.startsWith("/views/");
-}
-
 let mainAppHref: string | null = null;
 
 // Mount once in the app shell. Records the latest main app URL so Back can
@@ -26,7 +21,8 @@ let mainAppHref: string | null = null;
 export function MainAppLocationTracker() {
   const href = useLocation({
     select: (location) =>
-      isSidebarUtilityPage(location.pathname) || isSavedViewPage(location.pathname)
+      // Fork: a `/views/<id>` deep link only picks a view, then leaves for this href.
+      isSidebarUtilityPage(location.pathname) || location.pathname.startsWith("/views/")
         ? null
         : location.href,
   });
@@ -34,6 +30,11 @@ export function MainAppLocationTracker() {
     if (href !== null) mainAppHref = href;
   }, [href]);
   return null;
+}
+
+/** Fork: where a `/views/<id>` deep link lands after picking its view. */
+export function readMainAppHref(): string | null {
+  return mainAppHref;
 }
 
 // Leaves a utility page for the last main app URL, or the thread list when

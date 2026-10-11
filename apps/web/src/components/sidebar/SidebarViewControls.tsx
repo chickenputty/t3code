@@ -2,9 +2,13 @@
  * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
  * and its indent, pins stay grouped, project icons and their style, topic emoji,
  * thread and project sort, thread and project row height), and the header row
- * each project group opens with.
+ * each project group opens with. Grouping, sorts and pins write the active
+ * Threads view (or this device's arrangement where views cannot be saved);
+ * the view's filter, group, properties and settings sit on their own row
+ * under the search row, so search keeps its width.
  */
 import {
+  type SavedView,
   SidebarProjectIconStyle,
   SidebarProjectRowDensity,
   SidebarThreadIndent,
@@ -56,7 +60,10 @@ import {
 } from "./sidebarArrangement";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useSidebarViewStore } from "./sidebarViewStore";
+import type { ThreadsViewOptions } from "~/components/explorer/useThreadsViewOptions";
+import { ThreadsViewSettings } from "~/components/explorer/ThreadsViewSettings";
+import { FilterControl, GroupControl, PropertiesControl } from "~/components/views/ViewToolbar";
+import { threadsViewSummary } from "~/components/explorer/threadsViewArrangement";
 
 /** A submenu's current choice, right-aligned before its chevron. */
 function MenuSubValue(props: { children: ReactNode }) {
@@ -65,17 +72,77 @@ function MenuSubValue(props: { children: ReactNode }) {
   );
 }
 
-export function SidebarViewControls() {
-  const groupByProject = useSidebarViewStore((state) => state.groupByProject);
-  const toggleGroupByProject = useSidebarViewStore((state) => state.toggleGroupByProject);
-  const pinsStayGrouped = useSidebarViewStore((state) => state.pinsStayGrouped);
-  const togglePinsStayGrouped = useSidebarViewStore((state) => state.togglePinsStayGrouped);
-  const sort = useSidebarViewStore((state) => state.sort);
-  const setSortField = useSidebarViewStore((state) => state.setSortField);
-  const setSortReversed = useSidebarViewStore((state) => state.setSortReversed);
-  const projectSort = useSidebarViewStore((state) => state.projectSort);
-  const setProjectSortField = useSidebarViewStore((state) => state.setProjectSortField);
-  const setProjectSortReversed = useSidebarViewStore((state) => state.setProjectSortReversed);
+/** Picking a field starts it in its natural order; picking it again keeps the order. */
+function withSortField(sort: SidebarThreadSort, field: SidebarThreadSortField): SidebarThreadSort {
+  return sort.field === field ? sort : { field, reversed: false };
+}
+
+/** Manual has no direction, and an unchanged direction writes nothing. */
+function withSortReversed(sort: SidebarThreadSort, reversed: boolean): SidebarThreadSort | null {
+  return sort.field === "manual" || sort.reversed === reversed
+    ? null
+    : { field: sort.field, reversed };
+}
+
+/**
+ * The Threads view's filter, group, properties and settings: a slim row under
+ * the search row, its summary on the left. Hidden where views cannot be saved.
+ */
+export function SidebarViewToolbar(props: { options: ThreadsViewOptions }) {
+  const { view, update, optionsFor, canSave } = props.options;
+  if (!canSave) return null;
+  const summary = threadsViewSummary(view);
+  return (
+    <div className="flex h-6 items-center gap-0.5 ps-2">
+      <span className="min-w-0 flex-1 truncate text-2xs text-sidebar-muted-foreground">
+        {summary}
+      </span>
+      <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
+      <GroupControl view={view} update={update} compact />
+      <PropertiesControl view={view} update={update} compact />
+      <ThreadsViewSettings options={props.options} />
+    </div>
+  );
+}
+
+/** The header's view options menu: grouping, sorts, pins and row settings. */
+export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
+  const { view, update, sort, projectSort, pinsStayGrouped } = props.options;
+  // Any grouping draws headers; the menu's switch is the project one.
+  const grouped = props.options.groupByProject;
+  const groupByProject = view.groupBy === "project";
+  const writeThreads = (patch: Partial<SavedView["threads"]>) =>
+    update({ threads: { ...view.threads, ...patch } });
+
+  return (
+    <>
+      <SidebarViewOptionsMenu
+        grouped={grouped}
+        groupByProject={groupByProject}
+        pinsStayGrouped={pinsStayGrouped}
+        sort={sort}
+        projectSort={projectSort}
+        onGroupByProjectChange={(checked) => update({ groupBy: checked ? "project" : null })}
+        onPinsStayGroupedChange={(checked) => writeThreads({ pinsStayGrouped: checked })}
+        onSortChange={(next) => writeThreads({ sort: next })}
+        onProjectSortChange={(next) => writeThreads({ projectSort: next })}
+      />
+    </>
+  );
+}
+
+function SidebarViewOptionsMenu(props: {
+  grouped: boolean;
+  groupByProject: boolean;
+  pinsStayGrouped: boolean;
+  sort: SidebarThreadSort;
+  projectSort: SidebarThreadSort;
+  onGroupByProjectChange: (checked: boolean) => void;
+  onPinsStayGroupedChange: (checked: boolean) => void;
+  onSortChange: (sort: SidebarThreadSort) => void;
+  onProjectSortChange: (sort: SidebarThreadSort) => void;
+}) {
+  const { grouped, groupByProject, pinsStayGrouped, sort, projectSort } = props;
   const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const projectRowDensity = useClientSettings((settings) => settings.sidebarProjectRowDensity);
   const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
@@ -91,7 +158,7 @@ export function SidebarViewControls() {
           <SidebarHeaderIconButton
             label="View options"
             // Lit while the list is regrouped or resorted, so a changed order never surprises.
-            data-active={groupByProject || sort.field !== "manual"}
+            data-active={grouped || sort.field !== "manual"}
           />
         }
       >
@@ -102,7 +169,7 @@ export function SidebarViewControls() {
           variant="switch"
           checked={groupByProject}
           onCheckedChange={(checked) => {
-            if (checked !== groupByProject) toggleGroupByProject();
+            if (checked !== groupByProject) props.onGroupByProjectChange(checked);
           }}
         >
           Group by project
@@ -111,16 +178,16 @@ export function SidebarViewControls() {
           variant="switch"
           checked={pinsStayGrouped}
           // Pins can only stay in a folder the view actually draws.
-          disabled={!groupByProject}
+          disabled={!grouped}
           onCheckedChange={(checked) => {
-            if (checked !== pinsStayGrouped) togglePinsStayGrouped();
+            if (checked !== pinsStayGrouped) props.onPinsStayGroupedChange(checked);
           }}
         >
           Pins stay grouped
         </MenuCheckboxItem>
         <MenuSub>
-          {/* Only grouped rows have a project header to sit in from. */}
-          <MenuSubTrigger disabled={!groupByProject}>
+          {/* Only grouped rows have a header to sit in from. */}
+          <MenuSubTrigger disabled={!grouped}>
             Indent
             <MenuSubValue>{SIDEBAR_THREAD_INDENT_LABELS[indent]}</MenuSubValue>
           </MenuSubTrigger>
@@ -179,17 +246,24 @@ export function SidebarViewControls() {
           label="Thread sort"
           sort={sort}
           manualHint="Drag threads to arrange them."
-          onFieldChange={setSortField}
-          onReversedChange={setSortReversed}
+          onFieldChange={(field) => props.onSortChange(withSortField(sort, field))}
+          onReversedChange={(reversed) => {
+            const next = withSortReversed(sort, reversed);
+            if (next) props.onSortChange(next);
+          }}
         />
-        {/* Projects only have an order while their folders are drawn. */}
+        {/* Groups only have an order while they are drawn. */}
         <SidebarSortSubmenu
-          label="Project sort"
+          label={grouped && !groupByProject ? "Group sort" : "Project sort"}
           sort={projectSort}
-          manualHint="Follows the project order in Settings."
-          disabled={!groupByProject}
-          onFieldChange={setProjectSortField}
-          onReversedChange={setProjectSortReversed}
+          // Other groups have no order of their own: they follow their first thread.
+          manualHint={groupByProject ? "Follows the project order in Settings." : null}
+          disabled={!grouped}
+          onFieldChange={(field) => props.onProjectSortChange(withSortField(projectSort, field))}
+          onReversedChange={(reversed) => {
+            const next = withSortReversed(projectSort, reversed);
+            if (next) props.onProjectSortChange(next);
+          }}
         />
         <MenuSub>
           <MenuSubTrigger>
@@ -212,8 +286,8 @@ export function SidebarViewControls() {
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          {/* Only grouped lists draw project headers. */}
-          <MenuSubTrigger disabled={!groupByProject}>
+          {/* Only grouped lists draw group headers. */}
+          <MenuSubTrigger disabled={!grouped}>
             Project rows
             <MenuSubValue>{SIDEBAR_PROJECT_ROW_DENSITY_LABELS[projectRowDensity]}</MenuSubValue>
           </MenuSubTrigger>
@@ -241,7 +315,7 @@ export function SidebarViewControls() {
 function SidebarSortSubmenu(props: {
   label: string;
   sort: SidebarThreadSort;
-  manualHint: string;
+  manualHint: string | null;
   disabled?: boolean;
   onFieldChange: (field: SidebarThreadSortField) => void;
   onReversedChange: (reversed: boolean) => void;
@@ -273,7 +347,9 @@ function SidebarSortSubmenu(props: {
           </MenuRadioGroup>
         </MenuGroup>
         {directionLabels === null ? (
-          <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
+          props.manualHint === null ? null : (
+            <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
+          )
         ) : (
           <>
             <MenuSeparator />

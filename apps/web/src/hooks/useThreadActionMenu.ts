@@ -20,6 +20,7 @@ import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
+  withoutThreadActionMenuItem,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
@@ -35,6 +36,7 @@ import {
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { useThreadSplitStore } from "../threadSplitStore";
 import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -72,7 +74,8 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  readonly onStartRename: (threadRef: ScopedThreadRef) => void;
+  /** Fork: without it the menu has no "Rename thread" (saved-view cards cannot rename inline). */
+  readonly onStartRename?: (threadRef: ScopedThreadRef) => void;
 }) {
   const { threadRef: inputThreadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
@@ -128,8 +131,13 @@ export function useThreadActionMenu(input: {
   });
 
   const openMenu = useCallback(
-    // Fork: saved views share one menu across every card and pass the card's thread here.
-    (position: { x: number; y: number }, overrideThreadRef?: ScopedThreadRef) => {
+    // Fork: saved views share one menu across every card and pass the card's thread
+    // here, with the split item the card offers.
+    (
+      position: { x: number; y: number },
+      overrideThreadRef?: ScopedThreadRef,
+      options?: { readonly splitView?: "open" | "close" | null },
+    ) => {
       const threadRef = overrideThreadRef ?? inputThreadRef;
       if (threadRef === null) return;
       void (async () => {
@@ -149,11 +157,11 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-        const items = buildThreadActionMenuItems({
+        const builtItems = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
           projectFilter: null,
-          splitView: null,
+          splitView: options?.splitView ?? null,
           isPinned: thread.pinnedAt != null,
           isSettled: supports.settlement && thread.settledOverride === "settled",
           autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -164,6 +172,9 @@ export function useThreadActionMenu(input: {
           supports,
           snoozePresets,
         });
+        const items = onStartRename
+          ? builtItems
+          : withoutThreadActionMenuItem(builtItems, "rename");
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
@@ -254,7 +265,14 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "rename":
-            onStartRename(threadRef);
+            onStartRename?.(threadRef);
+            return;
+          // Fork: saved-view cards offer the split view like sidebar rows.
+          case "open-split":
+            useThreadSplitStore.getState().openSplit(threadRef);
+            return;
+          case "close-split":
+            useThreadSplitStore.getState().closeSplit();
             return;
           case "regenerate-title":
             if (isRegeneratingTitle) return;

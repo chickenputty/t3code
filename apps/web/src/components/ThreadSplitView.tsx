@@ -148,7 +148,11 @@ function ChatPane({
   const focusPane = useThreadSplitStore((state) => state.focusPane);
   const closeSplit = useThreadSplitStore((state) => state.closeSplit);
   const value = useMemo<ChatPaneValue>(
-    () => ({ isFocusedPane, ...(pane === "secondary" ? { onClosePane: closeSplit } : {}) }),
+    () => ({
+      isFocusedPane,
+      paneId: pane,
+      ...(pane === "secondary" ? { onClosePane: closeSplit } : {}),
+    }),
     [closeSplit, isFocusedPane, pane],
   );
   return (

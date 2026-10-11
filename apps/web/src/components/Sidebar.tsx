@@ -291,10 +291,12 @@ import {
   SidebarStatusGlyph,
   SearchScopeToggle,
   SidebarViewControls,
+  SidebarViewToolbar,
   ThreadTopicEmoji,
 } from "./sidebar/SidebarViewControls";
 import { threadEmojiForTitle } from "./sidebar/threadEmoji";
 import { useSidebarViewStore } from "./sidebar/sidebarViewStore";
+import { useThreadsViewOptions } from "./explorer/useThreadsViewOptions"; // Fork
 import { useThreadVisitsStore } from "./sidebar/threadVisits";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -482,6 +484,7 @@ function SidebarThreadTooltip({
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
+  propertiesText,
 }: {
   thread: SidebarThreadSummary;
   project: ProjectFaviconProject | null;
@@ -499,6 +502,8 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
+  // Fork: the Threads view's shown properties, for rows too small to show them.
+  propertiesText?: string | null | undefined;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const previousProviderNames = thread.providerInstanceHistory
@@ -517,6 +522,9 @@ function SidebarThreadTooltip({
           ) : null
         }
       >
+        {propertiesText ? (
+          <div className="min-w-0 truncate text-foreground/75">{propertiesText}</div>
+        ) : null}
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
             {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
@@ -1160,6 +1168,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // icon and name the header already shows, and indents by the "Indent" setting.
   grouped?: boolean;
   indent?: SidebarThreadIndent;
+  // Fork: the Threads view's shown properties: a meta line on cards, the hover card on slim rows.
+  propertiesText?: string | null;
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
@@ -1444,6 +1454,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
+      propertiesText={variant === "slim" ? props.propertiesText : null}
     />
   );
 
@@ -2324,6 +2335,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               </span>
             </div>
           </div>
+          {/* Fork: the Threads view's shown properties, a meta line under the card. */}
+          {props.propertiesText ? (
+            <div className="relative z-10 -mt-1 truncate px-(--sidebar-row-content-inset) pb-(--sidebar-content-inset) text-2xs text-muted-foreground/70">
+              {props.propertiesText}
+            </div>
+          ) : null}
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
         {detailsTooltip}
@@ -2877,6 +2894,9 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // Fork: the active Threads view arranges this list (explorer/useThreadsViewOptions.ts).
+  const threadsView = useThreadsViewOptions();
+  const viewThreadKeys = threadsView.visibleThreadKeys;
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2895,7 +2915,14 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+    const roster = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+    // Fork: the view's filter, before the split, so every section respects it.
+    const visible =
+      viewThreadKeys === null
+        ? roster
+        : roster.filter((thread) =>
+            viewThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+          );
     inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -3002,15 +3029,17 @@ export default function Sidebar() {
     serverConfigs,
     snoozeWakeTick,
     threads,
+    viewThreadKeys,
     workingShelfEnabled,
   ]);
 
   // Fork: sort and group the active list (sidebar/sidebarArrangement.ts). With
   // manual order and no grouping the list passes through untouched.
-  const sidebarGroupByProject = useSidebarViewStore((state) => state.groupByProject);
-  const sidebarPinsStayGrouped = useSidebarViewStore((state) => state.pinsStayGrouped);
-  const sidebarThreadSort = useSidebarViewStore((state) => state.sort);
-  const sidebarProjectSort = useSidebarViewStore((state) => state.projectSort);
+  const sidebarGroupByProject = threadsView.groupByProject;
+  const sidebarPinsStayGrouped = threadsView.pinsStayGrouped;
+  const sidebarThreadSort = threadsView.sort;
+  const sidebarProjectSort = threadsView.projectSort;
+  const viewGroupOf = threadsView.groupOf;
   const collapsedProjectKeys = useSidebarViewStore((state) => state.collapsedProjectKeys);
   const toggleProjectCollapsed = useSidebarViewStore((state) => state.toggleProjectCollapsed);
   const threadListArranged = sidebarGroupByProject || sidebarThreadSort.field !== "manual";
@@ -3070,12 +3099,15 @@ export default function Sidebar() {
           }),
         openedAtOf: (thread) =>
           openedAtByThreadKey?.[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
-        groupOf: (thread) => {
-          const group = logicalProjectByProjectKey.get(
-            `${thread.environmentId}:${thread.projectId}`,
-          );
-          return group === undefined ? null : { key: group.projectKey, label: group.displayName };
-        },
+        // Fork: a view grouped by another property brings its own groups.
+        groupOf:
+          viewGroupOf ??
+          ((thread) => {
+            const group = logicalProjectByProjectKey.get(
+              `${thread.environmentId}:${thread.projectId}`,
+            );
+            return group === undefined ? null : { key: group.projectKey, label: group.displayName };
+          }),
         collapsedGroupKeys: new Set(collapsedProjectKeys),
         pinnedThreads: sidebarPinsInGroups ? pinnedThreads : null,
       }),
@@ -3092,6 +3124,7 @@ export default function Sidebar() {
       sidebarProjectSort,
       sidebarThreadSort,
       snoozeNow,
+      viewGroupOf,
     ],
   );
   const displayedActiveThreads = activeArrangement.threads;
@@ -3429,9 +3462,10 @@ export default function Sidebar() {
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-      const groupKey = logicalProjectByProjectKey.get(
-        `${thread.environmentId}:${thread.projectId}`,
-      )?.projectKey;
+      // Fork: a view grouped by another property holds the thread in its own group.
+      const groupKey = viewGroupOf
+        ? viewGroupOf(thread)?.key
+        : logicalProjectByProjectKey.get(`${thread.environmentId}:${thread.projectId}`)?.projectKey;
       if (
         sidebarGroupByProject &&
         groupKey !== undefined &&
@@ -3450,6 +3484,7 @@ export default function Sidebar() {
       navigateToThread,
       sidebarGroupByProject,
       toggleProjectCollapsed,
+      viewGroupOf,
     ],
   );
   useEffect(() => {
@@ -5270,7 +5305,7 @@ export default function Sidebar() {
               viewControls={
                 <>
                   {isSearchingThreads ? <SearchScopeToggle /> : null}
-                  <SidebarViewControls />
+                  <SidebarViewControls options={threadsView} />
                 </>
               }
               projectScope={
@@ -5423,6 +5458,8 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {/* Fork: the Threads view's filter, group and properties, a row of their own. */}
+            <SidebarViewToolbar options={threadsView} />
           </SidebarGroup>
         }
       >
@@ -5566,6 +5603,7 @@ export default function Sidebar() {
                             hideProjectIcon={!showProjectIcons}
                             grouped={indented}
                             indent={indented ? threadIndent : "none"}
+                            propertiesText={threadsView.propertiesTextOf(threadKey)}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"
@@ -5768,7 +5806,8 @@ export default function Sidebar() {
                                   // Fork: Project icons hides the header's icon; Icon style
                                   // picks the coloured folder or the project's own icon.
                                   iconStyle={
-                                    !showProjectIcons
+                                    // Fork: a group that is not a project has no project icon.
+                                    !showProjectIcons || viewGroupOf !== null
                                       ? "none"
                                       : projectIconStyle === "folder" || project === undefined
                                         ? "folder"
