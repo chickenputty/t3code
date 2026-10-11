@@ -18,6 +18,8 @@ import {
 } from "~/components/sidebar/sidebarArrangement";
 import type { SidebarThreadSummary } from "~/types";
 
+import { useSidebarViewStore } from "~/components/sidebar/sidebarViewStore";
+
 import { useSavedViews } from "../views/useSavedViews";
 import { useThreadCategories } from "../views/useThreadCategories";
 import { useViewRows } from "../views/useViewRows";
@@ -35,6 +37,9 @@ import {
   threadsPropertiesText,
 } from "./threadsViewArrangement";
 
+/** Starts every non-project group key, so they never collide with project keys. */
+const VIEW_GROUP_KEY_PREFIX = "view:";
+
 type ThreadIdentity = Pick<SidebarThreadSummary, "environmentId" | "id">;
 
 function readSort(sort: SavedViewThreadsSort, fallback: SidebarThreadSort): SidebarThreadSort {
@@ -47,8 +52,10 @@ function keyOf(thread: ThreadIdentity): string {
 }
 
 export function useThreadsViewOptions() {
-  const { views, update: updateView } = useSavedViews();
+  const { views, update: updateView, duplicate, remove } = useSavedViews();
   const activeViewId = useExplorerStore((state) => state.activeViewId);
+  const setActiveViewId = useExplorerStore((state) => state.setActiveViewId);
+  const pruneCollapsedKeys = useSidebarViewStore((state) => state.pruneCollapsedKeys);
   const view = useMemo((): SavedView => {
     const active = resolveActiveExplorerView(views, activeViewId);
     // Only a Threads layout arranges this list; anything else reads the built-in one.
@@ -80,7 +87,7 @@ export function useThreadsViewOptions() {
     const shared = new Map<string, SidebarProjectGroupRef>();
     for (const row of rows) {
       const ref = threadsGroupRef(row, otherGrouping, nowMs);
-      const key = `view:${otherGrouping}:${ref.key}`;
+      const key = `${VIEW_GROUP_KEY_PREFIX}${otherGrouping}:${ref.key}`;
       let entry = shared.get(key);
       if (entry === undefined) {
         entry = { key, label: ref.label };
@@ -138,9 +145,29 @@ export function useThreadsViewOptions() {
   );
 
   const update = useCallback(
-    (patch: Partial<Omit<SavedView, "id">>) => updateView(view.id, patch),
-    [updateView, view.id],
+    (patch: Partial<Omit<SavedView, "id">>) => {
+      if (patch.groupBy !== undefined && patch.groupBy !== view.groupBy) {
+        // Collapsed groups of the grouping being left would only pile up; project keys stay.
+        const kept = `${VIEW_GROUP_KEY_PREFIX}${patch.groupBy}:`;
+        pruneCollapsedKeys((key) => !key.startsWith(VIEW_GROUP_KEY_PREFIX) || key.startsWith(kept));
+      }
+      updateView(view.id, patch);
+    },
+    [pruneCollapsedKeys, updateView, view.groupBy, view.id],
   );
+
+  /** Copies the view and shows the copy. */
+  const duplicateView = useCallback(() => {
+    const copy = duplicate(view.id);
+    if (copy) setActiveViewId(copy.id);
+  }, [duplicate, setActiveViewId, view.id]);
+
+  /** Deletes a copy and falls back to the built-in Threads view; the built-in one stays. */
+  const deleteView = useCallback(() => {
+    if (view.id === BUILT_IN_THREADS_VIEW_ID) return;
+    remove(view.id);
+    setActiveViewId(null);
+  }, [remove, setActiveViewId, view.id]);
 
   const sort = useMemo(
     () => readSort(view.threads.sort, MANUAL_SIDEBAR_THREAD_SORT),
@@ -166,6 +193,8 @@ export function useThreadsViewOptions() {
     propertiesTextOf,
     optionsFor,
     update,
+    duplicateView,
+    deleteView,
   };
 }
 

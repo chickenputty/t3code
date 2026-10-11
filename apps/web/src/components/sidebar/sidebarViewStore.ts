@@ -35,6 +35,8 @@ interface SidebarViewState extends PersistedSidebarView {
   readonly setProjectSortField: (field: SidebarThreadSortField) => void;
   readonly setProjectSortReversed: (reversed: boolean) => void;
   readonly toggleProjectCollapsed: (projectKey: string) => void;
+  /** Drops collapsed group keys that `keep` rejects (a grouping that is gone). */
+  readonly pruneCollapsedKeys: (keep: (key: string) => boolean) => void;
 }
 
 const DEFAULT_VIEW: PersistedSidebarView = {
@@ -95,6 +97,13 @@ export const useSidebarViewStore = create<SidebarViewState>((set) => ({
         ? state
         : { projectSort: { field: state.projectSort.field, reversed } },
     ),
+  pruneCollapsedKeys: (keep) =>
+    set((state) => {
+      const kept = state.collapsedProjectKeys.filter(keep);
+      return kept.length === state.collapsedProjectKeys.length
+        ? state
+        : { collapsedProjectKeys: kept };
+    }),
   toggleProjectCollapsed: (projectKey) =>
     set((state) => ({
       collapsedProjectKeys: state.collapsedProjectKeys.includes(projectKey)

@@ -591,14 +591,19 @@ export function GroupControl({
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
-        <MenuSeparator />
-        <MenuCheckboxItem
-          variant="switch"
-          checked={view.hideEmptyGroups}
-          onCheckedChange={(checked) => update({ hideEmptyGroups: checked })}
-        >
-          Hide empty groups
-        </MenuCheckboxItem>
+        {/* The native Threads list never draws an empty group. */}
+        {view.layout === "threads" ? null : (
+          <>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              variant="switch"
+              checked={view.hideEmptyGroups}
+              onCheckedChange={(checked) => update({ hideEmptyGroups: checked })}
+            >
+              Hide empty groups
+            </MenuCheckboxItem>
+          </>
+        )}
       </MenuPopup>
     </Menu>
   );
@@ -770,7 +775,7 @@ function CardSettingsItems({ view, update }: { view: SavedView; update: UpdateVi
   );
 }
 
-function SettingsControl({
+export function SettingsControl({
   view,
   update,
   onRename,

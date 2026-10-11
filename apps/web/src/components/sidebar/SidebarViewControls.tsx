@@ -60,6 +60,7 @@ import {
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { ThreadsViewOptions } from "~/components/explorer/useThreadsViewOptions";
+import { ThreadsViewSettings } from "~/components/explorer/ThreadsViewSettings";
 import { FilterControl, GroupControl, PropertiesControl } from "~/components/views/ViewToolbar";
 
 /** A submenu's current choice, right-aligned before its chevron. */
@@ -95,6 +96,7 @@ export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
       <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
       <GroupControl view={view} update={update} compact />
       <PropertiesControl view={view} update={update} compact />
+      <ThreadsViewSettings options={props.options} />
       <SidebarViewOptionsMenu
         grouped={grouped}
         groupByProject={groupByProject}
@@ -235,7 +237,8 @@ function SidebarViewOptionsMenu(props: {
         <SidebarSortSubmenu
           label={grouped && !groupByProject ? "Group sort" : "Project sort"}
           sort={projectSort}
-          manualHint="Follows the project order in Settings."
+          // Other groups have no order of their own: they follow their first thread.
+          manualHint={groupByProject ? "Follows the project order in Settings." : null}
           disabled={!grouped}
           onFieldChange={(field) => props.onProjectSortChange(withSortField(projectSort, field))}
           onReversedChange={(reversed) => {
@@ -293,7 +296,7 @@ function SidebarViewOptionsMenu(props: {
 function SidebarSortSubmenu(props: {
   label: string;
   sort: SidebarThreadSort;
-  manualHint: string;
+  manualHint: string | null;
   disabled?: boolean;
   onFieldChange: (field: SidebarThreadSortField) => void;
   onReversedChange: (reversed: boolean) => void;
@@ -325,7 +328,9 @@ function SidebarSortSubmenu(props: {
           </MenuRadioGroup>
         </MenuGroup>
         {directionLabels === null ? (
-          <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
+          props.manualHint === null ? null : (
+            <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
+          )
         ) : (
           <>
             <MenuSeparator />

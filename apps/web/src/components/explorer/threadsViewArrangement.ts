@@ -52,7 +52,10 @@ export function threadsGroupRef(
   const group = groupViewRows([row], groupBy, { hideEmpty: true, nowMs }).find(
     (candidate) => candidate.rows.length > 0,
   );
-  if (group === undefined) return { key: NONE_GROUP_KEY, label: "Other" };
+  if (group === undefined) {
+    const label = viewProperty(groupBy)?.label.toLowerCase() ?? "group";
+    return { key: NONE_GROUP_KEY, label: `No ${label}` };
+  }
   return { key: group.key === "" ? NONE_GROUP_KEY : group.key, label: group.label };
 }
 
