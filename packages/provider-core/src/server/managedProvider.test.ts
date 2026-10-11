@@ -657,4 +657,71 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect("keeps a ready status through one failed probe, then publishes the failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failedSnapshot: ServerProvider = {
+          ...refreshedSnapshot,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          checkedAt: "2026-04-10T00:00:05.000Z",
+          message: "Timed out while checking provider status.",
+        };
+        const probes = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+          refreshedSnapshot,
+          failedSnapshot,
+          refreshedSnapshotSecond,
+          failedSnapshot,
+          failedSnapshot,
+        ]);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.modify(probes, ([next, ...rest]) => [next!, rest] as const),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        // One failure keeps the last good snapshot, and a good probe clears the hold.
+        assert.strictEqual((yield* provider.refresh).status, "ready");
+        assert.strictEqual((yield* provider.refresh).message, refreshedSnapshotSecond.message);
+        // A second failure in a row is published.
+        assert.strictEqual((yield* provider.refresh).status, "ready");
+        assert.strictEqual((yield* provider.refresh).status, "error");
+        assert.strictEqual((yield* provider.getSnapshot).status, "error");
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("publishes a missing CLI at once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probes = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+          refreshedSnapshot,
+          {
+            ...refreshedSnapshot,
+            installed: false,
+            status: "error",
+            message: "CLI was not found on PATH.",
+          },
+        ]);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.modify(probes, ([next, ...rest]) => [next!, rest] as const),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        assert.strictEqual((yield* provider.refresh).status, "error");
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });

@@ -22,6 +22,32 @@ import type { ManagedServerProvider } from "./snapshot.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  /** The last probe failed and the published snapshot is still the last good one. */
+  readonly holdingLastGood: boolean;
+}
+
+/**
+ * Fork (chickenputty/t3code): one failed status probe of a ready provider is
+ * usually a slow CLI start on a busy machine, not a broken install. When the
+ * probe could not learn anything (auth unknown), the last good snapshot answers
+ * once more; a second failure in a row is published. A definite answer such as
+ * a logout, a probe after a settings change, or a missing CLI always is.
+ */
+export function shouldHoldLastGoodSnapshot(input: {
+  readonly published: ServerProvider;
+  readonly probed: ServerProvider;
+  readonly settingsChanged: boolean;
+  readonly holdingLastGood: boolean;
+}): boolean {
+  return (
+    !input.settingsChanged &&
+    !input.holdingLastGood &&
+    input.published.status === "ready" &&
+    (input.probed.status === "error" || input.probed.status === "warning") &&
+    input.probed.auth.status === "unknown" &&
+    input.probed.enabled &&
+    input.probed.installed
+  );
 }
 
 function withUsageLimits(
@@ -69,6 +95,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    holdingLastGood: false,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -149,6 +176,25 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const probedSnapshot = yield* input.checkProvider;
+    const settingsChanged = input.haveSettingsChanged(previousSettings, nextSettings);
+    const held = yield* Ref.modify(snapshotStateRef, (state) =>
+      shouldHoldLastGoodSnapshot({
+        published: state.snapshot,
+        probed: probedSnapshot,
+        settingsChanged,
+        holdingLastGood: state.holdingLastGood,
+      })
+        ? ([state.snapshot, { ...state, holdingLastGood: true }] as const)
+        : ([null, state] as const),
+    );
+    if (held !== null) {
+      yield* Effect.logWarning("Provider status probe failed; keeping the last good status once.", {
+        instanceId: held.instanceId,
+        status: probedSnapshot.status,
+      });
+      yield* Ref.set(settingsRef, nextSettings);
+      return held;
+    }
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -181,7 +227,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { snapshot, enrichmentGeneration: generation, holdingLastGood: false },
         ] as const;
       },
     );
