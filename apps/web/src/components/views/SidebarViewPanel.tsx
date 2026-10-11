@@ -25,6 +25,7 @@ import { readLocalApi } from "~/localApi";
 import { useThreadSearch } from "~/state/queries";
 import { useEnvironments } from "~/state/environments";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "~/threadRoutes";
+import { resolveSidebarSplitViewAction, useThreadSplitStore } from "~/threadSplitStore";
 
 import { type CategoryTools, CategoryPicker } from "./CategoryControls";
 import { isWidgetEvent } from "./viewKeys";
@@ -154,12 +155,9 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
     [isMobile, navigate, setOpenMobile],
   );
 
-  const { openMenu } = useThreadActionMenu({
-    threadRef: null,
-    projectCwd: null,
-    // The open thread's header renames it.
-    onStartRename: openThread,
-  });
+  // No onStartRename: a card cannot rename inline, so the menu leaves Rename out
+  // (the open thread's header and the table's title cell rename instead).
+  const { openMenu } = useThreadActionMenu({ threadRef: null, projectCwd: null });
 
   const optionsFor = useCallback(
     (property: ViewProperty): readonly ViewPropertyOption[] => {
@@ -198,7 +196,14 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
         openThread(row.ref);
         return;
       }
-      openMenu({ x: event.clientX, y: event.clientY }, row.ref);
+      openMenu({ x: event.clientX, y: event.clientY }, row.ref, {
+        splitView: resolveSidebarSplitViewAction({
+          threadKey: row.key,
+          routeThreadKey: openKey,
+          secondaryThreadKey: useThreadSplitStore.getState().secondaryThreadKey,
+          isMobile,
+        }),
+      });
     },
     onToggleSelect: (row: ViewRow, event: MouseEvent) => {
       setSelected((current) => {

@@ -278,3 +278,22 @@ export function buildThreadActionMenuItems(
           : item,
       );
 }
+
+/**
+ * Fork: drops one item from a built menu, handing its separator to the item
+ * after it so the groups stay apart (saved-view cards have no inline rename).
+ */
+export function withoutThreadActionMenuItem(
+  items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
+  id: ThreadActionMenuId,
+): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const index = items.findIndex((item) => item.id === id);
+  if (index === -1) return items;
+  const removed = items[index]!;
+  const next = items[index + 1];
+  return [
+    ...items.slice(0, index),
+    ...(next ? [removed.separatorBefore ? { ...next, separatorBefore: true } : next] : []),
+    ...items.slice(index + 2),
+  ];
+}

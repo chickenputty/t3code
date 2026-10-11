@@ -72,7 +72,10 @@ export function useSavedViews() {
       },
       /** The built-in Threads view always exists; removing it does nothing. */
       remove(id: string) {
-        write(removeSavedView(current(), id));
+        const list = current();
+        const next = removeSavedView(list, id);
+        // Nothing to remove (the built-in view, or an id already gone): no settings write.
+        if (next.length !== list.length) write(next);
       },
     };
   }, [local, storedViews, write]);

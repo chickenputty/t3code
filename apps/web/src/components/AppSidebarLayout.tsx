@@ -33,6 +33,7 @@ import {
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 // Fork: the sidebar is an explorer showing the active saved view.
+import { ExplorerRevealer } from "./explorer/ExplorerRevealer";
 import { ExplorerSidebarContent } from "./explorer/ExplorerSidebarContent";
 import { explorerWidthStorageKey, readExplorerWidth } from "./explorer/explorerWidth";
 import { useActiveExplorerView } from "./explorer/useActiveExplorerView";
@@ -359,6 +360,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         {/* Fork: keeps the thread history behind the chat header's back and forward buttons. */}
         <ThreadVisitRecorder />
         <MainAppLocationTracker />
+        {/* Fork: picking a view from the palette or switcher opens the sidebar. */}
+        <ExplorerRevealer />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

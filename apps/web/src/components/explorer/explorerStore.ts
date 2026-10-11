@@ -11,7 +11,11 @@ const STORAGE_KEY = "t3code:fork:explorer:v1";
 
 interface ExplorerState {
   readonly activeViewId: string | null;
+  /** Bumped by `showView`; the sidebar opens itself when it changes. */
+  readonly revealRequest: number;
   readonly setActiveViewId: (id: string | null) => void;
+  /** Picks a view from outside the sidebar (switcher, palette, deep link) and opens the sidebar. */
+  readonly showView: (id: string) => void;
 }
 
 function readActiveViewId(): string | null {
@@ -29,12 +33,14 @@ function readActiveViewId(): string | null {
 
 export const useExplorerStore = create<ExplorerState>((set) => ({
   activeViewId: readActiveViewId(),
+  revealRequest: 0,
   setActiveViewId: (id) =>
     set((state) => (state.activeViewId === id ? state : { activeViewId: id })),
+  showView: (id) => set((state) => ({ activeViewId: id, revealRequest: state.revealRequest + 1 })),
 }));
 
-useExplorerStore.subscribe((state) => {
-  if (typeof window === "undefined") return;
+useExplorerStore.subscribe((state, previous) => {
+  if (typeof window === "undefined" || state.activeViewId === previous.activeViewId) return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeViewId: state.activeViewId }));
   } catch {

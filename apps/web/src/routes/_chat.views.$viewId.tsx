@@ -18,8 +18,9 @@ export interface SavedViewSearch {
 export const Route = createFileRoute("/_chat/views/$viewId")({
   validateSearch: (raw: Record<string, unknown>): SavedViewSearch =>
     typeof raw.open === "string" && raw.open !== "" ? { open: raw.open } : {},
-  beforeLoad: ({ params, search }) => {
-    useExplorerStore.getState().setActiveViewId(params.viewId);
+  beforeLoad: ({ params, search, preload }) => {
+    // A hovered link preloads this route; only a real visit picks the view.
+    if (!preload) useExplorerStore.getState().showView(params.viewId);
     const openRef = search.open === undefined ? null : parseScopedThreadKey(search.open);
     if (openRef !== null) {
       throw redirect({

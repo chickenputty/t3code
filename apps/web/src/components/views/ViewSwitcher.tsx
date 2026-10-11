@@ -45,7 +45,7 @@ const LAYOUTS: readonly SavedViewLayout[] = ["list", "board", "gallery", "table"
 export function ViewSwitcher() {
   const { views, create, canSave } = useSavedViews();
   const current = useActiveExplorerView();
-  const setActiveViewId = useExplorerStore((state) => state.setActiveViewId);
+  const showView = useExplorerStore((state) => state.showView);
   const [open, setOpen] = useState(false);
   const CurrentIcon = VIEW_LAYOUT_ICONS[current.layout];
 
@@ -70,10 +70,7 @@ export function ViewSwitcher() {
           const Icon = VIEW_LAYOUT_ICONS[view.layout];
           return (
             <Fragment key={view.id}>
-              <MenuItem
-                onClick={() => setActiveViewId(view.id)}
-                data-active={view.id === current.id}
-              >
+              <MenuItem onClick={() => showView(view.id)} data-active={view.id === current.id}>
                 <Icon />
                 <span className="min-w-0 flex-1 truncate">{view.name}</span>
                 {view.id === current.id ? (
@@ -96,7 +93,7 @@ export function ViewSwitcher() {
               {LAYOUTS.map((layout) => {
                 const Icon = VIEW_LAYOUT_ICONS[layout];
                 return (
-                  <MenuItem key={layout} onClick={() => setActiveViewId(create(layout).id)}>
+                  <MenuItem key={layout} onClick={() => showView(create(layout).id)}>
                     <Icon />
                     {VIEW_LAYOUT_LABELS[layout]}
                   </MenuItem>

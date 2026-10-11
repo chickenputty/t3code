@@ -767,7 +767,7 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   // Fork: saved thread views open from the palette too.
   const { views: savedViews, create: createSavedView, canSave: canSaveViews } = useSavedViews();
-  const setActiveExplorerViewId = useExplorerStore((state) => state.setActiveViewId);
+  const showExplorerView = useExplorerStore((state) => state.showView);
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -2280,7 +2280,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <ViewIcon className={ITEM_ICON_CLASS} />,
       // Fork: views show in the sidebar explorer, beside the open thread.
       run: async () => {
-        setActiveExplorerViewId(view.id);
+        showExplorerView(view.id);
       },
     });
   }
@@ -2292,7 +2292,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New view",
       icon: <ListIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        setActiveExplorerViewId(createSavedView("list").id);
+        showExplorerView(createSavedView("list").id);
       },
     });
 
