@@ -22,6 +22,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
@@ -512,6 +513,19 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getUnreadableThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
+    ProjectionStoreV2Error
+  >;
+  /**
+   * Sessions not stopped or failed that no thread is bound to, each with the
+   * thread that last wrote it. Startup recovery stops them: no runtime
+   * survives a restart, and recovery otherwise finds sessions only through
+   * their bindings.
+   */
+  readonly getUnboundLiveProviderSessions: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly session: OrchestrationV2ProviderSession;
+    }>,
     ProjectionStoreV2Error
   >;
   readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
@@ -3715,6 +3729,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    const getUnboundLiveProviderSessions = Effect.fn(
+      "ProjectionStore.getUnboundLiveProviderSessions",
+    )(
+      function* () {
+        const rows = yield* sql<{ readonly thread_id: string; readonly payload_json: string }>`
+          SELECT sessions.thread_id, sessions.payload_json
+          FROM orchestration_v2_projection_provider_sessions AS sessions
+          WHERE sessions.status NOT IN ('stopped', 'error')
+            AND sessions.thread_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
+              WHERE bindings.provider_session_id = sessions.provider_session_id
+            )
+          ORDER BY sessions.provider_session_id ASC
+        `;
+        return yield* Effect.forEach(rows, (row) =>
+          decodeProviderSessionPayload(row.payload_json).pipe(
+            Effect.map((session) => ({ threadId: ThreadId.make(row.thread_id), session })),
+          ),
+        );
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     // Decode every canonical row once. Full thread reads repeat shared sessions,
     // provider threads, transfers, and inherited fork histories for each owner.
     const getUnreadableThreadIds = Effect.fn("ProjectionStore.getUnreadableThreadIds")(
@@ -5995,6 +6033,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getLimitRecoveryCandidates,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
+      getUnboundLiveProviderSessions,
       getThreadSnapshot,
       getThreadSnapshotWindow,
       getTimelinePage,
@@ -6222,6 +6261,8 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .map((projection) => projection.thread.id);
         }),
       getUnreadableThreadIds: () => Effect.succeed([]),
+      // Replay keeps sessions only on bound threads, so it cannot see unbound ones.
+      getUnboundLiveProviderSessions: () => Effect.succeed([]),
       getPendingNativeUserInputs: (threadId, providerTurnId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
