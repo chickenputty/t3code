@@ -113,6 +113,8 @@ export interface EnvironmentThreadShell {
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
+  /** A T3 subagent below this thread is still working; lists show the thread as Working. */
+  readonly hasWorkingSubagents?: boolean;
   /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   /** Native `/goal` on the active provider thread. */
@@ -210,6 +212,7 @@ export function scopeProject(
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
+  hasWorkingSubagents = false,
 ): EnvironmentThreadShell {
   const updatedAt = iso(thread.updatedAt);
   const latestRun =
@@ -261,6 +264,7 @@ export function presentThreadShell(
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
+    ...(hasWorkingSubagents ? { hasWorkingSubagents } : {}),
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
     itemCount: thread.itemCount,

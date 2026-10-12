@@ -658,6 +658,7 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+  hasWorkingSubagents?: boolean | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -977,7 +978,7 @@ export function shouldRecedeSidebarThread(input: {
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
+  "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "hasWorkingSubagents"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -993,11 +994,15 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   ) {
     return "working";
   }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
+  // The thread's own turn ended but a delegated subagent below it is still running.
+  if (thread.hasWorkingSubagents === true) {
+    return "working";
+  }
+  if (thread.runtime?.status === "idle") {
+    return "waiting";
   }
   return "ready";
 }
@@ -1199,7 +1204,11 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.runtime?.status === "running" || thread.runtime?.status === "waiting") {
+  if (
+    thread.runtime?.status === "running" ||
+    thread.runtime?.status === "waiting" ||
+    (thread.hasWorkingSubagents === true && thread.runtime?.status !== "failed")
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

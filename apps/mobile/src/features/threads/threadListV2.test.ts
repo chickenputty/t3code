@@ -111,6 +111,12 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("reads as working while a delegated subagent runs after the turn ended", () => {
+    const thread = makeThread({ id: ThreadId.make("parent"), title: "Parent" });
+    expect(resolveThreadListV2Status({ ...thread, hasWorkingSubagents: true })).toBe("working");
+    expect(resolveThreadListV2Status(thread)).not.toBe("working");
+  });
+
   it("distinguishes usage limits from ordinary failures and clears the label after recovery", () => {
     const thread = makeThread({
       id: ThreadId.make("limited"),
