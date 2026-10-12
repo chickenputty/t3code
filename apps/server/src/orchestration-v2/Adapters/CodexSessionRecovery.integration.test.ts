@@ -151,11 +151,11 @@ describe("Codex shared session recovery", () => {
           }
           const exit = yield* Effect.exit(handle.exitCode);
           // Fork: Windows kills through taskkill, which ends the process with code 1, not a signal.
-          if (process.platform !== "win32") {
-            assert.equal(Exit.isFailure(exit), termination === "SIGKILL");
-          }
-          if (termination !== "SIGKILL" && Exit.isSuccess(exit)) {
-            assert.equal(Number(exit.value), 7);
+          if (termination !== "SIGKILL") {
+            assert.isTrue(Exit.isSuccess(exit));
+            if (Exit.isSuccess(exit)) assert.equal(Number(exit.value), 7);
+          } else if (process.platform !== "win32") {
+            assert.isTrue(Exit.isFailure(exit));
           }
 
           // Await committed failures, rather than guessing when the event pump ran.
