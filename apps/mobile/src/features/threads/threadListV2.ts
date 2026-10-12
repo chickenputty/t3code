@@ -183,7 +183,10 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "hasWorkingSubagents"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -197,11 +200,15 @@ export function resolveThreadListV2Status(
   ) {
     return "working";
   }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
+  // The thread's own turn ended but a delegated subagent below it is still running.
+  if (thread.hasWorkingSubagents === true) {
+    return "working";
+  }
+  if (thread.runtime?.status === "idle") {
+    return "waiting";
   }
   return "ready";
 }

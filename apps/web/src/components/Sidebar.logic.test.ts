@@ -900,6 +900,22 @@ describe("resolveSidebarThreadStatus", () => {
 
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
 
+  it("reads as working while a delegated subagent runs after the turn ended", () => {
+    const ended = { ...runtime, status: "completed" as const };
+    expect(resolveSidebarThreadStatus({ ...idle, runtime: ended, hasWorkingSubagents: true })).toBe(
+      "working",
+    );
+    expect(resolveSidebarThreadStatus({ ...idle, runtime: ended })).toBe("ready");
+    // A failed turn stays visible over the children.
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: { ...runtime, status: "failed" as const, lastErrorClass: null },
+        hasWorkingSubagents: true,
+      }),
+    ).toBe("failed");
+  });
+
   it("prioritizes approval over a running runtime", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, runtime })).toBe(
       "approval",
