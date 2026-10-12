@@ -12,6 +12,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import { presentThreadShell } from "./models.ts";
+import { resolveThreadsWithWorkingSubagents } from "./subagentActivity.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -24,6 +25,7 @@ import {
 
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
+const EMPTY_THREAD_ID_SET: ReadonlySet<ThreadId> = new Set();
 const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
 const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ProjectId,
@@ -38,20 +40,28 @@ export function createEnvironmentThreadShellAtoms(input: {
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
+  // Keyed by environment and the working-subagents flag, so a child changing
+  // state re-presents only the ancestors whose flag flips.
   const scopedThreads = new WeakMap<
     OrchestrationV2ThreadShell,
-    Map<EnvironmentId, EnvironmentThreadShell>
+    Map<string, EnvironmentThreadShell>
   >();
-  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationV2ThreadShell) => {
-    let byEnvironment = scopedThreads.get(thread);
-    if (byEnvironment === undefined) {
-      byEnvironment = new Map();
-      scopedThreads.set(thread, byEnvironment);
+  const scopedThread = (
+    environmentId: EnvironmentId,
+    thread: OrchestrationV2ThreadShell,
+    workingSubagentParents: ReadonlySet<ThreadId>,
+  ) => {
+    const hasWorkingSubagents = workingSubagentParents.has(thread.id);
+    let byKey = scopedThreads.get(thread);
+    if (byKey === undefined) {
+      byKey = new Map();
+      scopedThreads.set(thread, byKey);
     }
-    let value = byEnvironment.get(environmentId);
+    const key = `${environmentId}|${hasWorkingSubagents ? 1 : 0}`;
+    let value = byKey.get(key);
     if (value === undefined) {
-      value = presentThreadShell(environmentId, thread);
-      byEnvironment.set(environmentId, value);
+      value = presentThreadShell(environmentId, thread, hasWorkingSubagents);
+      byKey.set(key, value);
     }
     return value;
   };
@@ -62,6 +72,18 @@ export function createEnvironmentThreadShellAtoms(input: {
         get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
     ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
   );
+
+  const environmentWorkingSubagentParentsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlySet<ThreadId> = EMPTY_THREAD_ID_SET;
+    return Atom.make((get) => {
+      const next = resolveThreadsWithWorkingSubagents(get(environmentThreadsAtom(environmentId)));
+      if (next.size === previous.size && [...next].every((id) => previous.has(id))) {
+        return previous;
+      }
+      previous = next.size === 0 ? EMPTY_THREAD_ID_SET : next;
+      return previous;
+    }).pipe(Atom.withLabel(`environment-working-subagent-parents:${environmentId}`));
+  });
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {
@@ -135,7 +157,13 @@ export function createEnvironmentThreadShellAtoms(input: {
     const ref = parseThreadKey(key);
     return Atom.make((get) => {
       const source = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ?? null;
-      return source === null ? null : scopedThread(ref.environmentId, source);
+      return source === null
+        ? null
+        : scopedThread(
+            ref.environmentId,
+            source,
+            get(environmentWorkingSubagentParentsAtom(ref.environmentId)),
+          );
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });
 
@@ -165,7 +193,7 @@ export function createEnvironmentThreadShellAtoms(input: {
             child.pendingRuntimeRequest?.kind === "user_input" &&
             !isProviderNativeSubagentThread(child)
           ) {
-            next.push(scopedThread(ref.environmentId, child));
+            next.push(scopedThread(ref.environmentId, child, EMPTY_THREAD_ID_SET));
           }
         }
       }
@@ -196,6 +224,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           ) ?? EMPTY_SCOPED_THREAD_REFS;
         if (refs.length === 0) continue;
         const threads = get(environmentThreadIndexAtom(projectRef.environmentId));
+        const workingParents = get(environmentWorkingSubagentParentsAtom(projectRef.environmentId));
         for (const ref of refs) {
           const key = threadKey(ref);
           if (seen.has(key)) {
@@ -204,7 +233,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           seen.add(key);
           const thread = threads.get(ref.threadId);
           if (thread !== undefined) {
-            next.push(scopedThread(ref.environmentId, thread));
+            next.push(scopedThread(ref.environmentId, thread, workingParents));
           }
         }
       }
@@ -233,8 +262,9 @@ export function createEnvironmentThreadShellAtoms(input: {
   const threadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      const workingParents = get(environmentWorkingSubagentParentsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
-        next.push(scopedThread(environmentId, thread));
+        next.push(scopedThread(environmentId, thread, workingParents));
       }
     }
     if (arrayElementsEqual(previousThreadShells, next)) {
@@ -248,10 +278,11 @@ export function createEnvironmentThreadShellAtoms(input: {
   const navigationThreadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      const workingParents = get(environmentWorkingSubagentParentsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
           continue;
-        next.push(scopedThread(environmentId, thread));
+        next.push(scopedThread(environmentId, thread, workingParents));
       }
     }
     if (arrayElementsEqual(previousNavigationShells, next)) return previousNavigationShells;
