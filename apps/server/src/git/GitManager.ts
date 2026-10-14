@@ -192,14 +192,15 @@ const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
-// A status answer waits this long for the branch's PR before settling for the last known one.
-// Host reads queue behind a few gh processes, so a busy or throttled host held status refreshes
-// for half a minute and more, only to fail and fall back anyway.
-const STATUS_PR_LOOKUP_BUDGET = Duration.seconds(5);
 // How long branchPullRequest reuses the git state around a cached PR answer.
 // Matches PR_LOOKUP_NO_OPEN_PR_CACHE_TTL, the delay already accepted for a
 // change made outside the app.
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+
+// A status answer waits this long for the branch's PR before settling for the last known one.
+// Host reads queue behind a few gh processes, so a busy or throttled host held status refreshes
+// for half a minute and more, only to fail and fall back anyway.
+const STATUS_PR_LOOKUP_BUDGET = Duration.seconds(5);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -2037,7 +2038,11 @@ export const make = Effect.gen(function* () {
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
   ) {
     const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
-    if (configured) return configured;
+    if (configured) {
+      // Older worktree handoffs recorded checkout revisions as PR target branches.
+      const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
+      if (configuredBranch) return configuredBranch;
+    }
 
     if (upstreamRef && !headContext.isCrossRepository) {
       const upstreamBranch = extractBranchNameFromRemoteRef(upstreamRef, {
@@ -2607,7 +2612,7 @@ export const make = Effect.gen(function* () {
     // is looked up on the fork. Verify against the remote the lookup used.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
-    let currentIdentity = yield* resolvePrLookupRepositoryIdentity(
+    const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
       identityRemoteName(cached.headContext),
@@ -2621,22 +2626,6 @@ export const make = Effect.gen(function* () {
     const hasSameIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       headContext.headRemoteUrlKey === identity.headRemoteUrlKey &&
       headContext.targetRemoteUrlKey === identity.targetRemoteUrlKey;
-    // A remembered URL can be older than the cached answer; ask git before
-    // treating the difference as real.
-    if (
-      !options.freshGitState &&
-      !(
-        canVerifyIdentity(cached.headContext, currentIdentity) &&
-        hasSameIdentity(cached.headContext, currentIdentity)
-      )
-    ) {
-      currentIdentity = yield* resolvePrLookupRepositoryIdentity(
-        cacheCwd,
-        branch,
-        identityRemoteName(cached.headContext),
-        true,
-      );
-    }
     if (!canVerifyIdentity(cached.headContext, currentIdentity)) {
       return yield* new GitManagerError({
         operation: "branchPullRequest",

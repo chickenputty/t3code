@@ -786,9 +786,10 @@ function makeManager(input?: {
         Effect.gen(function* () {
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           return ChildProcessSpawner.make((command) => {
-            // Fork: Windows spawns git by its resolved path (`...\git.exe`).
+            // On Windows the driver starts git by its full path to git.exe.
             const args =
-              command._tag === "StandardCommand" && /(^|[\\/])git(\.exe)?$/i.test(command.command)
+              command._tag === "StandardCommand" &&
+              NodePath.parse(command.command).name.toLowerCase() === "git"
                 ? command.args
                 : null;
             if (args !== null) gitCommands?.push(args.join(" "));
@@ -1378,96 +1379,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       }),
     ),
-  );
-
-  it.effect("a merged branch PR answer rechecks a moved remote HEAD", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
-      yield* runGit(repoDir, ["checkout", "-b", "release"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "release"]);
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          prListByHeadSelector: {
-            release: encodeCliJson([
-              {
-                number: 231,
-                title: "Release",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/231",
-                baseRefName: "main",
-                headRefName: "release",
-                state: "MERGED",
-                updatedAt: "2026-04-07T15:00:00Z",
-              },
-            ]),
-          },
-        },
-      });
-
-      const before = yield* manager.branchPullRequest({ cwd: repoDir, branch: "release" });
-      expect(before?.number).toBe(231);
-
-      // Only refs/remotes/origin/HEAD changes; the default branch hides merged PRs.
-      yield* runGit(repoDir, ["remote", "set-head", "origin", "release"]);
-      const after = yield* manager.branchPullRequest({ cwd: repoDir, branch: "release" });
-      expect(after).toBeNull();
-    }),
-  );
-
-  it.effect("a merged branch PR answer rechecks a remote repointed in an included file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const oldRemoteDir = yield* createBareRemote();
-      const newRemoteDir = yield* createBareRemote();
-      const oldUrl = "git@github.com:old-owner/old-repository.git";
-      const newUrl = "git@github.com:new-owner/new-repository.git";
-      const includePath = NodePath.join(yield* makeTempDir("t3code-git-include-"), "remotes");
-      const writeOriginInclude = (url: string) =>
-        fs.writeFileString(
-          includePath,
-          `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`,
-        );
-      yield* writeOriginInclude(oldUrl);
-      yield* runGit(repoDir, ["config", "include.path", includePath]);
-      yield* runGit(repoDir, ["config", `url.${oldRemoteDir}.insteadOf`, oldUrl]);
-      yield* runGit(repoDir, ["config", `url.${newRemoteDir}.insteadOf`, newUrl]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/included-remote"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/included-remote"]);
-      const { manager, ghCalls } = yield* makeManager({
-        ghScenario: {
-          prListSequence: [
-            encodeCliJson([
-              {
-                number: 233,
-                title: "Old repository PR",
-                url: "https://github.com/old-owner/old-repository/pull/233",
-                baseRefName: "main",
-                headRefName: "feature/included-remote",
-                state: "MERGED",
-                updatedAt: "2026-04-07T15:00:00Z",
-              },
-            ]),
-            "[]",
-          ],
-        },
-      });
-      const lookup = manager.branchPullRequest({
-        cwd: repoDir,
-        branch: "feature/included-remote",
-      });
-
-      expect((yield* lookup)?.state).toBe("merged");
-      // Only the included file changes; the repository's own config does not.
-      yield* writeOriginInclude(newUrl);
-      expect(yield* lookup).toBeNull();
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
-    }),
   );
 
   it.effect(
@@ -5154,6 +5065,101 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
+    "creates a PR against the default branch with a legacy %s base setting",
+    (kind) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "main", "trunk"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "trunk"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/legacy-base"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        const commit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["tag", "v1"]);
+        const baseRef =
+          kind === "commit"
+            ? commit
+            : kind === "short-commit"
+              ? commit.slice(0, 12)
+              : kind === "tag"
+                ? "v1"
+                : "HEAD~0";
+        yield* runGit(repoDir, ["config", "branch.feature/legacy-base.gh-merge-base", baseRef]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/legacy-base"]);
+        let generatedBase = "";
+        let generatedSummary = "";
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: { defaultBranch: "trunk", prListSequence: ["[]", "[]"] },
+          textGeneration: {
+            generatePrContent: (input) => {
+              generatedBase = input.baseBranch;
+              generatedSummary = input.commitSummary;
+              return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+        expect(result.pr.status).toBe("created");
+        expect(generatedBase).toBe("trunk");
+        expect(generatedSummary).toContain("Feature commit");
+        expect(
+          ghCalls.some((call) =>
+            call.includes("pr create --base trunk --head feature/legacy-base"),
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect.each([
+    "release/v2",
+    "refs/heads/release/v2",
+    "origin/release/v2",
+    "deadbeef",
+    "remote-only",
+  ])("preserves the configured PR target branch %s", (baseRef) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const baseBranch = baseRef === "deadbeef" ? baseRef : "release/v2";
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", baseBranch]);
+      yield* runGit(repoDir, ["push", "-u", "origin", baseBranch]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/configured-base"]);
+      if (baseRef === "remote-only") {
+        yield* runGit(repoDir, ["branch", "-D", baseBranch]);
+      }
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+      yield* runGit(repoDir, ["add", "feature.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/configured-base"]);
+      yield* runGit(repoDir, [
+        "config",
+        "branch.feature/configured-base.gh-merge-base",
+        baseRef === "remote-only" ? baseBranch : baseRef,
+      ]);
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: { prListSequence: ["[]", "[]"] },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        ghCalls.some((call) =>
+          call.includes(`pr create --base ${baseBranch} --head feature/configured-base`),
+        ),
+      ).toBe(true);
     }),
   );
 

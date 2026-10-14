@@ -1,7 +1,6 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
-import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -67,7 +66,7 @@ import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
-import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
+import { claudeSkillInvocation, isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   createContext,
@@ -148,11 +147,12 @@ import {
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
+  Code2Icon,
   XIcon,
   ZapIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+import { ChevronDown, ChevronRight, Link as LinkIconNode } from "lucide";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -186,6 +186,7 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -2326,6 +2327,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         .map((record) => record.contextId),
     [resolvedContext.records],
   );
+  // Chips read as their labels outside a draft, so a shared link carries the prose alone.
+  const plainText = useMemo(
+    () => replaceComposerContextReferences(resolvedContext.text, (reference) => reference.label),
+    [resolvedContext.text],
+  );
+  const promptLink = useMemo(() => promptLinkFor(plainText), [plainText]);
   const contextClipboardFragment =
     resolvedContext.records.length === 0
       ? null
@@ -2615,19 +2622,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
-                text={
-                  contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      )
-                }
+                text={contextClipboardFragment ? resolvedContext.text : plainText}
                 {...(contextClipboardFragment
                   ? {
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
                     }
                   : {})}
+                variant="ghost"
+              />
+            )}
+            {promptLink !== null && (
+              <MessageCopyButton
+                text={promptLink}
+                label="Copy prompt link"
+                icon={LinkIconNode}
                 variant="ghost"
               />
             )}
@@ -3036,6 +3044,11 @@ function ProposedPlanTimelineRow({
 
 function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "html-render" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { onAppFullscreenChange } = ctx;
+  const onFullscreenChange = useCallback(
+    (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen),
+    [onAppFullscreenChange, row.id],
+  );
 
   return (
     <div className="min-w-0 px-1">
@@ -3044,7 +3057,8 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
-        onOpen={ctx.onFileOpen}
+        threadRef={ctx.threadRef ?? undefined}
+        onFullscreenChange={onFullscreenChange}
       />
     </div>
   );
@@ -3771,13 +3785,9 @@ function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
 
 const failedToolIconClassName = "text-tool-error-icon/40";
 
-/** Image icons and the gradient computer-use mark cannot take a currentColor
- *  tint, so failed rows using them get a trailing x instead. */
-function toolIconAcceptsTint(
-  iconName: WorkEntryIconName,
-  toolIcon: ToolActivityIcon | undefined,
-): boolean {
-  return toolIcon === undefined && iconName !== "computer";
+/** Image icons cannot take a currentColor tint, so failed rows get a trailing x. */
+function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
+  return toolIcon === undefined;
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
@@ -3943,7 +3953,7 @@ function LiveActivityContent({
   highlighted?: boolean;
 }) {
   const showTrailingFailureMark =
-    failed && iconName !== undefined && !toolIconAcceptsTint(iconName, toolIcon);
+    failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
 
   return (
     <WorkLogRow
@@ -5023,6 +5033,7 @@ type WorkEntryIconName =
   | "check"
   | "circle-alert"
   | "computer"
+  | "code"
   | "device"
   | "eye"
   | "globe"
@@ -5219,9 +5230,10 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "brain":
       return <BrainIcon className={className} aria-hidden />;
     case "browser":
-      return <BrowserAppIcon className={className} />;
     case "computer":
-      return <ComputerUseAppIcon className={className} />;
+      return <BrowserAppIcon className={className} />;
+    case "code":
+      return <Code2Icon className={className} aria-hidden />;
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
@@ -5375,6 +5387,11 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
     return "message-circle";
   }
   if (workEntry.toolSurface) return workEntry.toolSurface;
+  if (
+    workEntry.structuredPayload?.type === "dynamic_tool" &&
+    isJavaScriptReplTool(workEntry.structuredPayload.toolName)
+  )
+    return "code";
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
@@ -5787,7 +5804,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ) : null}
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
-          !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
+          !toolIconAcceptsTint(entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />

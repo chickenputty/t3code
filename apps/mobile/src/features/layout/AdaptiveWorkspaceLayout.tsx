@@ -46,6 +46,7 @@ import {
   resolveThreadSelectionOverlayState,
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -219,6 +220,7 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
+  readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -234,6 +236,7 @@ export function AdaptiveWorkspaceLayout(props: {
     <AdaptiveWorkspaceLayoutContent
       {...props}
       projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+      savedThreadListFilters={preferencesResult.value.threadListFilters}
     />
   );
 }
@@ -243,8 +246,10 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
+    readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly savedThreadListFilters?: ThreadListFilters | undefined;
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
@@ -680,7 +685,10 @@ function AdaptiveWorkspaceLayoutContent(
 
   if (nativeWorkspace) {
     return (
-      <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+      <HomeListOptionsProvider
+        projectGroupingMode={projectGroupingMode}
+        savedFilters={props.savedThreadListFilters}
+      >
         <AdaptiveWorkspaceContext value={contextValue}>
           <NativeWorkspaceInspectorContext
             value={{ render: workspaceInspector?.render, visible: inspectorColumnTargetWidth > 0 }}
@@ -692,7 +700,10 @@ function AdaptiveWorkspaceLayoutContent(
     );
   }
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider
+      projectGroupingMode={projectGroupingMode}
+      savedFilters={props.savedThreadListFilters}
+    >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View
           testID="adaptive-workspace-layout"
@@ -730,7 +741,10 @@ function AdaptiveWorkspaceLayoutContent(
                     />
                   )}
                 >
-                  <AndroidWorkspaceSidebar onRequestVisibility={revealPrimarySidebar}>
+                  <AndroidWorkspaceSidebar
+                    onRequestVisibility={revealPrimarySidebar}
+                    selectedPullRequestKey={props.selectedPullRequestKey ?? null}
+                  >
                     <AndroidHomeFabLayout sidebar onStartNewTask={handleStartNewTask}>
                       <ThreadNavigationSidebar
                         width={layout.listPaneWidth}

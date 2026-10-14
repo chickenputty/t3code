@@ -52,7 +52,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-import { ScrollViewMarker } from "react-native-screens";
+import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -109,13 +109,14 @@ import {
 import { PullRequestMergeControls } from "./PullRequestMergeControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
+import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 
 const EMPTY_IDS: readonly string[] = [];
 
 function PullRequestTabScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
   return (
-    <ScrollViewMarker style={{ flex: 1 }} scrollEdgeEffects={{ top: "soft", bottom: "soft" }}>
+    <ScrollViewMarker style={{ flex: 1 }}>
       <ScrollView
         {...props}
         automaticallyAdjustContentInsets={false}
@@ -286,6 +287,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const params = route.params;
+  usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
   const [section, setSection] = useState<"overview" | "activity" | "guide">("overview");
   // Keep each tab's native list and measured rows alive when it is hidden.
