@@ -287,6 +287,7 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import {
+  appliedSidebarProjectScopeKey, // Fork
   arrangeSidebarActiveThreads,
   resolveSidebarThreadDisplayStatus,
   type SidebarThreadSortField,
@@ -295,7 +296,6 @@ import {
   SidebarProjectGroupHeader,
   SidebarStatusGlyph,
   SearchScopeToggle,
-  SidebarViewControls,
   SidebarViewToolbar,
   ThreadTopicEmoji,
 } from "./sidebar/SidebarViewControls";
@@ -2764,11 +2764,14 @@ export default function Sidebar() {
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   const projectScopeKey = useMemo(
     () =>
-      resolveSidebarProjectScopeKey({
-        groups: projectGroups,
-        key: persistedProjectScopeKey,
-        settings: projectGroupingSettings,
-      }),
+      // Fork: the header has no project scope dropdown, so no scope applies.
+      appliedSidebarProjectScopeKey(
+        resolveSidebarProjectScopeKey({
+          groups: projectGroups,
+          key: persistedProjectScopeKey,
+          settings: projectGroupingSettings,
+        }),
+      ),
     [persistedProjectScopeKey, projectGroups, projectGroupingSettings],
   );
   // {value, label} items let Base UI drive the combobox selection contract
@@ -4999,12 +5002,8 @@ export default function Sidebar() {
                 secondaryThreadKey: useThreadSplitStore.getState().secondaryThreadKey,
                 isMobile,
               }),
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
+              // Fork: no project scope applies any more, so its menu item is gone too.
+              projectFilter: null,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -5382,7 +5381,7 @@ export default function Sidebar() {
               viewControls={
                 <>
                   {isSearchingThreads ? <SearchScopeToggle /> : null}
-                  <SidebarViewControls options={threadsView} />
+                  {/* Fork: View options moved onto the view row below. */}
                 </>
               }
               projectScope={
@@ -5535,7 +5534,7 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            {/* Fork: the Threads view's filter, group and properties, a row of their own. */}
+            {/* Fork: the Threads view's filter, sort, group, properties and options, a row of their own. */}
             <SidebarViewToolbar options={threadsView} />
           </SidebarGroup>
         }

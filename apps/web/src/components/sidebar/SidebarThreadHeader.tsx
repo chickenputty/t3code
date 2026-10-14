@@ -54,7 +54,8 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
-  projectScope,
+  // Fork: accepted but not rendered (see below).
+  projectScope: _projectScope,
   viewControls,
   onNewProject,
   onNewThread,
@@ -130,7 +131,7 @@ export function SidebarThreadHeader({
         {viewControls}
         {hasProjects ? (
           <>
-            {projectScope}
+            {/* Fork: the project scope dropdown is not shown; the view's Filter scopes by project. */}
             <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
               <FolderPlusIcon />
             </SidebarHeaderIconButton>

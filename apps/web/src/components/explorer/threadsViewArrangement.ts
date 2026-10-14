@@ -6,7 +6,11 @@
  */
 import type { SavedView } from "@t3tools/contracts";
 
-import type { SidebarProjectGroupRef } from "~/components/sidebar/sidebarArrangement";
+import type {
+  SidebarProjectGroupRef,
+  SidebarThreadSort,
+  SidebarThreadSortField,
+} from "~/components/sidebar/sidebarArrangement";
 
 import {
   filterViewRows,
@@ -100,4 +104,54 @@ export function threadsViewSummary(view: Pick<SavedView, "filter" | "groupBy">):
   const group = view.groupBy === null ? undefined : viewProperty(view.groupBy);
   if (group?.groupable) parts.push(`By ${group.label.toLowerCase()}`);
   return parts.length === 0 ? null : parts.join(", ");
+}
+
+/** One row of the native list's Sort popover: which of the view's two sorts it writes. */
+export interface ThreadsSortRow {
+  readonly key: "sort" | "projectSort";
+  readonly label: string;
+  /** Shown in place of the direction while the row's sort is manual. */
+  readonly manualHint: string | null;
+}
+
+/**
+ * The Sort popover's rows: threads always, then the groups' own order while the
+ * list is grouped ("Projects" for project grouping, "Groups" for any other).
+ */
+export function threadsSortRows(grouping: "project" | "other" | null): readonly ThreadsSortRow[] {
+  const threads: ThreadsSortRow = {
+    key: "sort",
+    label: "Threads",
+    manualHint: "Drag threads to arrange them.",
+  };
+  if (grouping === null) return [threads];
+  return [
+    threads,
+    grouping === "project"
+      ? {
+          key: "projectSort",
+          label: "Projects",
+          manualHint: "Follows the project order in Settings.",
+        }
+      : // Other groups have no order of their own: they follow their first thread.
+        { key: "projectSort", label: "Groups", manualHint: null },
+  ];
+}
+
+/** Picking a field starts it in its natural order; picking it again keeps the order. */
+export function withSortField(
+  sort: SidebarThreadSort,
+  field: SidebarThreadSortField,
+): SidebarThreadSort {
+  return sort.field === field ? sort : { field, reversed: false };
+}
+
+/** Manual has no direction, and an unchanged direction writes nothing. */
+export function withSortReversed(
+  sort: SidebarThreadSort,
+  reversed: boolean,
+): SidebarThreadSort | null {
+  return sort.field === "manual" || sort.reversed === reversed
+    ? null
+    : { field: sort.field, reversed };
 }

@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { SidebarThreadSort } from "~/components/sidebar/sidebarArrangement";
+
 import { newSavedView, type ViewRow } from "../views/viewEngine";
 import {
   threadsFilterKeys,
   threadsGroupRef,
   threadsPropertiesText,
+  threadsSortRows,
   threadsViewSummary,
   withLocalArrangement,
+  withSortField,
+  withSortReversed,
 } from "./threadsViewArrangement";
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();
@@ -165,5 +170,41 @@ describe("threadsViewSummary", () => {
     expect(threadsViewSummary({ filter: filter(2), groupBy: "project" })).toBe(
       "2 filters, By project",
     );
+  });
+});
+
+describe("threads Sort popover", () => {
+  it("shows the group row only while grouped, named for the grouping", () => {
+    expect(threadsSortRows(null).map((row) => row.key)).toEqual(["sort"]);
+    expect(threadsSortRows("project").map((row) => [row.key, row.label])).toEqual([
+      ["sort", "Threads"],
+      ["projectSort", "Projects"],
+    ]);
+    expect(threadsSortRows("other")[1]).toEqual({
+      key: "projectSort",
+      label: "Groups",
+      manualHint: null,
+    });
+  });
+
+  it("starts a picked field in its natural order and keeps a re-picked one", () => {
+    const view = newSavedView("threads", "v");
+    const sort: SidebarThreadSort = { field: "name", reversed: true };
+    const write = (next: SidebarThreadSort) => ({ ...view.threads, sort: next });
+
+    expect(write(withSortField(sort, "activity")).sort).toEqual({
+      field: "activity",
+      reversed: false,
+    });
+    expect(withSortField(sort, "name")).toBe(sort);
+  });
+
+  it("writes a direction only when it changes, and never for manual", () => {
+    expect(withSortReversed({ field: "activity", reversed: false }, true)).toEqual({
+      field: "activity",
+      reversed: true,
+    });
+    expect(withSortReversed({ field: "activity", reversed: true }, true)).toBeNull();
+    expect(withSortReversed({ field: "manual", reversed: false }, true)).toBeNull();
   });
 });

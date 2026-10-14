@@ -1,14 +1,12 @@
 /**
- * Fork (chickenputty/t3code): the sidebar header's view menu (group by project
- * and its indent, pins stay grouped, project icons and their style, topic emoji,
- * thread and project sort, thread and project row height), and the header row
- * each project group opens with. Grouping, sorts and pins write the active
- * Threads view (or this device's arrangement where views cannot be saved);
- * the view's filter, group, properties and settings sit on their own row
- * under the search row, so search keeps its width.
+ * Fork (chickenputty/t3code): the Threads view's row under the search row
+ * (filter, sort, group, properties, view options, settings), its view options
+ * menu (pins stay grouped, indent, project and thread rows, topic emoji,
+ * project icons and their style), and the header row each project group opens
+ * with. Grouping, sorts and pins write the active Threads view (or this
+ * device's arrangement where views cannot be saved).
  */
 import {
-  type SavedView,
   SidebarProjectIconStyle,
   SidebarProjectRowDensity,
   SidebarThreadIndent,
@@ -16,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
+  ArrowDownUpIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -25,8 +24,8 @@ import {
   FolderOpenIcon,
   HeadingIcon,
   MessageCircleQuestionIcon,
+  Rows3Icon,
   ShieldQuestionIcon,
-  SlidersHorizontalIcon,
   SquarePenIcon,
   TextSearchIcon,
 } from "lucide-react";
@@ -34,10 +33,10 @@ import type { ReactNode } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { Button } from "~/components/ui/button";
 import {
   Menu,
   MenuCheckboxItem,
-  MenuGroup,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -47,6 +46,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import {
   SIDEBAR_PROJECT_ICON_STYLE_LABELS,
   SIDEBAR_PROJECT_ROW_DENSITY_LABELS,
@@ -62,8 +62,20 @@ import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { ThreadsViewOptions } from "~/components/explorer/useThreadsViewOptions";
 import { ThreadsViewSettings } from "~/components/explorer/ThreadsViewSettings";
-import { FilterControl, GroupControl, PropertiesControl } from "~/components/views/ViewToolbar";
-import { threadsViewSummary } from "~/components/explorer/threadsViewArrangement";
+import {
+  FilterControl,
+  GroupControl,
+  MiniSelect,
+  PropertiesControl,
+  ToolbarTrigger,
+} from "~/components/views/ViewToolbar";
+import {
+  threadsSortRows,
+  threadsViewSummary,
+  withSortField,
+  withSortReversed,
+  type ThreadsSortRow,
+} from "~/components/explorer/threadsViewArrangement";
 
 /** A submenu's current choice, right-aligned before its chevron. */
 function MenuSubValue(props: { children: ReactNode }) {
@@ -72,77 +84,139 @@ function MenuSubValue(props: { children: ReactNode }) {
   );
 }
 
-/** Picking a field starts it in its natural order; picking it again keeps the order. */
-function withSortField(sort: SidebarThreadSort, field: SidebarThreadSortField): SidebarThreadSort {
-  return sort.field === field ? sort : { field, reversed: false };
-}
-
-/** Manual has no direction, and an unchanged direction writes nothing. */
-function withSortReversed(sort: SidebarThreadSort, reversed: boolean): SidebarThreadSort | null {
-  return sort.field === "manual" || sort.reversed === reversed
-    ? null
-    : { field: sort.field, reversed };
-}
-
 /**
- * The Threads view's filter, group, properties and settings: a slim row under
- * the search row, its summary on the left. Hidden where views cannot be saved.
+ * The Threads view's row under the search row: its summary on the left, then
+ * filter, sort, group, properties, view options and the view's settings. Where
+ * views cannot be saved only the view options show.
  */
 export function SidebarViewToolbar(props: { options: ThreadsViewOptions }) {
   const { view, update, optionsFor, canSave } = props.options;
-  if (!canSave) return null;
   const summary = threadsViewSummary(view);
   return (
     <div className="flex h-6 items-center gap-0.5 ps-2">
       <span className="min-w-0 flex-1 truncate text-2xs text-sidebar-muted-foreground">
         {summary}
       </span>
-      <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
-      <GroupControl view={view} update={update} compact />
-      <PropertiesControl view={view} update={update} compact />
-      <ThreadsViewSettings options={props.options} />
+      {canSave ? (
+        <>
+          <FilterControl view={view} update={update} optionsFor={optionsFor} compact />
+          <ThreadsSortControl options={props.options} />
+          <GroupControl view={view} update={update} compact />
+          <PropertiesControl view={view} update={update} compact />
+        </>
+      ) : null}
+      <SidebarViewControls options={props.options} />
+      {canSave ? <ThreadsViewSettings options={props.options} /> : null}
     </div>
   );
 }
 
-/** The header's view options menu: grouping, sorts, pins and row settings. */
-export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
-  const { view, update, sort, projectSort, pinsStayGrouped } = props.options;
-  // Any grouping draws headers; the menu's switch is the project one.
-  const grouped = props.options.groupByProject;
-  const groupByProject = view.groupBy === "project";
-  const writeThreads = (patch: Partial<SavedView["threads"]>) =>
-    update({ threads: { ...view.threads, ...patch } });
+const SORT_FIELD_OPTIONS = SIDEBAR_THREAD_SORT_FIELDS.map((field) => ({
+  value: field,
+  label: SIDEBAR_THREAD_SORT_LABELS[field],
+}));
 
+/**
+ * The native list's Sort popover: one row for threads and, while grouped, one
+ * for the groups. Each picks a field, then its direction (manual has none).
+ */
+function ThreadsSortControl(props: { options: ThreadsViewOptions }) {
+  const { view, update, sort, projectSort } = props.options;
+  const grouped = props.options.groupByProject;
+  const rows = threadsSortRows(grouped ? (view.groupBy === "project" ? "project" : "other") : null);
+  const current = (key: ThreadsSortRow["key"]) => (key === "sort" ? sort : projectSort);
+  const write = (key: ThreadsSortRow["key"], next: SidebarThreadSort) =>
+    update({ threads: { ...view.threads, [key]: next } });
+  // Lit while an order the list draws is not the manual one.
+  const sorted = sort.field !== "manual" || (grouped && projectSort.field !== "manual");
   return (
-    <>
-      <SidebarViewOptionsMenu
-        grouped={grouped}
-        groupByProject={groupByProject}
-        pinsStayGrouped={pinsStayGrouped}
-        sort={sort}
-        projectSort={projectSort}
-        onGroupByProjectChange={(checked) => update({ groupBy: checked ? "project" : null })}
-        onPinsStayGroupedChange={(checked) => writeThreads({ pinsStayGrouped: checked })}
-        onSortChange={(next) => writeThreads({ sort: next })}
-        onProjectSortChange={(next) => writeThreads({ projectSort: next })}
-      />
-    </>
+    <Popover>
+      <ToolbarTrigger
+        compact
+        label="Sort"
+        trigger={
+          <PopoverTrigger
+            render={
+              <Button
+                variant={sorted ? "secondary" : "ghost-muted"}
+                size="icon-xs"
+                aria-label="Sort"
+              />
+            }
+          />
+        }
+      >
+        <ArrowDownUpIcon />
+      </ToolbarTrigger>
+      <PopoverPopup align="end" className="w-[min(24rem,calc(100vw-2rem))]">
+        <div className="flex flex-col gap-2 py-1">
+          {rows.map((row) => {
+            const rowSort = current(row.key);
+            const directions =
+              rowSort.field === "manual"
+                ? null
+                : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[rowSort.field];
+            return (
+              <div key={row.key} className="flex items-center gap-1.5">
+                <span className="w-16 shrink-0 text-muted-foreground text-xs">{row.label}</span>
+                <MiniSelect
+                  label={`${row.label} sort`}
+                  value={rowSort.field}
+                  options={SORT_FIELD_OPTIONS}
+                  onChange={(field) =>
+                    write(row.key, withSortField(rowSort, field as SidebarThreadSortField))
+                  }
+                  className="w-36"
+                />
+                {directions === null ? (
+                  row.manualHint === null ? null : (
+                    <span className="min-w-0 text-muted-foreground text-xs">{row.manualHint}</span>
+                  )
+                ) : (
+                  <MiniSelect
+                    label={`${row.label} direction`}
+                    value={rowSort.reversed ? "reversed" : "natural"}
+                    options={[
+                      { value: "natural", label: directions[0] },
+                      { value: "reversed", label: directions[1] },
+                    ]}
+                    onChange={(value) => {
+                      const next = withSortReversed(rowSort, value === "reversed");
+                      if (next) write(row.key, next);
+                    }}
+                    className="w-32"
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+/** The view row's options menu: pins and row settings; grouping and sorts have their own controls. */
+export function SidebarViewControls(props: { options: ThreadsViewOptions }) {
+  const { view, update, pinsStayGrouped } = props.options;
+  return (
+    <SidebarViewOptionsMenu
+      // Any grouping draws headers.
+      grouped={props.options.groupByProject}
+      pinsStayGrouped={pinsStayGrouped}
+      onPinsStayGroupedChange={(checked) =>
+        update({ threads: { ...view.threads, pinsStayGrouped: checked } })
+      }
+    />
   );
 }
 
 function SidebarViewOptionsMenu(props: {
   grouped: boolean;
-  groupByProject: boolean;
   pinsStayGrouped: boolean;
-  sort: SidebarThreadSort;
-  projectSort: SidebarThreadSort;
-  onGroupByProjectChange: (checked: boolean) => void;
   onPinsStayGroupedChange: (checked: boolean) => void;
-  onSortChange: (sort: SidebarThreadSort) => void;
-  onProjectSortChange: (sort: SidebarThreadSort) => void;
 }) {
-  const { grouped, groupByProject, pinsStayGrouped, sort, projectSort } = props;
+  const { grouped, pinsStayGrouped } = props;
   const rowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const projectRowDensity = useClientSettings((settings) => settings.sidebarProjectRowDensity);
   const showEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
@@ -153,27 +227,18 @@ function SidebarViewOptionsMenu(props: {
 
   return (
     <Menu>
-      <MenuTrigger
-        render={
-          <SidebarHeaderIconButton
-            label="View options"
-            // Lit while the list is regrouped or resorted, so a changed order never surprises.
-            data-active={grouped || sort.field !== "manual"}
+      <ToolbarTrigger
+        compact
+        label="View options"
+        trigger={
+          <MenuTrigger
+            render={<Button variant="ghost-muted" size="icon-xs" aria-label="View options" />}
           />
         }
       >
-        <SlidersHorizontalIcon />
-      </MenuTrigger>
+        <Rows3Icon />
+      </ToolbarTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-56">
-        <MenuCheckboxItem
-          variant="switch"
-          checked={groupByProject}
-          onCheckedChange={(checked) => {
-            if (checked !== groupByProject) props.onGroupByProjectChange(checked);
-          }}
-        >
-          Group by project
-        </MenuCheckboxItem>
         <MenuCheckboxItem
           variant="switch"
           checked={pinsStayGrouped}
@@ -206,6 +271,55 @@ function SidebarViewOptionsMenu(props: {
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
+        <MenuSub>
+          {/* Only grouped lists draw group headers. */}
+          <MenuSubTrigger disabled={!grouped}>
+            Project rows
+            <MenuSubValue>{SIDEBAR_PROJECT_ROW_DENSITY_LABELS[projectRowDensity]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-40">
+            <MenuRadioGroup
+              value={projectRowDensity}
+              onValueChange={(value) =>
+                updateSettings({ sidebarProjectRowDensity: value as SidebarProjectRowDensity })
+              }
+            >
+              {SidebarProjectRowDensity.literals.map((density) => (
+                <MenuRadioItem key={density} value={density}>
+                  {SIDEBAR_PROJECT_ROW_DENSITY_LABELS[density]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger>
+            Thread rows
+            <MenuSubValue>{SIDEBAR_THREAD_ROW_DENSITY_LABELS[rowDensity]}</MenuSubValue>
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-40">
+            <MenuRadioGroup
+              value={rowDensity}
+              onValueChange={(value) =>
+                updateSettings({ sidebarThreadRowDensity: value as SidebarThreadRowDensity })
+              }
+            >
+              {SidebarThreadRowDensity.literals.map((density) => (
+                <MenuRadioItem key={density} value={density}>
+                  {SIDEBAR_THREAD_ROW_DENSITY_LABELS[density]}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuCheckboxItem
+          variant="switch"
+          checked={showEmoji}
+          onCheckedChange={(checked) => updateSettings({ sidebarThreadEmoji: checked })}
+        >
+          Topic emoji
+        </MenuCheckboxItem>
         <MenuSeparator />
         <MenuCheckboxItem
           variant="switch"
@@ -234,138 +348,8 @@ function SidebarViewOptionsMenu(props: {
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
-        <MenuCheckboxItem
-          variant="switch"
-          checked={showEmoji}
-          onCheckedChange={(checked) => updateSettings({ sidebarThreadEmoji: checked })}
-        >
-          Topic emoji
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        <SidebarSortSubmenu
-          label="Thread sort"
-          sort={sort}
-          manualHint="Drag threads to arrange them."
-          onFieldChange={(field) => props.onSortChange(withSortField(sort, field))}
-          onReversedChange={(reversed) => {
-            const next = withSortReversed(sort, reversed);
-            if (next) props.onSortChange(next);
-          }}
-        />
-        {/* Groups only have an order while they are drawn. */}
-        <SidebarSortSubmenu
-          label={grouped && !groupByProject ? "Group sort" : "Project sort"}
-          sort={projectSort}
-          // Other groups have no order of their own: they follow their first thread.
-          manualHint={groupByProject ? "Follows the project order in Settings." : null}
-          disabled={!grouped}
-          onFieldChange={(field) => props.onProjectSortChange(withSortField(projectSort, field))}
-          onReversedChange={(reversed) => {
-            const next = withSortReversed(projectSort, reversed);
-            if (next) props.onProjectSortChange(next);
-          }}
-        />
-        <MenuSub>
-          <MenuSubTrigger>
-            Thread rows
-            <MenuSubValue>{SIDEBAR_THREAD_ROW_DENSITY_LABELS[rowDensity]}</MenuSubValue>
-          </MenuSubTrigger>
-          <MenuSubPopup className="min-w-40">
-            <MenuRadioGroup
-              value={rowDensity}
-              onValueChange={(value) =>
-                updateSettings({ sidebarThreadRowDensity: value as SidebarThreadRowDensity })
-              }
-            >
-              {SidebarThreadRowDensity.literals.map((density) => (
-                <MenuRadioItem key={density} value={density}>
-                  {SIDEBAR_THREAD_ROW_DENSITY_LABELS[density]}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuSubPopup>
-        </MenuSub>
-        <MenuSub>
-          {/* Only grouped lists draw group headers. */}
-          <MenuSubTrigger disabled={!grouped}>
-            Project rows
-            <MenuSubValue>{SIDEBAR_PROJECT_ROW_DENSITY_LABELS[projectRowDensity]}</MenuSubValue>
-          </MenuSubTrigger>
-          <MenuSubPopup className="min-w-40">
-            <MenuRadioGroup
-              value={projectRowDensity}
-              onValueChange={(value) =>
-                updateSettings({ sidebarProjectRowDensity: value as SidebarProjectRowDensity })
-              }
-            >
-              {SidebarProjectRowDensity.literals.map((density) => (
-                <MenuRadioItem key={density} value={density}>
-                  {SIDEBAR_PROJECT_ROW_DENSITY_LABELS[density]}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuSubPopup>
-        </MenuSub>
       </MenuPopup>
     </Menu>
-  );
-}
-
-/** A sort submenu: the field, then its direction (manual has none, just a hint). */
-function SidebarSortSubmenu(props: {
-  label: string;
-  sort: SidebarThreadSort;
-  manualHint: string | null;
-  disabled?: boolean;
-  onFieldChange: (field: SidebarThreadSortField) => void;
-  onReversedChange: (reversed: boolean) => void;
-}) {
-  const { sort } = props;
-  const directionLabels =
-    sort.field === "manual" ? null : SIDEBAR_THREAD_SORT_DIRECTION_LABELS[sort.field];
-  const summary =
-    directionLabels === null
-      ? SIDEBAR_THREAD_SORT_LABELS.manual
-      : `${SIDEBAR_THREAD_SORT_LABELS[sort.field]}, ${directionLabels[sort.reversed ? 1 : 0].toLowerCase()}`;
-  return (
-    <MenuSub>
-      <MenuSubTrigger disabled={props.disabled}>
-        {props.label}
-        <MenuSubValue>{summary}</MenuSubValue>
-      </MenuSubTrigger>
-      <MenuSubPopup className="min-w-44">
-        <MenuGroup>
-          <MenuRadioGroup
-            value={sort.field}
-            onValueChange={(value) => props.onFieldChange(value as SidebarThreadSortField)}
-          >
-            {SIDEBAR_THREAD_SORT_FIELDS.map((field) => (
-              <MenuRadioItem key={field} value={field}>
-                {SIDEBAR_THREAD_SORT_LABELS[field]}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-        {directionLabels === null ? (
-          props.manualHint === null ? null : (
-            <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">{props.manualHint}</p>
-          )
-        ) : (
-          <>
-            <MenuSeparator />
-            <MenuGroup>
-              <MenuRadioGroup
-                value={sort.reversed ? "reversed" : "natural"}
-                onValueChange={(value) => props.onReversedChange(value === "reversed")}
-              >
-                <MenuRadioItem value="natural">{directionLabels[0]}</MenuRadioItem>
-                <MenuRadioItem value="reversed">{directionLabels[1]}</MenuRadioItem>
-              </MenuRadioGroup>
-            </MenuGroup>
-          </>
-        )}
-      </MenuSubPopup>
-    </MenuSub>
   );
 }
 

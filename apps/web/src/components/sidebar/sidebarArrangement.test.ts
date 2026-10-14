@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { filterSidebarV2VisibleThreads } from "~/components/Sidebar.logic";
+
 import {
+  appliedSidebarProjectScopeKey,
   arrangeSidebarActiveThreads,
   DEFAULT_SIDEBAR_PROJECT_SORT,
   MANUAL_SIDEBAR_THREAD_SORT,
@@ -338,5 +341,27 @@ describe("resolveSidebarThreadDisplayStatus", () => {
         wokeAt: at(20),
       }),
     ).toBe("approval");
+  });
+});
+
+describe("appliedSidebarProjectScopeKey", () => {
+  it("never lets a persisted project scope hide threads", () => {
+    const threads = [
+      { id: "a", environmentId: "env", projectId: "p1" },
+      { id: "b", environmentId: "env", projectId: "p2" },
+    ].map((entry) => ({
+      ...entry,
+      archivedAt: null,
+      lineage: { rootThreadId: null, parentThreadId: null, relationshipToParent: null },
+    })) as unknown as Parameters<typeof filterSidebarV2VisibleThreads>[0];
+    // The sidebar scopes its list to the applied key's project, as it did with the dropdown.
+    const scopeKey = appliedSidebarProjectScopeKey("env:p1");
+    const scopedProjectKeys = scopeKey === null ? null : new Set([scopeKey]);
+
+    expect(scopeKey).toBeNull();
+    expect(ids(filterSidebarV2VisibleThreads(threads, scopedProjectKeys) as never)).toEqual([
+      "a",
+      "b",
+    ]);
   });
 });
