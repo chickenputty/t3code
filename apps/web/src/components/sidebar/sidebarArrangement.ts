@@ -96,6 +96,15 @@ export const SIDEBAR_THREAD_SORT_DIRECTION_LABELS: Record<
   created: ["Newest first", "Oldest first"],
 };
 
+/**
+ * The project scope the list applies: none. The header's scope dropdown is gone
+ * (a view's Filter scopes by project instead), so a scope persisted before then
+ * would hide threads with no control left to clear it.
+ */
+export function appliedSidebarProjectScopeKey(_persisted: string | null): string | null {
+  return null;
+}
+
 /** What a row shows at its status slot, in the order a status sort lists them. */
 export type SidebarThreadDisplayStatus =
   | "approval"

@@ -92,7 +92,7 @@ function MenuSubValue({ children }: { children: ReactNode }) {
 }
 
 /** A control's trigger: labelled in a wide toolbar, an icon with a tooltip when compact. */
-function ToolbarTrigger({
+export function ToolbarTrigger({
   compact,
   label,
   trigger,
@@ -112,7 +112,7 @@ function ToolbarTrigger({
   );
 }
 
-function MiniSelect({
+export function MiniSelect({
   label,
   value,
   options,
