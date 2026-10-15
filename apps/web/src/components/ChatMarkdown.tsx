@@ -123,6 +123,7 @@ import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
+import { useFileMetadata } from "../hooks/useFileMetadata";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -1976,6 +1977,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenParentFolder,
   resolveCopyPaths,
 }: MarkdownFileLinkProps) {
+  // Fork (chickenputty/t3code): a chip that names a folder opens it in the
+  // system file manager; the files panel only shows files. The query is the
+  // one the chip's icon already makes.
+  const isDirectory = useFileMetadata(environmentId, iconPath)?.kind === "directory";
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
       return;
@@ -2158,7 +2163,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
             ...buildFileOpenMenuItems({
-              kind: "file",
+              kind: isDirectory ? "directory" : "file",
               canOpen: onOpenFile !== undefined && onOpenParentFolder !== undefined,
               path: iconPath,
             }),
@@ -2180,7 +2185,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           return;
         }
         if (clicked === "open-file") {
-          runFileManagerAction(onOpenFile, "open-file-with-default-app", "Unable to open file");
+          runFileManagerAction(
+            onOpenFile,
+            "open-file-with-default-app",
+            isDirectory ? "Unable to open folder" : "Unable to open file",
+          );
           return;
         }
         if (clicked === "open-parent-folder") {
@@ -2214,6 +2223,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleOpenInBrowser,
       handleOpenInEditor,
       iconPath,
+      isDirectory,
       onOpenFile,
       onOpenInBrowser,
       onOpenMedia,
@@ -2245,12 +2255,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   const canOpenInEditor = onOpen !== undefined;
   const canOpenInBrowser = onOpenInBrowser !== undefined;
   const canOpenInPanel = threadRef !== undefined && Boolean(panelPath);
-  const hasPrimaryAction = hasMarkdownFilePrimaryAction({
-    canOpenInEditor,
-    canOpenInBrowser,
-    canOpenInPanel,
-    canOpenMedia: onOpenMedia !== undefined,
-  });
+  const openFolderOnClick = isDirectory && onOpenFile !== undefined;
+  const hasPrimaryAction =
+    openFolderOnClick ||
+    hasMarkdownFilePrimaryAction({
+      canOpenInEditor,
+      canOpenInBrowser,
+      canOpenInPanel,
+      canOpenMedia: onOpenMedia !== undefined,
+    });
   const useBrowserPrimaryAction = shouldUseMarkdownFileBrowserPrimaryAction({
     iconPath,
     canOpenInEditor,
@@ -2273,6 +2286,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
                 event.stopPropagation();
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
                   handleOpenInEditor();
+                  return;
+                }
+                if (openFolderOnClick) {
+                  runFileManagerAction(onOpenFile, "open-folder", "Unable to open folder");
                   return;
                 }
                 if (useBrowserPrimaryAction) {
