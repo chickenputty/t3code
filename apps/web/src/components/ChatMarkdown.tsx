@@ -88,6 +88,7 @@ import React, {
   useCallback,
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2331,13 +2332,42 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       <TooltipPopup side="top" variant="code">
         {/* The full path: the chip already shows the shortened form, and a link
             to the workspace root collapses to a bare label that repeats it. */}
-        <div className="overflow-x-auto whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
+        <ScrolledToEnd className="overflow-x-auto whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
           <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
-        </div>
+        </ScrolledToEnd>
       </TooltipPopup>
     </Tooltip>
   );
 }, areMarkdownFileLinkPropsEqual);
+
+/**
+ * Fork (chickenputty/t3code): a horizontal scroller that shows its end, so a
+ * long path tooltip opens on the file name rather than the drive letter. It
+ * re-pins when the content grows (the file size arrives after the path).
+ */
+function ScrolledToEnd(props: { className: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    const content = contentRef.current;
+    if (!element || !content) return;
+    const pinToEnd = () => {
+      element.scrollLeft = element.scrollWidth;
+    };
+    pinToEnd();
+    const observer = new ResizeObserver(pinToEnd);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className={props.className}>
+      <span ref={contentRef} className="inline-block">
+        {props.children}
+      </span>
+    </div>
+  );
+}
 
 function areMarkdownFileLinkPropsEqual(
   previous: Readonly<MarkdownFileLinkProps>,
