@@ -6,7 +6,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -265,62 +265,39 @@ export const OpenInPicker = memo(function OpenInPicker({
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
-  // A script or installer would run if launched with its default app, so the
-  // file manager entry is withheld for those (the server refuses them too).
-  const fileManagerBlocked =
-    openInCwd !== null && !canOpenEntryWithDefaultApp(openInCwd, openTarget);
-  const options = useMemo(
-    () =>
-      resolveOpenInOptions(navigator.platform, effectiveEditors, openTarget).filter(
-        (option) => !(fileManagerBlocked && option.value === "file-manager"),
-      ),
-    [effectiveEditors, fileManagerBlocked, openTarget],
-  );
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
-  const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
-      if (!openInCwd) return;
-      const editor = editorId ?? preferredEditor;
-      if (!editor) return;
-      if (remote.mode === "remote-unavailable") return;
-      if (remote.mode === "remote-links") {
-        const url = buildRemoteOpenUrl({
-          editor,
-          host: remote.host.host,
-          absolutePath: openInCwd,
-        });
-        if (url === undefined) return;
-        // Only record hint-seen/preferred when the shell actually accepted
-        // the URL (an older desktop build can refuse the editor scheme).
-        void openRemoteEditorUrl(url).then((opened) => {
-          if (!opened) return;
-          markRemoteHintSeen();
-          setPreferredEditor(editor);
-        });
-        return;
-      }
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-      const result = openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor,
-        },
+  const openInEditor = (editorId: EditorId | null) => {
+    if (!openInCwd) return;
+    const editor = editorId ?? preferredEditor;
+    if (!editor) return;
+    if (remote.mode === "remote-unavailable") return;
+    if (remote.mode === "remote-links") {
+      const url = buildRemoteOpenUrl({
+        editor,
+        host: remote.host.host,
+        absolutePath: openInCwd,
       });
-      setPreferredEditor(editor);
-      return result;
-    },
-    [
+      if (url === undefined) return;
+      // Only record hint-seen/preferred when the shell actually accepted
+      // the URL (an older desktop build can refuse the editor scheme).
+      void openRemoteEditorUrl(url).then((opened) => {
+        if (!opened) return;
+        markRemoteHintSeen();
+        setPreferredEditor(editor);
+      });
+      return;
+    }
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    const result = openInEditorMutation({
       environmentId,
-      markRemoteHintSeen,
-      openInCwd,
-      openInEditorMutation,
-      preferredEditor,
-      remote,
-      setPreferredEditor,
-    ],
-  );
+      input: {
+        cwd: openInCwd,
+        editor,
+      },
+    });
+    setPreferredEditor(editor);
+    return result;
+  };
 
   // The parent folder always opens in the file manager on the environment's
   // host, so it is offered only where that host is the one being looked at.
@@ -331,17 +308,17 @@ export const OpenInPicker = memo(function OpenInPicker({
     effectiveEditors.includes("file-manager")
       ? parentDirectoryPath(openInCwd)
       : null;
-  const openParentFolder = useCallback(() => {
+  const openParentFolder = () => {
     if (parentFolderPath === null) return;
     return openInEditorMutation({
       environmentId,
       input: { cwd: parentFolderPath, editor: "file-manager" },
     });
-  }, [environmentId, openInEditorMutation, parentFolderPath]);
+  };
 
-  const openFavoriteEditorShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
-    [keybindings],
+  const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "editor.openFavorite",
   );
 
   useEffect(() => {
@@ -371,6 +348,15 @@ export const OpenInPicker = memo(function OpenInPicker({
     preferredEditor,
     remote.mode,
   ]);
+  // Derived after the shortcut effect so the compiler can cache the resolved editor list.
+  // A script or installer would run if launched with its default app, so the
+  // file manager entry is withheld for those (the server refuses them too).
+  const fileManagerBlocked =
+    openInCwd !== null && !canOpenEntryWithDefaultApp(openInCwd, openTarget);
+  const options = resolveOpenInOptions(navigator.platform, effectiveEditors, openTarget).filter(
+    (option) => !(fileManagerBlocked && option.value === "file-manager"),
+  );
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryActionLabel =
     primaryOption?.value === "file-manager"
       ? primaryOption.label

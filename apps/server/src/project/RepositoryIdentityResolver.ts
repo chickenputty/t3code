@@ -13,13 +13,14 @@ import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitMetadataFastPath from "../vcs/GitMetadataFastPath.ts";
+import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
 // from spawning git each time. Clone, publish, and PR discovery (after a turn
 // and before it saves links) resolve with `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
-// Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
@@ -129,7 +130,12 @@ const runGitMetadataCommand = Effect.fn("RepositoryIdentityResolver.runGitMetada
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
     return yield* processRunner
-      .run({ command: "git", args: ["-C", cwd, ...args], timeoutBehavior: "timedOutResult" })
+      .run({
+        command: "git",
+        args: ["-C", cwd, ...args],
+        env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+        timeoutBehavior: "timedOutResult",
+      })
       .pipe(Effect.option);
   },
 );
@@ -169,8 +175,6 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
-  // Git errors and timeouts resolve to null, so they use the negative TTL like
-  // "no repository" or "no remote". Only interrupts and defects skip the cache.
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
@@ -200,8 +204,6 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
-  // Untraced because almost every call is a cache hit. The lookups that spawn
-  // git keep their own spans.
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
