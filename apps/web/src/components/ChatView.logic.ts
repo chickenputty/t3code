@@ -1369,3 +1369,24 @@ export function isThreadWokeUnseen(input: {
     .filter((ms) => !Number.isNaN(ms));
   return seenAt.every((ms) => ms < wokeAtMs);
 }
+
+/**
+ * The composer handle ChatView addresses. Callers see the shared handle while
+ * this pane is focused (refs read it at call time), and fall back to the pane's
+ * own when it is not. Must keep one identity per pane: a new object on every
+ * focus change re-runs the effects keyed on it, and the two split panes then
+ * keep moving the caret between their composers.
+ */
+export function focusedComposerHandle<T>(
+  shared: React.RefObject<T | null> | null | undefined,
+  local: React.RefObject<T | null>,
+): { current: T | null } {
+  return {
+    get current() {
+      return shared?.current ?? local.current;
+    },
+    set current(value: T | null) {
+      local.current = value;
+    },
+  };
+}

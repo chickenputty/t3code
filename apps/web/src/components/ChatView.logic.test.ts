@@ -4,6 +4,7 @@ import {
   mergeDirectPreviewAnnotation,
   resolveVisibleWorktreeSetup,
   shouldCompactBeforeSend,
+  focusedComposerHandle,
 } from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
@@ -2299,5 +2300,37 @@ describe("isThreadWokeUnseen", () => {
   it("hides settled threads and unparseable wake times", () => {
     expect(isThreadWokeUnseen({ ...base, settled: true })).toBe(false);
     expect(isThreadWokeUnseen({ ...base, wokeAt: "not a date" })).toBe(false);
+  });
+});
+
+describe("focusedComposerHandle", () => {
+  it("reads the shared target at call time and stays one identity", () => {
+    let shared: unknown = { id: "shared" };
+    const sharedRef = {
+      get current() {
+        return shared;
+      },
+    };
+    const localRef = { current: { id: "local" } as unknown };
+    const handle = focusedComposerHandle(sharedRef, localRef);
+    expect(handle.current).toEqual({ id: "shared" });
+    // Reading again after the target moves needs no new handle, so effects keyed
+    // on the handle never re-run because focus changed.
+    shared = { id: "next" };
+    expect(handle.current).toEqual({ id: "next" });
+  });
+
+  it("keeps the pane’s own composer when there is no shared handle", () => {
+    const localRef = { current: { id: "local" } as unknown };
+    expect(focusedComposerHandle(null, localRef).current).toEqual({ id: "local" });
+  });
+
+  it("accepts the assignment a mounting composer makes", () => {
+    const sharedRef = { current: null as unknown };
+    const localRef = { current: null as unknown };
+    const handle = focusedComposerHandle(sharedRef, localRef);
+    const next = { id: "composer" };
+    handle.current = next;
+    expect(localRef.current).toBe(next);
   });
 });

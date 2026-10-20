@@ -9,7 +9,11 @@ import {
   shouldDockDraftHeroForSubmission,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
-import { restorePlanFollowUpComposer, shouldCompactBeforeSend } from "./ChatView.logic";
+import {
+  focusedComposerHandle,
+  restorePlanFollowUpComposer,
+  shouldCompactBeforeSend,
+} from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import {
@@ -145,6 +149,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -1132,10 +1137,18 @@ export default function ChatView(props: ChatViewProps) {
   const serverProjection = serverThreadProjection?.projection ?? null;
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  // The app-wide handle (the command palette inserts through it) belongs to the
-  // focused pane; an unfocused split pane keeps its composer on a local ref.
+  // The app-wide handle (the command palette inserts through it, so it must always
+  // address the focused pane) is read at call time. It cannot be the render-time
+  // `composerRef`: that identity changes when a pane takes focus, which re-runs the
+  // mount-time focus effect in the other pane and made two split panes trade focus
+  // back and forth.
   const sharedComposerRef = useComposerHandleContext();
-  const composerRef = (isFocusedPane ? sharedComposerRef : null) ?? localComposerRef;
+  const focusedComposerRef = useMemo(
+    () => focusedComposerHandle(sharedComposerRef, localComposerRef),
+    [sharedComposerRef],
+  );
+  // An unfocused split pane keeps its own composer on a local ref.
+  const composerRef = isFocusedPane ? focusedComposerRef : localComposerRef;
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
@@ -4497,14 +4510,16 @@ export default function ChatView(props: ChatViewProps) {
   }, [timelineThreadReset]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    // Only the focused split pane may claim the caret; the other one must not
+    // compete with it for focus.
+    if (!activeThread?.id || terminalUiState.terminalOpen || !isFocusedPane) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposerStable();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposerStable, isFocusedPane, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport || !isFocusedPane)
