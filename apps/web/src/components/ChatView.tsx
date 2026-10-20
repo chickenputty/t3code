@@ -9,7 +9,11 @@ import {
   resolveWorktreeSetupProgress,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
-import { restorePlanFollowUpComposer, shouldCompactBeforeSend } from "./ChatView.logic";
+import {
+  focusedComposerHandle,
+  restorePlanFollowUpComposer,
+  shouldCompactBeforeSend,
+} from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import {
@@ -1855,10 +1859,18 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  // The app-wide handle (the command palette inserts through it) belongs to the
-  // focused pane; an unfocused split pane keeps its composer on a local ref.
+  // The app-wide handle (the command palette inserts through it, so it must always
+  // address the focused pane) is read at call time. It cannot be the render-time
+  // `composerRef`: that identity changes when a pane takes focus, which re-runs the
+  // mount-time focus effect in the other pane and made two split panes trade focus
+  // back and forth.
   const sharedComposerRef = useComposerHandleContext();
-  const composerRef = (isFocusedPane ? sharedComposerRef : null) ?? localComposerRef;
+  const focusedComposerRef = useMemo(
+    () => focusedComposerHandle(sharedComposerRef, localComposerRef),
+    [sharedComposerRef],
+  );
+  // An unfocused split pane keeps its own composer on a local ref.
+  const composerRef = isFocusedPane ? focusedComposerRef : localComposerRef;
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
@@ -6889,14 +6901,16 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadKey]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    // Only the focused split pane may claim the caret; the other one must not
+    // compete with it for focus.
+    if (!activeThread?.id || terminalUiState.terminalOpen || !isFocusedPane) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, isFocusedPane, terminalUiState.terminalOpen]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
