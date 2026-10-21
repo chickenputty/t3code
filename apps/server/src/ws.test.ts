@@ -19,7 +19,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
-import { type Rpc, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -446,22 +446,6 @@ it.effect(
           subscribeChanges: settingsChanges,
         }),
       );
-      // Fork: the fork's larger RPC group makes inferring layerWsRpc's type too deep here.
-      const makeWsRpcLayer = layerWsRpc as unknown as (
-        ...args: ReadonlyArray<unknown>
-      ) => Layer.Layer<Rpc.ToHandler<typeof WsSubscribeServerConfigRpc>>;
-      const wsRpcLayer = makeWsRpcLayer(
-        {
-          sessionId: AuthSessionId.make("config-test"),
-          subject: "config-test",
-          method: "browser-session-cookie",
-          scopes: [],
-        },
-        {},
-        {},
-        yield* PreviewAutomationBroker.PreviewAutomationBroker,
-        yield* ServerBrowser.ServerBrowser,
-      ).pipe(Layer.provide(configRpcServices));
       const server = yield* RpcServer.makeNoSerialization(
         RpcGroup.make(WsSubscribeServerConfigRpc),
         {
@@ -473,7 +457,22 @@ it.effect(
                 })
               : Effect.void,
         },
-      ).pipe(Effect.provide(wsRpcLayer));
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("config-test"),
+              subject: "config-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            {},
+            yield* PreviewAutomationBroker.PreviewAutomationBroker,
+            yield* ServerBrowser.ServerBrowser,
+          ).pipe(Layer.provide(configRpcServices)),
+        ),
+      );
       const requestId = RpcMessage.RequestId("config");
       const acknowledge = server.write(0, { _tag: "Ack", requestId });
       yield* server.write(0, {

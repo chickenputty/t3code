@@ -40,6 +40,7 @@ describe("pickWorkspaceBasenameMatch", () => {
     );
   });
 
+  // regression: #6297 a bare filename resolves to a file, never a same-named directory
   it("ignores directories", () => {
     expect(
       pickWorkspaceBasenameMatch("components", [

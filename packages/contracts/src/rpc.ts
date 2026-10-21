@@ -1933,7 +1933,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const UpstreamWsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2043,7 +2043,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
   WsProjectsReadFileRpc,
-  WsProjectsResolveFileReferenceRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
@@ -2078,10 +2077,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
-  WsVcsWorkingChangesRpc,
-  WsVcsStageRpc,
-  WsVcsUnstageRpc,
-  WsVcsCommitStagedRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,
@@ -2128,7 +2123,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
   WsOrchestrationV2SearchThreadsRpc,
-  WsOrchestrationV2GetThreadPreviewsRpc,
   WsOrchestrationV2SearchThreadRpc,
   WsOrchestrationV2SearchThreadStreamRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
@@ -2139,3 +2133,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
+
+// Fork: the fork's RPCs live in their own group so the server can implement them in a
+// separate handler layer; one handler object for every RPC exceeds TypeScript's
+// instantiation depth limit (TS2589).
+export const ForkWsRpcGroup = RpcGroup.make(
+  WsProjectsResolveFileReferenceRpc,
+  WsVcsWorkingChangesRpc,
+  WsVcsStageRpc,
+  WsVcsUnstageRpc,
+  WsVcsCommitStagedRpc,
+  WsOrchestrationV2GetThreadPreviewsRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = UpstreamWsRpcGroup.merge(ForkWsRpcGroup);

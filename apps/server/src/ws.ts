@@ -96,6 +96,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  ForkWsRpcGroup,
+  UpstreamWsRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -548,6 +550,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Fork: implemented as two handler layers; see ForkWsRpcGroup.
+const ServerUpstreamWsRpcGroup = UpstreamWsRpcGroup.middleware(RpcInstrumentation);
+const ServerForkWsRpcGroup = ForkWsRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1184,14 +1189,14 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-export const layerWsRpc = (
+const layerUpstreamWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerUpstreamWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1209,7 +1214,6 @@ export const layerWsRpc = (
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
-      const threadPreviews = yield* ThreadPreviews.ThreadPreviews;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -1292,7 +1296,6 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-      const workspaceFileReferences = yield* WorkspaceFileReferences.WorkspaceFileReferences;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1809,7 +1812,7 @@ export const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerUpstreamWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -1906,16 +1909,6 @@ export const layerWsRpc = (
               (cause) =>
                 new OrchestrationSearchThreadsError({
                   message: "Failed to search threads",
-                  cause,
-                }),
-            ),
-          ),
-        [ORCHESTRATION_V2_WS_METHODS.getThreadPreviews]: (input) =>
-          threadPreviews.getPreviews(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationGetThreadPreviewsError({
-                  message: "Failed to read thread previews",
                   cause,
                 }),
             ),
@@ -2684,18 +2677,6 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [WS_METHODS.projectsResolveFileReference]: (input) =>
-          workspaceFileReferences.resolve(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectResolveFileReferenceError({
-                  cwd: input.cwd,
-                  path: input.path,
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
             Effect.mapError(
@@ -2880,20 +2861,6 @@ export const layerWsRpc = (
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           gitWorkflow
             .preparePullRequestThread(input)
-            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        // Fork: Source Control panel.
-        [WS_METHODS.vcsWorkingChanges]: (input) => gitWorkflow.workingChanges(input.cwd),
-        [WS_METHODS.vcsStage]: (input) =>
-          gitWorkflow
-            .stagePaths(input.cwd, input.paths)
-            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsUnstage]: (input) =>
-          gitWorkflow
-            .unstagePaths(input.cwd, input.paths)
-            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsCommitStaged]: (input) =>
-          gitWorkflow
-            .commitStaged(input.cwd, input.message)
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
@@ -3164,6 +3131,78 @@ export const layerWsRpc = (
       });
       return handlers;
     }),
+  );
+
+// Fork: the fork's RPCs (ForkWsRpcGroup) get their own handler layer so neither handler
+// object is too large for TypeScript to infer.
+const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const threadPreviews = yield* ThreadPreviews.ThreadPreviews;
+    const workspaceFileReferences = yield* WorkspaceFileReferences.WorkspaceFileReferences;
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+    const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    const refreshGitStatus = (cwd: string) =>
+      vcsStatusBroadcaster
+        .refreshStatus(cwd)
+        .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+    return ServerForkWsRpcGroup.of({
+      [ORCHESTRATION_V2_WS_METHODS.getThreadPreviews]: (input) =>
+        threadPreviews.getPreviews(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetThreadPreviewsError({
+                message: "Failed to read thread previews",
+                cause,
+              }),
+          ),
+        ),
+      [WS_METHODS.projectsResolveFileReference]: (input) =>
+        workspaceFileReferences.resolve(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectResolveFileReferenceError({
+                cwd: input.cwd,
+                path: input.path,
+                message: cause.message,
+                cause,
+              }),
+          ),
+        ),
+      // Fork: Source Control panel.
+      [WS_METHODS.vcsWorkingChanges]: (input) => gitWorkflow.workingChanges(input.cwd),
+      [WS_METHODS.vcsStage]: (input) =>
+        gitWorkflow
+          .stagePaths(input.cwd, input.paths)
+          .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+      [WS_METHODS.vcsUnstage]: (input) =>
+        gitWorkflow
+          .unstagePaths(input.cwd, input.paths)
+          .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+      [WS_METHODS.vcsCommitStaged]: (input) =>
+        gitWorkflow
+          .commitStaged(input.cwd, input.message)
+          .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+    });
+  }),
+);
+
+export const layerWsRpc = (
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  clientOrigin: OrchestrationClientOrigin,
+  clientAnalyticsProps: Readonly<Record<string, unknown>>,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  serverBrowser: ServerBrowser.ServerBrowser["Service"],
+) =>
+  Layer.merge(
+    layerUpstreamWsRpc(
+      currentSession,
+      clientOrigin,
+      clientAnalyticsProps,
+      previewAutomationBroker,
+      serverBrowser,
+    ),
+    layerForkWsRpc,
   );
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client

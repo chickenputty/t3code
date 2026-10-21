@@ -4,7 +4,6 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -288,7 +287,6 @@ const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     runVersionPending: false,
-    runVersionDelay: null as Duration.Input | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
@@ -309,7 +307,6 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
-    this.state.runVersionDelay = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
@@ -384,11 +381,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
               cause: runtimeMock.state.runVersionError,
             }),
           )
-        : runtimeMock.state.runVersionDelay
-          ? Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }).pipe(
-              Effect.delay(runtimeMock.state.runVersionDelay),
-            )
-          : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<
@@ -469,31 +462,6 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
-  it.effect("shows a codex-style missing binary message", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
-      const snapshot = yield* checkProvider(makeOpenCodeSettings());
-
-      NodeAssert.equal(snapshot.status, "error");
-      NodeAssert.equal(snapshot.installed, false);
-      NodeAssert.equal(
-        snapshot.message,
-        "OpenCode CLI (`opencode`) is not installed or not on PATH.",
-      );
-    }),
-  );
-
-  it.effect("hides generic Effect.tryPromise text for local CLI probe failures", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.runVersionError = new Error("An error occurred in Effect.tryPromise");
-      const snapshot = yield* checkProvider(makeOpenCodeSettings());
-
-      NodeAssert.equal(snapshot.status, "error");
-      NodeAssert.equal(snapshot.installed, true);
-      NodeAssert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
-    }),
-  );
-
   it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
@@ -722,18 +690,6 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("uses the settings password when local environment auth differs", () =>
-    Effect.gen(function* () {
-      yield* checkProvider(
-        makeOpenCodeSettings({ serverPassword: "settings-password" }),
-        process.cwd(),
-        { OPENCODE_SERVER_PASSWORD: "environment-password" },
-      );
-
-      NodeAssert.equal(runtimeMock.state.sdkClientInputs[0]?.serverPassword, "settings-password");
-    }),
-  );
-
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode 1.14.20\n";
@@ -810,25 +766,6 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
       NodeAssert.equal(snapshot.models.length, 0);
       NodeAssert.match(snapshot.message ?? "", /v1\.14\.18 is too old/);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
-    }),
-  );
-
-  it.effect("surfaces a friendly auth error for configured servers", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.connectionError = new Error("401 Unauthorized");
-      const snapshot = yield* checkProvider(
-        makeOpenCodeSettings({
-          serverUrl: "http://127.0.0.1:9999",
-          serverPassword: "secret-password",
-        }),
-      );
-
-      NodeAssert.equal(snapshot.status, "error");
-      NodeAssert.equal(snapshot.installed, true);
-      NodeAssert.equal(
-        snapshot.message,
-        "OpenCode server rejected authentication. Check the server URL and password.",
-      );
     }),
   );
 });

@@ -202,6 +202,7 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
   ),
 );
 
+// regression: #19226 read-only transactions run on the separate reader connection
 it.effect("rejects a write in a read-only transaction", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
@@ -327,6 +328,7 @@ it.effect("finishes masked database cleanup after its caller is interrupted", ()
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
 
+// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary that lets the worker's queued messages land, not a wait for time
 const eventLoopTurn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
 it.effect.each([

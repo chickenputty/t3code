@@ -1,5 +1,3 @@
-"use client";
-
 import { useExplorerStore } from "./explorer/explorerStore";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./sidebar/mainAppLocation";
 import { useSavedViews } from "./views/useSavedViews";
