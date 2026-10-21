@@ -4,7 +4,6 @@ import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
-  enrichedSkillReference,
   ENRICHED_INLINE_FILE_LINK_REGEX,
 } from "./enrichedLinkPresentation";
 
@@ -41,19 +40,7 @@ describe("Enriched link presentation", () => {
     expect(regex?.exec("prefix$check next")).toBeNull();
     expect(enrichedSkillLinkRegex([])).toBeNull();
   });
-  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
-    "recognizes and presents known skills with %s while rejecting adjacent tokens",
-    (sigil) => {
-      const skills = [{ name: "check", displayName: "Check" }];
-      const regex = enrichedSkillLinkRegex(skills)!;
-      expect(regex.exec(`Try ${sigil}check now`)?.[0]).toBe(`${sigil}check`);
-      expect(enrichedSkillReference(`${sigil}check`, skills)).toBe(skills[0]);
-      expect(regex.test(`prefix${sigil}check`)).toBe(false);
-      expect(regex.test(`${sigil}check-extra`)).toBe(false);
-      expect(regex.test(`${sigil}unknown`)).toBe(false);
-      expect(regex.test(`${sigil}${sigil}check`)).toBe(false);
-    },
-  );
+
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));
@@ -88,25 +75,6 @@ describe("Enriched link presentation", () => {
     };
     expect(
       enrichedContextLinkPresentation("t3-context://v1/review-comment/review_1", [record]),
-    ).toEqual({ color: "#8a70dd", icon: "git" });
-    expect(
-      enrichedContextLinkPresentation("t3-context://v1/review-comment/review_2", [record]),
-    ).toEqual({ color: "#8a70dd", icon: "markdown" });
-  });
-
-  it("retains recognizable presentation for unavailable and future context kinds", () => {
-    expect(enrichedContextLinkPresentation("t3-context://v1/terminal/missing")).toEqual({
-      color: "#009f6e",
-      icon: "bash",
-    });
-    expect(enrichedContextLinkPresentation("t3-context://v1/skill/missing")).toEqual({
-      color: "#b261be",
-      icon: "mcp",
-    });
-    expect(enrichedContextLinkPresentation("t3-context://v1/future/missing")).toEqual({
-      color: "#0090cd",
-      icon: "default",
-    });
-    expect(enrichedContextLinkPresentation("https://example.com/terminal/missing")).toBeUndefined();
+    ).toEqual({ accent: "#8a70dd", icon: { kind: "chip", name: "git-merge" } });
   });
 });

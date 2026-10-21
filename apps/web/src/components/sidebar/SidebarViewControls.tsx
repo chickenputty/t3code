@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
@@ -223,7 +223,6 @@ function SidebarViewOptionsMenu(props: {
   const showProjectIcons = useClientSettings((settings) => settings.sidebarProjectIcons);
   const iconStyle = useClientSettings((settings) => settings.sidebarProjectIconStyle);
   const indent = useClientSettings((settings) => settings.sidebarThreadIndent);
-  const updateSettings = useUpdateClientSettings();
 
   return (
     <Menu>
@@ -260,7 +259,7 @@ function SidebarViewOptionsMenu(props: {
             <MenuRadioGroup
               value={indent}
               onValueChange={(value) =>
-                updateSettings({ sidebarThreadIndent: value as SidebarThreadIndent })
+                updateClientSettings({ sidebarThreadIndent: value as SidebarThreadIndent })
               }
             >
               {SidebarThreadIndent.literals.map((option) => (
@@ -281,7 +280,9 @@ function SidebarViewOptionsMenu(props: {
             <MenuRadioGroup
               value={projectRowDensity}
               onValueChange={(value) =>
-                updateSettings({ sidebarProjectRowDensity: value as SidebarProjectRowDensity })
+                updateClientSettings({
+                  sidebarProjectRowDensity: value as SidebarProjectRowDensity,
+                })
               }
             >
               {SidebarProjectRowDensity.literals.map((density) => (
@@ -302,7 +303,7 @@ function SidebarViewOptionsMenu(props: {
             <MenuRadioGroup
               value={rowDensity}
               onValueChange={(value) =>
-                updateSettings({ sidebarThreadRowDensity: value as SidebarThreadRowDensity })
+                updateClientSettings({ sidebarThreadRowDensity: value as SidebarThreadRowDensity })
               }
             >
               {SidebarThreadRowDensity.literals.map((density) => (
@@ -316,7 +317,7 @@ function SidebarViewOptionsMenu(props: {
         <MenuCheckboxItem
           variant="switch"
           checked={showEmoji}
-          onCheckedChange={(checked) => updateSettings({ sidebarThreadEmoji: checked })}
+          onCheckedChange={(checked) => updateClientSettings({ sidebarThreadEmoji: checked })}
         >
           Topic emoji
         </MenuCheckboxItem>
@@ -324,7 +325,7 @@ function SidebarViewOptionsMenu(props: {
         <MenuCheckboxItem
           variant="switch"
           checked={showProjectIcons}
-          onCheckedChange={(checked) => updateSettings({ sidebarProjectIcons: checked })}
+          onCheckedChange={(checked) => updateClientSettings({ sidebarProjectIcons: checked })}
         >
           Project icons
         </MenuCheckboxItem>
@@ -337,7 +338,7 @@ function SidebarViewOptionsMenu(props: {
             <MenuRadioGroup
               value={iconStyle}
               onValueChange={(value) =>
-                updateSettings({ sidebarProjectIconStyle: value as SidebarProjectIconStyle })
+                updateClientSettings({ sidebarProjectIconStyle: value as SidebarProjectIconStyle })
               }
             >
               {SidebarProjectIconStyle.literals.map((option) => (
@@ -356,7 +357,6 @@ function SidebarViewOptionsMenu(props: {
 /** Shown beside the search box while searching: titles only, or titles and messages. */
 export function SearchScopeToggle() {
   const titlesOnly = useClientSettings((settings) => settings.sidebarSearchTitlesOnly);
-  const updateSettings = useUpdateClientSettings();
   return (
     <SidebarHeaderIconButton
       label={
@@ -366,7 +366,7 @@ export function SearchScopeToggle() {
       }
       aria-pressed={titlesOnly}
       data-active={titlesOnly}
-      onClick={() => updateSettings({ sidebarSearchTitlesOnly: !titlesOnly })}
+      onClick={() => updateClientSettings({ sidebarSearchTitlesOnly: !titlesOnly })}
     >
       {titlesOnly ? <HeadingIcon /> : <TextSearchIcon />}
     </SidebarHeaderIconButton>

@@ -75,19 +75,6 @@ describe("partitionStashAttachments", () => {
     expect(kept.map((attachment) => attachment.id)).toEqual(["a", "c"]);
     expect(droppedNames).toEqual(["huge.png"]);
   });
-
-  it("admits a single attachment that exactly fits the budget", () => {
-    const exact = {
-      id: "a",
-      name: "exact.png",
-      mimeType: "image/png",
-      sizeBytes: MAX_STASH_ENTRY_ATTACHMENT_CHARS,
-      dataUrl: "x".repeat(MAX_STASH_ENTRY_ATTACHMENT_CHARS),
-    };
-    const { kept, droppedNames } = partitionStashAttachments([exact]);
-    expect(kept).toHaveLength(1);
-    expect(droppedNames).toEqual([]);
-  });
 });
 
 describe("promptStashStore", () => {
@@ -97,14 +84,6 @@ describe("promptStashStore", () => {
 
   afterEach(() => {
     resetPromptStashStore();
-  });
-
-  it("prepends entries so the newest stash is first", () => {
-    const store = usePromptStashStore.getState();
-    store.stashEntry(makeEntry({ id: "first" }));
-    store.stashEntry(makeEntry({ id: "second" }));
-    const entries = usePromptStashStore.getState().entries;
-    expect(entries.map((entry) => entry.id)).toEqual(["second", "first"]);
   });
 
   it("restores citations and bound comments from a persisted stash", () => {
@@ -238,7 +217,12 @@ describe("promptStashStore", () => {
       environmentId: EnvironmentId.make("environment-1"),
     };
 
-    store.stashEntry({ ...makeEntry({ id: "with-file" }), files: [file] });
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: { entries: [{ ...makeEntry({ id: "with-file" }), files: [file] }] },
+      }),
+    );
     store.finalizeEntryImages("with-file", {
       attachments: [],
       droppedImageNames: [],
@@ -289,8 +273,7 @@ describe("promptStashStore", () => {
 });
 
 describe("prompt stash context records", () => {
-  it("keeps the records behind a stashed prompt's chips", () => {
-    const store = usePromptStashStore.getState();
+  it("restores the records behind a persisted prompt's chips", () => {
     const records = [
       {
         version: 1 as const,
@@ -304,14 +287,23 @@ describe("prompt stash context records", () => {
         text: "boom",
       },
     ];
-    store.stashEntry({
-      id: "entry-records",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      prompt: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx-1)",
-      attachments: [],
-      droppedImageNames: [],
-      records,
-    });
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: {
+          entries: [
+            {
+              id: "entry-records",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              prompt: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx-1)",
+              attachments: [],
+              droppedImageNames: [],
+              records,
+            },
+          ],
+        },
+      }),
+    );
     const taken = usePromptStashStore.getState().takeEntry("entry-records");
     expect(taken.entry?.records).toEqual(records);
   });

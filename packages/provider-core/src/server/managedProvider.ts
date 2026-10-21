@@ -246,8 +246,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     options?: { readonly forceRefresh?: boolean; readonly userRequested?: boolean },
   ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
-  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = (update) =>
-    Effect.gen(function* () {
+  // Providers call this on every token-usage tick, usually without changing the snapshot.
+  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
+    function* (update) {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
         const usageLimits = applyUsageLimitsUpdate({
           previous: state.snapshot.usageLimits,
@@ -263,7 +264,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (snapshotToPublish !== null) {
         yield* PubSub.publish(changesPubSub, snapshotToPublish);
       }
-    });
+    },
+  );
 
   /** `userRequested`: a Refresh someone asked for shows the probe's answer, never a held one. */
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* (userRequested: boolean) {
@@ -273,6 +275,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const hasProviderStatusDemand = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
+    // A disabled instance has nothing to probe; a periodic check would only
+    // republish a snapshot that differs in checkedAt.
+    if (!state.snapshot.enabled) {
+      return false;
+    }
     const instanceId = state.snapshot.instanceId;
     const [genericDemand, instanceDemand] = yield* Effect.all([
       host.shouldRunBackgroundWork({ type: "provider-status" }),
@@ -348,7 +355,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot(true).pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: input
+      .resolveMaintenance({ fresh: true })
+      .pipe(Effect.andThen(refreshSnapshot(true)), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

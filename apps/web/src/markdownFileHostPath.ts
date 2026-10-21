@@ -3,11 +3,12 @@
  * filename (`thumb.png`) resolves against the workspace root, which is rarely
  * where it lives, so the workspace index is asked first, as the files panel
  * does; a path with folders the index does not have is then looked for in the
- * repository's other git worktrees. Preview, open in editor, open file, open parent folder and the copy
- * actions all go through here so they agree on one path.
+ * repository's other git worktrees (fork). Preview, open in editor, open file,
+ * open parent folder and the copy actions all go through here so they agree on
+ * one path.
  */
 import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 
 import type { MarkdownFileLinkMeta } from "./markdown-links";
@@ -43,8 +44,8 @@ export async function resolveMarkdownFileHostPath(input: {
 }): Promise<MarkdownFileHostPath> {
   const { meta, cwd } = input;
   const match =
-    meta.workspaceRelativePath && cwd
-      ? await input.findWorkspaceMatch(meta.workspaceRelativePath)
+    meta.workspaceLookupPath && cwd
+      ? await input.findWorkspaceMatch(meta.workspaceLookupPath)
       : null;
   if (match && cwd) {
     return {
@@ -62,10 +63,25 @@ export function markdownFileEditorTarget(
   meta: MarkdownFileLinkMeta,
   hostPath: MarkdownFileHostPath,
 ): string {
-  if (!hostPath.matched) return meta.targetPath;
-  return formatFilePathPosition({
-    path: hostPath.absolutePath,
-    ...(meta.line !== undefined ? { line: meta.line } : {}),
-    ...(meta.column !== undefined ? { column: meta.column } : {}),
-  });
+  return hostPath.matched
+    ? formatFilePathPosition({ ...meta, path: hostPath.absolutePath })
+    : meta.targetPath;
+}
+
+export function markdownFileCopyPaths(
+  meta: MarkdownFileLinkMeta,
+  hostPath: MarkdownFileHostPath,
+  cwd: string | undefined,
+) {
+  const fullPath = markdownFileEditorTarget(meta, hostPath);
+  return {
+    fullPath,
+    relativePath: formatFilePathPosition({
+      ...meta,
+      path:
+        workspaceRelativeFilePath(hostPath.absolutePath, cwd) ??
+        hostPath.relativePath ??
+        meta.filePath,
+    }),
+  };
 }

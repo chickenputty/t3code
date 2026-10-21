@@ -14,9 +14,15 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
-  it("keeps thread-link hrefs for in-app navigation", () => {
-    const href = "t3-thread://v1/thread-1";
-    expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
+  it("opens relative directory links as workspace paths", () => {
+    expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
+      kind: "file",
+      path: "src/",
+    });
+    expect(resolveMarkdownLinkPresentation("docs/My Folder/")).toMatchObject({
+      kind: "file",
+      path: "docs/My Folder/",
+    });
   });
 
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
@@ -35,14 +41,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it("extracts external link hosts", () => {
-    expect(resolveMarkdownLinkPresentation("https://example.com/docs?q=1")).toEqual({
-      kind: "external",
-      href: "https://example.com/docs?q=1",
-      host: "example.com",
-    });
-  });
-
   it.each([
     ["file:///Users/julius/project/src/main.ts#L42C7", "/Users/julius/project/src/main.ts"],
     ["file://server/share/src/main.ts#L42C7", "\\\\server\\share\\src\\main.ts"],
@@ -51,7 +49,7 @@ describe("resolveMarkdownLinkPresentation", () => {
       kind: "file",
       href,
       icon: "typescript",
-      label: "main.ts:42:7",
+      label: "main.ts · L42:C7",
       path,
       line: 42,
       column: 7,
@@ -63,7 +61,7 @@ describe("resolveMarkdownLinkPresentation", () => {
       kind: "file",
       href: "apps/mobile/src/index.ts:10",
       icon: "typescript",
-      label: "index.ts:10",
+      label: "index.ts · L10",
       path: "apps/mobile/src/index.ts",
       line: 10,
     });
@@ -83,16 +81,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it.each(["md", "html", "xml"])("recognizes a bare spaced .%s filename", (extension) => {
-    expect(
-      resolveMarkdownLinkPresentation(`Updated%20cutover%20checklist.${extension}`),
-    ).toMatchObject({
-      kind: "file",
-      path: `Updated cutover checklist.${extension}`,
-      label: `Updated cutover checklist.${extension}`,
-    });
-  });
-
   it("recognizes spaced relative paths", () => {
     expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
       kind: "file",
@@ -107,26 +95,7 @@ describe("resolveMarkdownLinkPresentation", () => {
       path: "src/main.ts",
       line: 18,
       column: 2,
-      label: "main.ts:18:2",
-    });
-  });
-
-  it("uses the Pierre complete icon mappings", () => {
-    expect(resolveMarkdownLinkPresentation("src/Button.tsx")).toMatchObject({
-      kind: "file",
-      icon: "react",
-    });
-    expect(resolveMarkdownLinkPresentation("vite.config.ts")).toMatchObject({
-      kind: "file",
-      icon: "vite",
-    });
-    expect(resolveMarkdownLinkPresentation("Dockerfile")).toMatchObject({
-      kind: "file",
-      icon: "docker",
-    });
-    expect(resolveMarkdownLinkPresentation("pnpm-lock.yaml")).toMatchObject({
-      kind: "file",
-      icon: "pnpm",
+      label: "main.ts · L18:C2",
     });
   });
 

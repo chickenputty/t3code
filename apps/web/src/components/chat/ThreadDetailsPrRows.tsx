@@ -105,20 +105,20 @@ export function ThreadDetailsPrRows({
   return (
     <>
       {currentRow}
-      {shown > 0
-        ? rest
-            .slice(0, shown)
-            .map((link) => (
-              <ThreadDetailsPrLinkRow
-                key={threadPullRequestKeyOf(link)}
-                environmentId={row.environmentId}
-                link={link}
-                onOpen={(event) => onOpenLink(event, link.url)}
-                onActed={row.onActed}
-                onStopWatching={stopWatching(link)}
-              />
-            ))
-        : null}
+      {shown > 0 ? (
+        <div data-thread-details-pr-list className="flex flex-col">
+          {rest.slice(0, shown).map((link) => (
+            <ThreadDetailsPrLinkRow
+              key={threadPullRequestKeyOf(link)}
+              environmentId={row.environmentId}
+              link={link}
+              onOpen={(event) => onOpenLink(event, link.url)}
+              onActed={row.onActed}
+              onStopWatching={stopWatching(link)}
+            />
+          ))}
+        </div>
+      ) : null}
       <ThreadDetailsControl
         variant="ghost"
         size="sm"

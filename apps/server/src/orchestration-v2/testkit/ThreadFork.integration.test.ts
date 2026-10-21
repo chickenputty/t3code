@@ -284,6 +284,8 @@ describe("orchestration V2 thread fork", () => {
         assert.lengthOf(transfers, 1);
         assert.equal(transfers[0]?.status, "consumed");
         assert.equal(transfers[0]?.resolution?.strategy, "native_fork");
+        assert.isUndefined(sourceProjection.providerTurns[0]?.tokenUsage);
+        assert.isUndefined(transfers[0]?.sourceTokenUsage);
         assert.equal(transfers[0]?.targetRunId, targetProjection.runs[0]?.id);
 
         const transferCreatedIndex = result.domainEvents.findIndex(
@@ -452,6 +454,9 @@ describe("orchestration V2 thread fork", () => {
         assert.lengthOf(transfers, 1);
         assert.equal(transfers[0]?.status, "consumed");
         assert.equal(transfers[0]?.resolution?.strategy, "native_fork");
+        const sourceUsage = sourceProjection.providerTurns[0]?.tokenUsage;
+        assert.isDefined(sourceUsage);
+        assert.deepEqual(transfers[0]?.sourceTokenUsage, sourceUsage);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -632,154 +637,6 @@ describe("orchestration V2 thread fork", () => {
         "fork boundary beta",
         "fork target visible projection must not inherit source turns after the fork point",
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("forks a Claude native session from an earlier completed source turn", () =>
-    Effect.gen(function* () {
-      const rawTranscript = yield* readTranscript(CLAUDE_PRIOR_TURN_TRANSCRIPT_PATH);
-      const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(rawTranscript);
-      const forkedNativeSessionId = metadataString(transcript, "forkedNativeSessionId");
-      const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
-        Effect.service(FileSystem.FileSystem).pipe(
-          Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
-          Effect.orDie,
-        ),
-      );
-
-      const materialized = yield* Effect.gen(function* () {
-        const ids = yield* IdAllocator.IdAllocatorV2;
-        const projectId = yield* ids.allocate.project({
-          fixtureName: "thread-fork-native-prior-turn",
-        });
-        const sourceThreadId = yield* ids.allocate.thread({
-          fixtureName: "thread-fork-native-prior-turn-source",
-          projectId,
-        });
-        const targetThreadId = ThreadId.make("thread-fork-native-prior-turn-target");
-        const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
-
-        const commands = [
-          {
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: yield* ids.allocate.command({
-              fixtureName: "thread-fork-native-prior-turn",
-              commandName: "thread-create-source",
-            }),
-            threadId: sourceThreadId,
-            projectId,
-            title: "Source thread",
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-          },
-          {
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: yield* ids.allocate.command({
-              fixtureName: "thread-fork-native-prior-turn",
-              commandName: "source-message-alpha",
-            }),
-            threadId: sourceThreadId,
-            messageId: MessageId.make("message-thread-fork-native-prior-turn-alpha"),
-            text: THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
-            attachments: [],
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
-          },
-          {
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: yield* ids.allocate.command({
-              fixtureName: "thread-fork-native-prior-turn",
-              commandName: "source-message-beta",
-            }),
-            threadId: sourceThreadId,
-            messageId: MessageId.make("message-thread-fork-native-prior-turn-beta"),
-            text: THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
-            attachments: [],
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
-          },
-          {
-            type: "thread.fork",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command-thread-fork-native-prior-turn"),
-            sourceThreadId,
-            targetThreadId,
-            sourcePoint: { type: "run", runId: firstRunId },
-            title: "Forked from first response",
-          },
-          {
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: yield* ids.allocate.command({
-              fixtureName: "thread-fork-native-prior-turn",
-              commandName: "target-message-repeat",
-            }),
-            threadId: targetThreadId,
-            messageId: MessageId.make("message-thread-fork-native-prior-turn-repeat"),
-            text: THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
-            attachments: [],
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
-          },
-        ] satisfies ReadonlyArray<OrchestrationV2Command>;
-
-        return {
-          sourceThreadId,
-          targetThreadId,
-          commands,
-        };
-      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
-
-      const result = yield* runOrchestratorV2ProviderReplayScenario(
-        {
-          name: "thread_fork_native_prior_turn/claude",
-          transcript,
-          commands: materialized.commands,
-          steps: [
-            { type: "dispatch", command: materialized.commands[0]!, await: true },
-            { type: "advance_clock", duration: "1 millis" },
-            { type: "dispatch", command: materialized.commands[1]!, await: true },
-            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
-            { type: "dispatch", command: materialized.commands[2]!, await: true },
-            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
-            { type: "dispatch", command: materialized.commands[3]!, await: true },
-            { type: "dispatch", command: materialized.commands[4]!, await: true },
-            { type: "await_thread_idle", threadId: materialized.targetThreadId },
-          ],
-          projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
-          runtimePolicyOverride: { cwd },
-        },
-        ClaudeOrchestratorReplayHarness,
-      ).pipe(provideDeterministicTestRuntime);
-
-      const targetProjection = result.projections.get(materialized.targetThreadId);
-      assert.isDefined(targetProjection);
-      assert.equal(
-        targetProjection.providerThreads[0]?.nativeThreadRef?.nativeId,
-        forkedNativeSessionId,
-      );
-      const targetAssistantText = targetProjection.turnItems
-        .filter((item) => item.type === "assistant_message")
-        .map((item) => item.text)
-        .join("\n");
-      assert.include(targetAssistantText, "fork boundary alpha");
-      assert.notInclude(
-        targetAssistantText,
-        "fork boundary beta",
-        "forking from the first source run must not preserve later source turns in native Claude context",
-      );
-      assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

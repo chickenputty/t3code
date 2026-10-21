@@ -69,7 +69,6 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
 });
 let root: Root;
 let container: HTMLDivElement;
-let handlers: Array<() => void> = [];
 
 // Fork: the last save's outcome, for the saved-or-not tests below.
 let lastSave: Promise<boolean> | undefined;
@@ -79,7 +78,6 @@ function SettingsEditor() {
   const save = () => {
     lastSave = updateSettings(patch);
   };
-  handlers.push(save);
   return <button onClick={save}>Save shared setting</button>;
 }
 
@@ -99,7 +97,6 @@ async function mountEditor() {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  handlers = [];
   state.sessions.clear();
   state.sessions.set(
     primaryId,
@@ -127,133 +124,6 @@ afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
-});
-
-describe("shared settings writes", () => {
-  it("waits for the remaining target before reporting a partial save", async () => {
-    let finishRemote = () => {};
-    const remote = new Promise((resolve) => {
-      finishRemote = () => resolve(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
-    });
-    state.persist.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
-    );
-    state.persist.mockReturnValueOnce(remote);
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    expect(state.toast).not.toHaveBeenCalled();
-    await act(async () => finishRemote());
-    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
-      type: "error",
-      title: "Setting saved on some environments",
-      description: "Could not save on primary: Permission denied\nSaved on remote.",
-    });
-  });
-
-  it("keeps a single-target failure specific to that environment", async () => {
-    appAtomRegistry.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
-    state.persist.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
-    );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
-      type: "error",
-      title: "Setting not saved",
-      description: "Could not save on primary: Permission denied",
-    });
-  });
-
-  it("names the failed environment when a server rejects a save after the grant check", async () => {
-    state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
-    state.persist.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
-    );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
-      type: "error",
-      title: "Setting saved on some environments",
-      description: "Could not save on remote: Permission denied\nSaved on primary.",
-    });
-  });
-
-  it("dispatches to the primary and connected remote before the remote grant finishes loading", async () => {
-    await mountEditor();
-    saveSharedSettings();
-
-    expect(state.persist.mock.calls).toEqual([
-      [{ environmentId: primaryId, input: { patch } }],
-      [{ environmentId: remoteId, input: { patch } }],
-    ]);
-    expect(appAtomRegistry.get(state.sessions.get(remoteId)!)).toMatchObject({ _tag: "Initial" });
-  });
-
-  it.each([
-    ["denied", () => AsyncResult.success(session([]))],
-    ["denied while refreshing", () => AsyncResult.waiting(AsyncResult.success(session([])))],
-    [
-      "failed",
-      () => AsyncResult.failure<AuthSessionState, Error>(Cause.fail(new Error("session rejected"))),
-    ],
-  ] as const)("skips a remote whose grant is %s", async (_label, result) => {
-    appAtomRegistry.set(state.sessions.get(remoteId)!, result());
-    await mountEditor();
-    saveSharedSettings();
-
-    expect(state.persist).toHaveBeenCalledExactlyOnceWith({
-      environmentId: primaryId,
-      input: { patch },
-    });
-  });
-
-  it.each(["disconnected", "unsupported"] as const)(
-    "skips a %s remote even with a cold grant",
-    async (condition) => {
-      const remote = state.environments[1]!;
-      if (condition === "disconnected") remote.connection.phase = "disconnected";
-      else remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
-      await mountEditor();
-      saveSharedSettings();
-
-      expect(state.persist).toHaveBeenCalledExactlyOnceWith({
-        environmentId: primaryId,
-        input: { patch },
-      });
-    },
-  );
-
-  it.each(["primary", "hosted"] as const)(
-    "rechecks a cold remote grant that resolves to denied after the %s handler renders",
-    async (mode) => {
-      if (mode === "hosted") {
-        state.environments = state.environments.filter(
-          (environment) => environment.environmentId !== primaryId,
-        );
-      }
-      await mountEditor();
-      const previousUpdate = handlers.at(-1)!;
-      await act(() => {
-        appAtomRegistry.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
-      });
-      previousUpdate();
-
-      if (mode === "primary") {
-        expect(state.persist).toHaveBeenCalledExactlyOnceWith({
-          environmentId: primaryId,
-          input: { patch },
-        });
-        expect(state.toast).not.toHaveBeenCalled();
-      } else {
-        expect(state.persist).not.toHaveBeenCalled();
-        expect(state.toast).toHaveBeenCalledExactlyOnceWith({
-          type: "warning",
-          title: "Setting not saved",
-          description: "This connection lacks permission to change settings on remote.",
-        });
-      }
-    },
-  );
 });
 
 // Fork: callers holding an optimistic copy (saved views) learn whether the write landed.

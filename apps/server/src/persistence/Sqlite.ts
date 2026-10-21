@@ -9,7 +9,7 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
-export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 // Upper bound on the connection's page cache. At SQLite's 2 MiB default, every
 // query on a large database re-reads its b-tree pages from the OS. The cache

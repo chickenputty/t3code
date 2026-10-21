@@ -42,19 +42,30 @@ describe("splitFilePathPosition", () => {
 });
 
 describe("resolvePathLinkTarget", () => {
-  it("resolves relative paths against cwd", () => {
-    expect(
-      resolvePathLinkTarget(
-        "src/components/ThreadTerminalDrawer.tsx:42:7",
-        "/Users/julius/project",
-      ),
-    ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
-  });
-
-  it("keeps absolute paths unchanged", () => {
-    expect(
-      resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
-    ).toBe("/Users/julius/project/src/main.ts:12");
+  it.each([
+    [
+      String.raw`src\index.ts:12:7`,
+      String.raw`C:\Users\Jane Doe\project`,
+      String.raw`C:\Users\Jane Doe\project\src\index.ts:12:7`,
+    ],
+    [
+      "src/index.ts:12:7",
+      "C:/Users/Jane Doe/project",
+      String.raw`C:/Users/Jane Doe/project\src\index.ts:12:7`,
+    ],
+    [
+      String.raw`.\src\index.ts:12`,
+      String.raw`\\server\share\project`,
+      String.raw`\\server\share\project\.\src\index.ts:12`,
+    ],
+    [
+      String.raw`~\index.ts:12`,
+      String.raw`C:\Users\Jane Doe\project`,
+      String.raw`C:\Users\Jane Doe\index.ts:12`,
+    ],
+    ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
+  ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
+    expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
   });
 
   it("keeps Windows absolute paths with forward slashes unchanged", () => {
@@ -66,7 +77,14 @@ describe("resolvePathLinkTarget", () => {
   it.each([
     ["C:\\Users\\julius\\project", "C:\\Users\\julius\\notes.md:3"],
     ["C:/Users/julius/project", "C:/Users/julius\\notes.md:3"],
+    ["C:\\users\\alice\\project", "C:\\users\\alice\\notes.md:3"],
+    ["C:/uSeRs/alice/project", "C:/uSeRs/alice\\notes.md:3"],
   ])("resolves home paths against the Windows cwd %s", (cwd, expected) => {
     expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe(expected);
+  });
+  it("keeps home paths unchanged when no supported home can be inferred", () => {
+    for (const cwd of ["C:/work/project", "/Home/alice/project", "/users/alice/project"]) {
+      expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe("~/notes.md:3");
+    }
   });
 });

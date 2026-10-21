@@ -293,6 +293,12 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    // An uncached read for decisions that must match the repository now, not
+    // the persisted list a picker renders from.
+    readRefs: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:read-refs",
+      tag: WS_METHODS.vcsListRefs,
+    }),
     status,
     // Fork: Source Control panel. Refetches whenever the status stream reports a local
     // change, which every stage, unstage and commit handler triggers on the server.
