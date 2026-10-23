@@ -82,7 +82,10 @@ $KeepLocalBuilds = 3
 $AppDir = $env:T3CODE_FORK_APP_DIR
 if (-not $AppDir) { $AppDir = (Get-ItemProperty 'HKCU:\Software\e9197887-efb3-55e0-985e-d6d3b5dd594a' -ErrorAction SilentlyContinue).InstallLocation }
 if (-not $AppDir) { $AppDir = Join-Path $env:LOCALAPPDATA 'Programs\t3code' }
-$AppExe = Join-Path $AppDir 'T3 Code (Alpha).exe'
+# Upstream renamed the app from "T3 Code (Alpha)" to "T3 Code (Beta)" in 0.1.x; take whichever is installed.
+$AppExe = @('T3 Code (Beta).exe', 'T3 Code (Alpha).exe') |
+  ForEach-Object { Join-Path $AppDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $AppExe) { $AppExe = Join-Path $AppDir 'T3 Code (Beta).exe' }
 $AppExeName = Split-Path $AppExe -Leaf
 # The V2 database T3 runs on. state.sqlite beside it is the V1 database that seeded it once.
 $LiveDb = $env:T3CODE_FORK_LIVE_DB ?? (Join-Path $env:USERPROFILE '.t3\userdata\statev2.sqlite')
