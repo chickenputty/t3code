@@ -43,6 +43,17 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
+import {
+  Ledger,
+  LedgerCheckpointReachedPayload,
+  LedgerCheckpointReachedPayloadJson,
+  LedgerClosedPayload,
+  LedgerClosedPayloadJson,
+  LedgerCommands,
+  LedgerItemsEventPayload,
+  LedgerItemsEventPayloadJson,
+  LedgerJson,
+} from "./ledger.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   ThreadLinkedPullRequest,
@@ -1714,6 +1725,26 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.created"),
+    payload: Ledger,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literals(["ledger.item.added", "ledger.item.updated"]),
+    payload: LedgerItemsEventPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.checkpoint.reached"),
+    payload: LedgerCheckpointReachedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("checkpoint-scope.created"),
     payload: OrchestrationV2CheckpointScope,
   }),
@@ -1757,6 +1788,8 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   plans: Schema.Array(OrchestrationV2PlanArtifact),
+  /** Absent on threads without a ledger and on snapshots from older servers. */
+  ledger: Schema.optional(Ledger),
   turnItems: turnItemArray(OrchestrationV2TurnItem),
   checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
@@ -2327,6 +2360,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
     messages: Schema.Array(OrchestrationV2ConversationMessageJson),
     plans: Schema.Array(OrchestrationV2PlanArtifact),
+    ledger: Schema.optional(LedgerJson),
     turnItems: turnItemArray(OrchestrationV2TurnItemJson),
     checkpointScopes: Schema.Array(OrchestrationV2CheckpointScopeJson),
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
@@ -2525,6 +2559,26 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("plan.updated"),
     payload: OrchestrationV2PlanArtifact,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.created"),
+    payload: LedgerJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literals(["ledger.item.added", "ledger.item.updated"]),
+    payload: LedgerItemsEventPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.checkpoint.reached"),
+    payload: LedgerCheckpointReachedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayloadJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3011,6 +3065,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
+  ...LedgerCommands,
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 

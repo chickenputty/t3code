@@ -176,6 +176,11 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "provider.switch":
+    case "ledger.create":
+    case "ledger.item.add":
+    case "ledger.item.update":
+    case "ledger.checkpoint.reach":
+    case "ledger.close":
       return [command.threadId];
     case "delegated_task.request":
     case "delegated_task.wake-policy":
