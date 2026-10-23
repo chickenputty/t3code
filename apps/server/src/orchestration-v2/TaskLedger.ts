@@ -7,11 +7,15 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2InternalCommand,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 
-type LedgerEventBody = Extract<OrchestrationV2DomainEvent, { readonly type: `ledger.${string}` }>;
+export type LedgerEventBody = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly type: `ledger.${string}` }
+>;
 
 /** A ledger event before the orchestrator stamps its id, thread and provider instance. */
 export type PlannedLedgerEvent = {
@@ -20,6 +24,36 @@ export type PlannedLedgerEvent = {
     readonly payload: Extract<LedgerEventBody, { readonly type: Type }>["payload"];
   };
 }[LedgerEventBody["type"]];
+
+type WithoutId<Event> = Event extends unknown ? Omit<Event, "id"> : never;
+
+/**
+ * Stamps a planned event with the thread envelope. One branch per type keeps each `type`
+ * paired with its own payload, which spreading the union would not.
+ */
+export function ledgerEventFromPlan(
+  planned: PlannedLedgerEvent,
+  envelope: {
+    readonly threadId: LedgerEventBody["threadId"];
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly occurredAt: DateTime.Utc;
+  },
+): WithoutId<LedgerEventBody> {
+  switch (planned.type) {
+    case "ledger.created":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+    case "ledger.item.added":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+    case "ledger.item.updated":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+    case "ledger.checkpoint.updated":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+    case "ledger.closed":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+    case "ledger.reopened":
+      return { ...envelope, type: planned.type, payload: planned.payload };
+  }
+}
 
 export type LedgerCommand = Extract<
   OrchestrationV2Command | OrchestrationV2InternalCommand,
@@ -30,12 +64,13 @@ export type LedgerCommand = Extract<
 export type LedgerRejection = string;
 
 /**
- * The one transition table. Items move open -> in_progress -> closed, any item that is not
- * closed can be dropped, and a closed or dropped item can only come back as open.
+ * The one transition table. Items start, finish and drop; an in-progress item can be
+ * un-started; a closed or dropped item can only come back as open. An open item may close
+ * directly so a small item finishes in one step, but closing still needs evidence.
  */
 const LEGAL_TRANSITIONS: Readonly<Record<LedgerItemStatus, ReadonlyArray<LedgerItemStatus>>> = {
-  open: ["in_progress", "dropped"],
-  in_progress: ["closed", "dropped"],
+  open: ["in_progress", "closed", "dropped"],
+  in_progress: ["open", "closed", "dropped"],
   closed: ["open"],
   dropped: ["open"],
 };
@@ -229,7 +264,9 @@ export function planLedgerCommand(input: {
       if (!changesStatus && (item.status === "closed" || item.status === "dropped")) {
         return reject(`Item ${item.id} is ${item.status}. Reopen it to change it.`);
       }
-      if (target === "open" && changesStatus) {
+      // Reopening a finished item starts it over; un-starting an in-progress item only changes
+      // its status and keeps the evidence gathered so far.
+      if (target === "open" && changesStatus && item.status !== "in_progress") {
         if (command.evidence !== undefined || command.dropReason !== undefined) {
           return reject(
             "Reopening an item clears its evidence and drop reason; do not supply them.",
@@ -257,6 +294,10 @@ export function planLedgerCommand(input: {
 
       const evidence = command.evidence === undefined ? item.evidence : command.evidence;
       const dropReason = command.dropReason === undefined ? item.dropReason : command.dropReason;
+      // Skipping in_progress is allowed only when the same update brings the evidence.
+      if (target === "closed" && item.status === "open" && isBlank(command.evidence)) {
+        return reject(`Item ${item.id} needs evidence in the same update to close from open.`);
+      }
       if (target === "closed" && isBlank(evidence)) {
         return reject(`Item ${item.id} needs non-empty evidence to close.`);
       }

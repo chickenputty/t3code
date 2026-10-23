@@ -16,6 +16,7 @@ import {
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import { applyLedgerEvent } from "@t3tools/shared/taskLedger";
 import type {
+  Ledger,
   OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
@@ -454,6 +455,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /** Open plus in-progress ledger items for the thread; 0 when it has none or no ledger. */
+  readonly getOpenLedgerItemCount: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -945,8 +950,9 @@ export function applyToProjection(
     case "ledger.checkpoint.updated":
     case "ledger.closed":
     case "ledger.reopened": {
-      const ledger = applyLedgerEvent(base.ledger, event);
-      return ledger === undefined ? base : { ...base, ledger };
+      // Like pull-request syncs, ledger edits leave the thread's activity timestamps alone.
+      const ledger = applyLedgerEvent(projection.ledger, event);
+      return ledger === undefined ? projection : { ...projection, ledger };
     }
     case "context-transfer.created":
     case "context-transfer.updated":
@@ -1199,6 +1205,8 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
 const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
 );
+const openLedgerItemCount = (ledger: Ledger) =>
+  ledger.items.filter((item) => item.status === "open" || item.status === "in_progress").length;
 const encodeLedgerPayload = Schema.encodeEffect(Schema.fromJsonString(LedgerJson));
 const decodeLedgerPayload = Schema.decodeUnknownEffect(Schema.fromJsonString(LedgerJson));
 
@@ -2766,18 +2774,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 thread_id,
                 ledger_id,
                 updated_at,
+                open_item_count,
                 payload_json
               )
               VALUES (
                 ${event.threadId},
                 ${next.id},
                 ${stringField(parseEncodedPayload(payloadJson), "updatedAt")},
+                ${openLedgerItemCount(next)},
                 ${payloadJson}
               )
               ON CONFLICT(thread_id)
               DO UPDATE SET
                 ledger_id = excluded.ledger_id,
                 updated_at = excluded.updated_at,
+                open_item_count = excluded.open_item_count,
                 payload_json = excluded.payload_json
             `;
               break;
@@ -2855,7 +2866,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.runtime-mode-updated" &&
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
-            event.type !== "thread.provider-switched"
+            event.type !== "thread.provider-switched" &&
+            // Ledger edits (a judge verdict, a UI change after a run) are not thread activity.
+            !event.type.startsWith("ledger.")
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -6217,6 +6230,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const getOpenLedgerItemCount: ProjectionStoreV2Shape["getOpenLedgerItemCount"] = (threadId) =>
+      sql<{ readonly open_item_count: number }>`
+        SELECT open_item_count FROM orchestration_v2_projection_ledgers
+        WHERE thread_id = ${threadId}
+      `.pipe(
+        Effect.map((rows) => rows[0]?.open_item_count ?? 0),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      );
+
     const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) =>
       sql<{ readonly thread_id: string; readonly worktree_path: string }>`
         SELECT thread_id, json_extract(payload_json, '$.worktreePath') AS worktree_path
@@ -6623,6 +6645,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
+      getOpenLedgerItemCount,
       getThreadWorktreePaths,
       getThreadProjection,
       getTurnStartContext,
@@ -6775,6 +6798,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             );
         },
       ),
+      getOpenLedgerItemCount: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            const ledger = state.projections.get(threadId)?.ledger;
+            return ledger === undefined ? 0 : openLedgerItemCount(ledger);
+          }),
+        ),
       getThreadWorktreePaths: (options) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

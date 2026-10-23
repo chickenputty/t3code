@@ -82,7 +82,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
-import { type LedgerCommand, planLedgerCommand } from "./TaskLedger.ts";
+import {
+  type LedgerCommand,
+  type LedgerEventBody,
+  ledgerEventFromPlan,
+  planLedgerCommand,
+} from "./TaskLedger.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -11261,13 +11266,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emit(
         events,
         command,
-      )({
-        ...event,
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-      } as Omit<OrchestrationV2DomainEvent, "id">);
+      )<LedgerEventBody>(
+        ledgerEventFromPlan(event, {
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+        }),
+      );
     }
+    // The planner returns no events for a redundant command; that is accepted, not an error.
+    return { redundant: planned.success.length === 0 };
   });
 
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
@@ -11284,6 +11292,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+      /** The command was valid but already in effect, so it commits a receipt and no events. */
+      readonly acceptsNoEvents?: true;
       readonly cancelUnsettledEffects?: {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
@@ -11299,6 +11309,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+    let acceptsNoEvents = false;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -11618,7 +11629,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "ledger.close":
       case "ledger.reopen":
       case "ledger.item.verdict.record":
-        yield* dispatchLedgerCommand(command, events);
+        acceptsNoEvents = (yield* dispatchLedgerCommand(command, events)).redundant;
         break;
       default:
         return yield* dispatchUnsupported(command);
@@ -11626,6 +11637,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
+      ...(acceptsNoEvents ? { acceptsNoEvents } : {}),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
     };
   });
@@ -11710,8 +11722,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
-        // A ledger command that changes nothing is a redundant retry, not an error.
-        command.type.startsWith("ledger.") ||
+        planned.acceptsNoEvents === true ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"

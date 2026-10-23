@@ -325,8 +325,9 @@ export function applyOrchestrationV2ProjectionEvent(
     case "ledger.checkpoint.updated":
     case "ledger.closed":
     case "ledger.reopened": {
-      const ledger = applyLedgerEvent(base.ledger, event);
-      return ledger === undefined ? base : { ...base, ledger };
+      // Ledger edits are not thread activity, matching the server projection.
+      const ledger = applyLedgerEvent(projection.ledger, event);
+      return ledger === undefined ? projection : { ...projection, ledger };
     }
     case "turn-item.updated": {
       // Streamed updates land on the newest items, so search from the end.

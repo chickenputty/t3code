@@ -338,9 +338,34 @@ it.effect("walks an item through its legal transitions and stamps times", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("closes an open item in one update with evidence, and un-starts an in-progress one", () =>
+  Effect.gen(function* () {
+    const threadId = yield* createThread("shortcuts");
+    yield* createLedger(threadId, { items: ["a", "b"] });
+    yield* assertRejected(
+      threadId,
+      updateItem(threadId, "a", { status: "closed" }),
+      "evidence in the same update",
+    );
+    yield* assertRejected(
+      threadId,
+      updateItem(threadId, "a", { status: "closed", evidence: " " }),
+      "evidence",
+    );
+    yield* updateItem(threadId, "a", { status: "closed", evidence: "one-step fix, suite green" });
+    const closed = itemOf(yield* ledgerOf(threadId), "a");
+    assert.equal(closed?.status, "closed");
+    assert.ok(closed?.closedAt);
+
+    yield* updateItem(threadId, "b", { status: "in_progress", evidence: "half done" });
+    yield* updateItem(threadId, "b", { status: "open" });
+    const unstarted = itemOf(yield* ledgerOf(threadId), "b");
+    assert.equal(unstarted?.status, "open");
+    assert.equal(unstarted?.evidence, "half done");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
-  ["open", "closed"],
-  ["in_progress", "open"],
   ["closed", "in_progress"],
   ["closed", "dropped"],
   ["dropped", "in_progress"],
@@ -349,7 +374,7 @@ it.effect.each([
   Effect.gen(function* () {
     const threadId = yield* createThread(`illegal-${from}-${to}`);
     yield* createLedger(threadId, { items: ["a"] });
-    if (from !== "open") yield* updateItem(threadId, "a", { status: "in_progress" });
+    yield* updateItem(threadId, "a", { status: "in_progress" });
     if (from === "closed") yield* updateItem(threadId, "a", { status: "closed", evidence: "done" });
     if (from === "dropped")
       yield* updateItem(threadId, "a", { status: "dropped", dropReason: "no" });
@@ -582,5 +607,91 @@ it.effect("rebuilding the projection from events yields the same ledger", () =>
     assert.isTrue(verification.valid);
     assert.deepEqual((yield* projections.getThreadProjection(threadId)).ledger, before);
     assert.isUndefined((yield* projections.getThreadProjection(otherThreadId)).ledger);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("accepts a redundant checkpoint command with no events and replays its receipt", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = yield* createThread("redundant");
+    yield* createLedger(threadId);
+    const command = {
+      type: "ledger.checkpoint.set" as const,
+      commandId: nextCommandId(),
+      threadId,
+      ledgerId,
+      checkpointId: checkpointId("contract"),
+      reached: false,
+    };
+    const before = yield* ledgerOf(threadId);
+    yield* TestClock.adjust("1 second");
+    const first = yield* orchestrator.dispatch(command);
+    assert.deepEqual(first.storedEvents, []);
+    assert.deepEqual(yield* ledgerOf(threadId), before);
+
+    yield* TestClock.adjust("1 second");
+    const second = yield* orchestrator.dispatch(command);
+    assert.deepEqual(second.storedEvents, []);
+    assert.equal(second.sequence, first.sequence);
+    assert.deepEqual(yield* ledgerOf(threadId), before);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("leaves the thread's updatedAt alone for every ledger event", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = yield* createThread("activity");
+    const threadUpdatedAt = () =>
+      Effect.map(
+        orchestrator.getThreadProjection(threadId),
+        (projection) => projection.thread.updatedAt,
+      );
+    const shellUpdatedAt = () =>
+      Effect.map(projections.getThreadShell(threadId), (shell) => shell?.updatedAt);
+    const baseline = yield* threadUpdatedAt();
+    const baselineShell = yield* shellUpdatedAt();
+
+    yield* TestClock.adjust("1 minute");
+    yield* createLedger(threadId, { items: ["a"] });
+    yield* updateItem(threadId, "a", { status: "in_progress" });
+    yield* recordVerdict(threadId, "a", "pass");
+    yield* updateItem(threadId, "a", { status: "closed", evidence: "done" });
+    yield* closeLedger(threadId);
+    yield* reopenLedger(threadId);
+
+    assert.deepEqual(yield* threadUpdatedAt(), baseline);
+    assert.deepEqual(yield* shellUpdatedAt(), baselineShell);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a cheap open item count in step with the ledger, through a rebuild", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const threadId = yield* createThread("open-count");
+    const count = () => projections.getOpenLedgerItemCount(threadId);
+    assert.equal(yield* count(), 0);
+
+    yield* createLedger(threadId, { items: ["a", "b"] });
+    assert.equal(yield* count(), 2);
+    yield* addItems(threadId, ["c"]);
+    assert.equal(yield* count(), 3);
+    yield* updateItem(threadId, "a", { status: "in_progress" });
+    assert.equal(yield* count(), 3);
+    yield* updateItem(threadId, "a", { status: "closed", evidence: "done" });
+    assert.equal(yield* count(), 2);
+    yield* updateItem(threadId, "b", { status: "dropped", dropReason: "no" });
+    assert.equal(yield* count(), 1);
+    yield* updateItem(threadId, "b", { status: "open" });
+    assert.equal(yield* count(), 2);
+    yield* updateItem(threadId, "b", { status: "dropped", dropReason: "no" });
+    yield* updateItem(threadId, "c", { status: "closed", evidence: "done" });
+    assert.equal(yield* count(), 0);
+    yield* updateItem(threadId, "c", { status: "open" });
+    assert.equal(yield* count(), 1);
+
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.equal(yield* count(), 1);
   }).pipe(Effect.provide(layerTest)),
 );

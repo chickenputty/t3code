@@ -10,6 +10,8 @@ export default Effect.gen(function* () {
       thread_id TEXT PRIMARY KEY,
       ledger_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      -- Open plus in_progress items, so "does this thread have unfinished work" needs no JSON.
+      open_item_count INTEGER NOT NULL DEFAULT 0,
       payload_json TEXT NOT NULL
     )
   `;
