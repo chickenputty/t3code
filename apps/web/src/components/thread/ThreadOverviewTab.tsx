@@ -38,11 +38,14 @@ export function ThreadOverviewTab({
   model,
   nowMs,
   onAction,
+  ledger,
 }: {
   row: ViewRow;
   model: InspectorModel | null;
   nowMs: number;
   onAction: (row: ViewRow, action: ViewBulkAction) => void;
+  /** The task ledger section, shown above the properties when the thread has one. */
+  ledger?: ReactNode;
 }) {
   const archived = row.section === "archived";
   const actions: { action: ViewBulkAction; label: string; icon: ReactNode }[] = archived
@@ -75,6 +78,7 @@ export function ThreadOverviewTab({
           </Button>
         ))}
       </div>
+      {ledger}
       <ThreadTabSection title="Properties">
         <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
           {VIEW_PROPERTIES.filter((property) => property.id !== "title").map((property) => {

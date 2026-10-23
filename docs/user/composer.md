@@ -256,6 +256,16 @@ row above the composer shows the goal and its progress.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 
+## Task ledger
+
+For a task with several parts, the agent can keep a task ledger: a checklist for the thread with a title, where the work started, checkpoints, win conditions, and items that each say what done means. Start one by sending `/ledger` followed by the task, for example `/ledger move the settings page to the new layout`. The message must start with `/ledger`. The agent itemizes the task into a ledger first, then works through it, recording evidence as it closes each item. Only the agent edits the ledger. The command appears when the environment supports task ledgers.
+
+Watch progress in two places: the **Overview** tab and the thread details panel. Both list every item as open, in progress, done or dropped, with its evidence, the reason for any dropped item, and a judge's verdict when there is one. While items remain open, a **Ledger** count such as `3/8` also shows at the right of the thread header.
+
+If a turn ends while items are still open, T3 Code continues for you. It sends a follow-up marked as automatic in the thread, so it is not mistaken for something you typed. It continues up to five times in a row, and stops sooner if a round makes no progress. When it stops, the thread says why and is marked unread.
+
+To stop it earlier, stop the running turn, remove the queued follow-up before it starts, or ask the agent to close or drop the remaining items. Sending your own message starts the count again.
+
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,

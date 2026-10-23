@@ -18,7 +18,7 @@ import {
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "ledger";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -348,9 +348,29 @@ export function composerStateAtPromptEnd(
   };
 }
 
+const LEDGER_PREAMBLE =
+  "Before you start, create a task ledger with the ledger_create tool: itemize the task below into " +
+  "items, each with acceptance criteria that say what done means. Then work the ledger, updating " +
+  "each item with evidence as you finish it.";
+
+/**
+ * `/ledger <task>` is sent as an ordinary message: the agent is told to build the ledger itself,
+ * so no server change is involved. Returns null when the text is not that command or has no task.
+ */
+export function expandLedgerSlashCommand(text: string): string | null {
+  const match = /^\/ledger\s+([\s\S]*\S)\s*$/i.exec(text.trim());
+  const task = match?.[1];
+  return task === undefined ? null : `${LEDGER_PREAMBLE}\n\nTask: ${task}`;
+}
+
+/** A `/ledger` with no task has nothing to itemize, so it is held in the composer, not sent. */
+export function isBareLedgerSlashCommand(text: string): boolean {
+  return /^\/ledger$/i.test(text.trim());
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): Exclude<ComposerSlashCommand, "model" | "ledger"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

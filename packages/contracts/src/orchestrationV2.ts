@@ -20,6 +20,7 @@ import {
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
   isUnknownUnionMember,
+  LedgerItemId,
   NonNegativeInt,
   PlanId,
   PositiveInt,
@@ -43,6 +44,23 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
+import {
+  Ledger,
+  LedgerCheckpointUpdatedPayload,
+  LedgerCheckpointUpdatedPayloadJson,
+  LedgerClosedPayload,
+  LedgerClosedPayloadJson,
+  LedgerCommands,
+  LedgerItemsAddedPayload,
+  LedgerItemsAddedPayloadJson,
+  LedgerItemStatus,
+  LedgerItemUpdatedPayload,
+  LedgerItemUpdatedPayloadJson,
+  LedgerReopenedPayload,
+  LedgerReopenedPayloadJson,
+  LedgerVerdictRecordCommand,
+  LedgerJson,
+} from "./ledger.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   ThreadLinkedPullRequest,
@@ -1073,6 +1091,16 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
+    /**
+     * The server's follow-up while a ledger has open items. It carries its round and the item
+     * statuses it was sent against, so the cap and the no-progress stop derive from the messages
+     * alone, with no counter to keep in step with the event log.
+     */
+    Schema.Struct({
+      kind: Schema.Literal("ledger_continue"),
+      round: PositiveInt,
+      items: Schema.Array(Schema.Struct({ id: LedgerItemId, status: LedgerItemStatus })),
+    }),
     Schema.Struct({ kind: Schema.Literal("system") }),
   ],
   (kind) => Schema.Struct({ kind }),
@@ -1714,6 +1742,36 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.created"),
+    payload: Ledger,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("checkpoint-scope.created"),
     payload: OrchestrationV2CheckpointScope,
   }),
@@ -1757,6 +1815,8 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   plans: Schema.Array(OrchestrationV2PlanArtifact),
+  /** Absent on threads without a ledger and on snapshots from older servers. */
+  ledger: Schema.optional(Ledger),
   turnItems: turnItemArray(OrchestrationV2TurnItem),
   checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
@@ -2327,6 +2387,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
     messages: Schema.Array(OrchestrationV2ConversationMessageJson),
     plans: Schema.Array(OrchestrationV2PlanArtifact),
+    ledger: Schema.optional(LedgerJson),
     turnItems: turnItemArray(OrchestrationV2TurnItemJson),
     checkpointScopes: Schema.Array(OrchestrationV2CheckpointScopeJson),
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
@@ -2525,6 +2586,36 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("plan.updated"),
     payload: OrchestrationV2PlanArtifact,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.created"),
+    payload: LedgerJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayloadJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3011,6 +3102,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
+  ...LedgerCommands,
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
@@ -3062,6 +3154,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  LedgerVerdictRecordCommand,
   /**
    * Internal so no client can mark a request saved without the value being
    * stored.
