@@ -613,6 +613,96 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.isUndefined(await contextOf("compact"));
   });
 
+  const fireCompactHook = async (
+    options: ReturnType<typeof ClaudeAdapterV2.makeClaudeQueryOptions>,
+    signal: AbortSignal = new AbortController().signal,
+  ) =>
+    (await options.hooks!.SessionStart![0]!.hooks[0]!(
+      {
+        hook_event_name: "SessionStart",
+        source: "compact",
+        session_id: "s",
+        transcript_path: "t",
+        cwd: "/workspace",
+      },
+      undefined,
+      { signal },
+    )) as { readonly hookSpecificOutput?: { readonly additionalContext?: string } };
+  const hookOptions = (input: {
+    readonly pinnedRules?: string;
+    readonly read: (signal: AbortSignal) => Promise<string | undefined>;
+    readonly onRejected?: (cause: unknown) => void;
+  }) =>
+    ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pin-clear",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+      ...(input.pinnedRules === undefined ? {} : { pinnedRules: input.pinnedRules }),
+      readCurrentPinnedRules: input.read,
+      ...(input.onRejected === undefined ? {} : { onPinnedRulesReadRejected: input.onRejected }),
+    });
+
+  it("withdraws earlier pinned rules when they were cleared after the session opened with some", async () => {
+    const output = await fireCompactHook(
+      hookOptions({ pinnedRules: "Rule A", read: async () => "" }),
+    );
+    const context = output.hookSpecificOutput?.additionalContext ?? "";
+    assert.include(context, "no pinned rules");
+    assert.include(context, "withdrawn");
+  });
+
+  it("adds nothing when the session opened with no rules and there are still none", async () => {
+    assert.deepEqual(await fireCompactHook(hookOptions({ read: async () => "" })), {});
+    assert.deepEqual(
+      await fireCompactHook(hookOptions({ pinnedRules: "", read: async () => "" })),
+      {},
+    );
+  });
+
+  it("keeps the earlier rules in force when the read failed", async () => {
+    assert.deepEqual(
+      await fireCompactHook(hookOptions({ pinnedRules: "Rule A", read: async () => undefined })),
+      {},
+    );
+  });
+
+  it("reports a rejected read and passes the hook signal to the reader", async () => {
+    const rejected: Array<unknown> = [];
+    const failure = new Error("interrupted");
+    assert.deepEqual(
+      await fireCompactHook(
+        hookOptions({
+          pinnedRules: "Rule A",
+          read: async () => {
+            throw failure;
+          },
+          onRejected: (cause) => rejected.push(cause),
+        }),
+      ),
+      {},
+    );
+    assert.deepEqual(rejected, [failure]);
+
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    await fireCompactHook(
+      hookOptions({
+        pinnedRules: "Rule A",
+        read: async (signal) => {
+          seen = signal;
+          return "Rule A";
+        },
+      }),
+      controller.signal,
+    );
+    assert.strictEqual(seen, controller.signal);
+  });
+
   it("registers no pinned rules hook without a reader", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {

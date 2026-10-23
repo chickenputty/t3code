@@ -1289,27 +1289,42 @@ export function claudeQueryEnvironment(
  * so after a compaction (which starts a SessionStart with source "compact") this
  * re-sends the rules as they are now, which a pin edit made mid-session needs.
  * It never throws and has a short timeout: a failed read just skips the
- * re-send, and the session-start copy still stands.
+ * re-send, and the session-start copy still stands. Rules cleared since the
+ * session opened with some are withdrawn explicitly, because the system prompt
+ * cannot be edited and would otherwise keep them in force.
  */
-export function claudePinnedRulesHook(
-  readCurrentPinnedRules: () => Promise<string | undefined>,
-): HookCallbackMatcher {
+export function claudePinnedRulesHook(input: {
+  /** Undefined means the read failed, which is not the same as cleared (""). */
+  readonly readCurrentPinnedRules: (signal: AbortSignal) => Promise<string | undefined>;
+  readonly openedWithPinnedRules: boolean;
+  readonly onReadRejected: (cause: unknown) => void;
+}): HookCallbackMatcher {
+  const context = (additionalContext: string) => ({
+    hookSpecificOutput: { hookEventName: "SessionStart" as const, additionalContext },
+  });
   return {
     matcher: "compact",
     timeout: 5,
     hooks: [
-      async (input) => {
-        if (input.hook_event_name !== "SessionStart" || input.source !== "compact") return {};
+      async (hookInput, _toolUseID, options) => {
+        if (hookInput.hook_event_name !== "SessionStart" || hookInput.source !== "compact") {
+          return {};
+        }
         try {
-          const rules = await readCurrentPinnedRules();
-          if (rules === undefined || rules === "") return {};
-          return {
-            hookSpecificOutput: {
-              hookEventName: "SessionStart",
-              additionalContext: `These are the current pinned rules. They supersede any earlier version in the system prompt.\n\n${rules}`,
-            },
-          };
-        } catch {
+          const rules = await input.readCurrentPinnedRules(options.signal);
+          if (rules === undefined) return {};
+          if (rules === "") {
+            return input.openedWithPinnedRules
+              ? context(
+                  "There are no pinned rules now. Any earlier pinned rules in the system prompt are withdrawn.",
+                )
+              : {};
+          }
+          return context(
+            `These are the current pinned rules. They supersede any earlier version in the system prompt.\n\n${rules}`,
+          );
+        } catch (cause) {
+          input.onReadRejected(cause);
           return {};
         }
       },
@@ -1348,7 +1363,9 @@ export function makeClaudeQueryOptions(input: {
    * compaction; resolves undefined when the read failed. Replacing the live
    * process instead would fail while background work runs.
    */
-  readonly readCurrentPinnedRules?: () => Promise<string | undefined>;
+  readonly readCurrentPinnedRules?: (signal: AbortSignal) => Promise<string | undefined>;
+  /** Called when the read rejects (a defect or interruption), so it is not lost. */
+  readonly onPinnedRulesReadRejected?: (cause: unknown) => void;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1450,7 +1467,17 @@ export function makeClaudeQueryOptions(input: {
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
     ...(input.readCurrentPinnedRules === undefined
       ? {}
-      : { hooks: { SessionStart: [claudePinnedRulesHook(input.readCurrentPinnedRules)] } }),
+      : {
+          hooks: {
+            SessionStart: [
+              claudePinnedRulesHook({
+                readCurrentPinnedRules: input.readCurrentPinnedRules,
+                openedWithPinnedRules: (input.pinnedRules ?? "") !== "",
+                onReadRejected: input.onPinnedRulesReadRejected ?? (() => {}),
+              }),
+            ],
+          },
+        }),
   };
   const additionalDirectories = [
     ...(input.cwd === null ? [] : [input.cwd]),
@@ -9365,7 +9392,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(readPinnedRules === undefined
               ? {}
               : {
-                  readCurrentPinnedRules: () => runPromise(readPinnedRules),
+                  // The signal interrupts a read that hangs past the hook timeout.
+                  readCurrentPinnedRules: (signal: AbortSignal) =>
+                    runPromise(readPinnedRules, { signal }),
+                  onPinnedRulesReadRejected: (cause: unknown) => {
+                    void runPromise(
+                      Effect.logWarning("Pinned rules read failed in the compact hook.", {
+                        cause,
+                      }),
+                    );
+                  },
                 }),
           });
           const querySession = yield* queryRunner
