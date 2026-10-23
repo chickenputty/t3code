@@ -182,6 +182,9 @@ describe("applyOrchestrationV2ProjectionEvent ledger", () => {
       closedAt: later,
     };
     expect(projected?.ledger).toEqual(expected);
+    // Events occurred later than the projection, yet ledger edits are not activity.
+    expect(projected?.updatedAt).toEqual(emptyProjection.updatedAt);
+    expect(projected?.thread.updatedAt).toEqual(emptyProjection.thread.updatedAt);
   });
 
   it("leaves a thread without a ledger unchanged by events it has no ledger for", () => {

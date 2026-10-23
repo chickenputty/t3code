@@ -950,7 +950,7 @@ export function applyToProjection(
     case "ledger.checkpoint.updated":
     case "ledger.closed":
     case "ledger.reopened": {
-      // Like pull-request syncs, ledger edits leave the thread's activity timestamps alone.
+      // Ledger edits are not thread activity, so the thread and projection timestamps stay put.
       const ledger = applyLedgerEvent(projection.ledger, event);
       return ledger === undefined ? projection : { ...projection, ledger };
     }

@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -26,6 +27,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { planLedgerCommand } from "./TaskLedger.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -693,5 +695,53 @@ it.effect("keeps a cheap open item count in step with the ledger, through a rebu
 
     assert.isTrue((yield* maintenance.rebuild).valid);
     assert.equal(yield* count(), 1);
+
+    // A ledger only closes with nothing unfinished, so closing reads 0 and reopening the ledger
+    // keeps that; reopening an item then brings the count back.
+    yield* updateItem(threadId, "c", { status: "closed", evidence: "done" });
+    yield* closeLedger(threadId);
+    assert.equal(yield* count(), 0);
+    yield* reopenLedger(threadId);
+    assert.equal(yield* count(), 0);
+    yield* updateItem(threadId, "c", { status: "open" });
+    assert.equal(yield* count(), 1);
+
+    // Replacing a closed ledger counts only the new ledger's items.
+    yield* updateItem(threadId, "c", { status: "closed", evidence: "done" });
+    yield* closeLedger(threadId);
+    yield* createLedger(threadId, { id: LedgerId.make("ledger:replacement"), items: ["x", "y"] });
+    assert.equal(yield* count(), 2);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.equal(yield* count(), 2);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "rejects a one-step close under the judge gate because new evidence clears the verdict",
+  () =>
+    Effect.gen(function* () {
+      const threadId = yield* createThread("judge-one-step");
+      yield* createLedger(threadId, { items: ["a"] });
+      yield* updateItem(threadId, "a", { status: "in_progress", evidence: "first run" });
+      yield* recordVerdict(threadId, "a", "pass");
+      yield* updateItem(threadId, "a", { status: "open" });
+      // Un-starting keeps the evidence and the verdict that judged it.
+      assert.equal(itemOf(yield* ledgerOf(threadId), "a")?.verdict?.outcome, "pass");
+      const result = planLedgerCommand({
+        command: {
+          type: "ledger.item.update",
+          commandId: nextCommandId(),
+          threadId,
+          ledgerId,
+          itemId: itemId("a"),
+          status: "closed",
+          evidence: "a second run",
+        },
+        ledger: yield* ledgerOf(threadId),
+        now: yield* DateTime.now,
+        requiresJudge: true,
+      });
+      assert.isTrue(Result.isFailure(result));
+      assert.include(Result.isFailure(result) ? result.failure : "", "passing judge verdict");
+    }).pipe(Effect.provide(layerTest)),
 );
