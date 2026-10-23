@@ -19,6 +19,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useThreadRulePins } from "~/hooks/useThreadRulePins";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -894,6 +895,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
+  const rulePins = useThreadRulePins(citationThreadRef);
   const sharedState: TimelineRowSharedState = {
     citationRequest: readyCitationRequest,
     listRef,
@@ -906,6 +908,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     skills,
     runs,
     activeThreadEnvironmentId,
+    rulePins,
     onRevertToTurnCount,
     onRunShellCommand,
     findActive,

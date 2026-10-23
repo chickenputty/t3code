@@ -436,6 +436,17 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /**
+   * User-authored rules that must survive context compaction verbatim. Only
+   * adapters declaring `context.deliversPinnedRules` act on it.
+   */
+  readonly pinnedRules?: string;
+  /**
+   * Re-reads the current pinned rules, for a provider that can apply an edit
+   * mid-session. Resolves undefined when the settings cannot be read (already
+   * logged), so a failed read is distinct from "no rules" and never throws.
+   */
+  readonly readPinnedRules?: Effect.Effect<string | undefined>;
 }
 
 export interface ProviderAdapterV2SteerInput {

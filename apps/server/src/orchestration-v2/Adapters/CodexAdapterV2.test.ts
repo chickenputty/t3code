@@ -1,4 +1,5 @@
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { composePinnedRules } from "../threadRulePins.ts";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -201,6 +202,39 @@ describe("CodexAdapterV2 runtime policy", () => {
         value: "Filtered to overdue",
       });
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+    }),
+  );
+
+  it.effect("sends pinned rules as trusted context without the T3 MCP", () =>
+    Effect.gen(function* () {
+      const pinnedRules = "Never touch generated/ files.\nAlways run `vp test` first.";
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-pinned-rules",
+        codexInput: [{ type: "text", text: "go" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        pinnedRules,
+        appContext: [{ key: "mcp_app_todos_item-1", text: "Filtered to overdue" }],
+      });
+      assert.deepEqual(params.additionalContext?.["pinned_rules"], {
+        kind: "application",
+        value: pinnedRules,
+      });
+      assert.equal(params.additionalContext?.["mcp_app_todos_item-1"]?.kind, "untrusted");
+      assert.isUndefined(params.additionalContext?.["t3_code_runtime"]);
+    }),
+  );
+
+  it.effect("omits pinned rules context when no rules are pinned", () =>
+    Effect.gen(function* () {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-no-pins",
+        codexInput: [{ type: "text", text: "go" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        pinnedRules: "",
+      });
+      assert.isUndefined(params.additionalContext);
     }),
   );
 });
@@ -1772,6 +1806,138 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "work",
           }),
         );
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "restores pinned rules verbatim after compaction",
+      pinnedRules: "Never touch generated/ files.\nAlways run `vp test` first.",
+      chunks: 1,
+    },
+    {
+      name: "restores chunked pinned rules in order after compaction",
+      pinnedRules: Array.from({ length: 150 }, (_, i) => `Rule ${i}: ${"z".repeat(60)}`).join("\n"),
+      chunks: 3,
+    },
+    {
+      name: "restores project rules and thread pins together, verbatim, after compaction",
+      pinnedRules: composePinnedRules({
+        projectRules: "Never touch generated/ files.",
+        threadPins: [
+          { text: "Answer in French.\nKeep `code` blocks as they are." },
+          { text: "Ask before deleting." },
+        ],
+      }),
+      chunks: 1,
+    },
+    {
+      name: "restores a long thread pin after project rules in order, across chunks",
+      pinnedRules: composePinnedRules({
+        projectRules: Array.from({ length: 60 }, (_, i) => `Rule ${i}: ${"z".repeat(60)}`).join(
+          "\n",
+        ),
+        threadPins: [
+          {
+            text: Array.from({ length: 60 }, (_, i) => `Pin line ${i}: ${"y".repeat(60)}`).join(
+              "\n",
+            ),
+          },
+          { text: "Last pin." },
+        ],
+      }),
+      chunks: 3,
+    },
+  ])("$name", ({ pinnedRules, chunks }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "pinned-thread";
+        const nativeTurnId = "pinned-turn";
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "work" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          pinnedRules,
+        });
+        // Insertion order is the order Codex emits entries, so rejoining the
+        // injected values in that order must give the original text.
+        const pinEntries = Object.entries(params.additionalContext ?? {}).filter(([key]) =>
+          key.startsWith("pinned_rules"),
+        );
+        assert.lengthOf(pinEntries, chunks);
+        assert.equal(pinEntries.map(([, entry]) => entry.value).join(""), pinnedRules);
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "restore-pinned-rules",
+          entries: [
+            ...entries.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "pinned turn",
+              frame: { id: 3, method: "turn/start", params },
+            },
+            ...entries.slice(6),
+            {
+              type: "emit_inbound",
+              label: "compacted",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: { type: "contextCompaction", id: "compact-pinned" },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "restore pinned rules",
+              frame: {
+                id: 4,
+                method: "thread/inject_items",
+                params: {
+                  threadId: nativeThreadId,
+                  items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                    type: "message",
+                    role: "developer",
+                    content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+                  })),
+                },
+              },
+            },
+            { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("pinned-attempt"),
+            text: "work",
+          }),
+          pinnedRules,
+        });
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(

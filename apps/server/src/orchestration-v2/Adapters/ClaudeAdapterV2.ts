@@ -43,6 +43,7 @@ import {
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
+  type HookCallbackMatcher,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -427,6 +428,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
+    deliversPinnedRules: true,
   },
   checkpointing: {
     appCanCheckpointFilesystem: true,
@@ -1282,6 +1284,61 @@ export function claudeQueryEnvironment(
   return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
+/**
+ * The adapter's only SDK hook. The system prompt is fixed when the CLI opens,
+ * so after a compaction (which starts a SessionStart with source "compact") this
+ * re-sends the rules as they are now, which a pin edit made mid-session needs.
+ * It never throws and has a short timeout: a failed read just skips the
+ * re-send, and the session-start copy still stands. Rules cleared since the
+ * session opened with some are withdrawn explicitly, because the system prompt
+ * cannot be edited and would otherwise keep them in force. So are rules that
+ * only this hook ever delivered (a session that opened with none, then got
+ * pins that a compaction re-sent): the sent copy sits in the conversation, and
+ * clearing the pins must retract it.
+ */
+export function claudePinnedRulesHook(input: {
+  /** Undefined means the read failed, which is not the same as cleared (""). */
+  readonly readCurrentPinnedRules: (signal: AbortSignal) => Promise<string | undefined>;
+  readonly openedWithPinnedRules: boolean;
+  readonly onReadRejected: (cause: unknown) => void;
+}): HookCallbackMatcher {
+  const context = (additionalContext: string) => ({
+    hookSpecificOutput: { hookEventName: "SessionStart" as const, additionalContext },
+  });
+  // Sticky on purpose: a later compaction may summarize the copy away, but the
+  // summary can still carry its gist, so every later clear withdraws again.
+  let deliveredByHook = false;
+  return {
+    matcher: "compact",
+    timeout: 5,
+    hooks: [
+      async (hookInput, _toolUseID, options) => {
+        if (hookInput.hook_event_name !== "SessionStart" || hookInput.source !== "compact") {
+          return {};
+        }
+        try {
+          const rules = await input.readCurrentPinnedRules(options.signal);
+          if (rules === undefined) return {};
+          if (rules === "") {
+            return input.openedWithPinnedRules || deliveredByHook
+              ? context(
+                  "There are no pinned rules now. Any earlier pinned rules, in the system prompt or re-sent after a compaction, are withdrawn.",
+                )
+              : {};
+          }
+          deliveredByHook = true;
+          return context(
+            `These are the current pinned rules. They supersede any earlier version in the system prompt.\n\n${rules}`,
+          );
+        } catch (cause) {
+          input.onReadRejected(cause);
+          return {};
+        }
+      },
+    ],
+  };
+}
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
@@ -1302,6 +1359,20 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /**
+   * The system prompt sits outside the transcript Claude summarizes, so rules
+   * appended here survive every compaction. It is fixed when the CLI process
+   * opens, so it carries the rules as of session start.
+   */
+  readonly pinnedRules?: string;
+  /**
+   * Reads the current rules so an edit reaches a live session at its next
+   * compaction; resolves undefined when the read failed. Replacing the live
+   * process instead would fail while background work runs.
+   */
+  readonly readCurrentPinnedRules?: (signal: AbortSignal) => Promise<string | undefined>;
+  /** Called when the read rejects (a defect or interruption), so it is not lost. */
+  readonly onPinnedRulesReadRejected?: (cause: unknown) => void;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1396,10 +1467,24 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        ...(input.pinnedRules === undefined || input.pinnedRules === "" ? [] : [input.pinnedRules]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
+    ...(input.readCurrentPinnedRules === undefined
+      ? {}
+      : {
+          hooks: {
+            SessionStart: [
+              claudePinnedRulesHook({
+                readCurrentPinnedRules: input.readCurrentPinnedRules,
+                openedWithPinnedRules: (input.pinnedRules ?? "") !== "",
+                onReadRejected: input.onPinnedRulesReadRejected ?? (() => {}),
+              }),
+            ],
+          },
+        }),
   };
   const additionalDirectories = [
     ...(input.cwd === null ? [] : [input.cwd]),
@@ -9277,6 +9362,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const readPinnedRules = turnInput.readPinnedRules;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9309,6 +9395,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(turnInput.pinnedRules === undefined ? {} : { pinnedRules: turnInput.pinnedRules }),
+            ...(readPinnedRules === undefined
+              ? {}
+              : {
+                  // The signal interrupts a read that hangs past the hook timeout.
+                  readCurrentPinnedRules: (signal: AbortSignal) =>
+                    runPromise(readPinnedRules, { signal }),
+                  onPinnedRulesReadRejected: (cause: unknown) => {
+                    void runPromise(
+                      Effect.logWarning("Pinned rules read failed in the compact hook.", {
+                        cause,
+                      }),
+                    );
+                  },
+                }),
           });
           const querySession = yield* queryRunner
             .open({

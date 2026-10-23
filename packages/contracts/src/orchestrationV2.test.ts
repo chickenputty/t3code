@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThread,
+  OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -14,6 +16,8 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  THREAD_RULE_PIN_TEXT_MAX_LENGTH,
+  ThreadRulePin,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -32,6 +36,68 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
+
+describe("thread rule pins", () => {
+  const pin = {
+    id: "pin-1",
+    text: "Never touch generated/ files.",
+    sourceMessageId: null,
+    createdAt: "2026-04-20T00:00:00.000Z",
+  };
+  const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+
+  it("is an optional thread field, so snapshots from before pins still decode", () => {
+    const decodeField = Schema.decodeUnknownSync(
+      Schema.Struct({ rulePins: OrchestrationV2AppThread.fields.rulePins }),
+    );
+    expect(decodeField({})).toEqual({});
+    expect(decodeField({ rulePins: [pin] }).rulePins).toEqual([pin]);
+  });
+
+  it("rejects over-cap text on the commands instead of truncating it", () => {
+    const base = { commandId: "command-1", threadId: "thread-1", pinId: "pin-1" };
+    const over = "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH + 1);
+    expect(
+      decodeCommand({
+        ...base,
+        type: "thread.rule-pin.add",
+        text: "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH),
+      }).type,
+    ).toBe("thread.rule-pin.add");
+    expect(() => decodeCommand({ ...base, type: "thread.rule-pin.add", text: over })).toThrow();
+    expect(() => decodeCommand({ ...base, type: "thread.rule-pin.edit", text: over })).toThrow();
+  });
+
+  it("still decodes a stored pin longer than today's cap, so lowering it cannot break replay", () => {
+    const decodePin = Schema.decodeUnknownSync(ThreadRulePin);
+    const over = "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH * 2);
+    expect(decodePin({ ...pin, text: over }).text).toBe(over);
+  });
+
+  it("decodes the add, edit, and remove commands", () => {
+    const base = { commandId: "command-1", threadId: "thread-1" };
+    expect(
+      decodeCommand({ ...base, type: "thread.rule-pin.add", pinId: "pin-1", text: "Be terse." }),
+    ).toMatchObject({ type: "thread.rule-pin.add", pinId: "pin-1" });
+    expect(
+      decodeCommand({
+        ...base,
+        type: "thread.rule-pin.add",
+        pinId: "pin-2",
+        sourceMessageId: "message-1",
+      }),
+    ).toMatchObject({ sourceMessageId: "message-1" });
+    expect(
+      decodeCommand({ ...base, type: "thread.rule-pin.edit", pinId: "pin-1", text: "Be brief." }),
+    ).toMatchObject({ type: "thread.rule-pin.edit" });
+    expect(
+      decodeCommand({ ...base, type: "thread.rule-pin.remove", pinId: "pin-1" }),
+    ).toMatchObject({ type: "thread.rule-pin.remove" });
+    expect(() =>
+      decodeCommand({ ...base, type: "thread.rule-pin.edit", pinId: "pin-1", text: "  " }),
+    ).toThrow();
+  });
+});
 
 describe("orchestration V2 contracts", () => {
   it("decodes thread event types from a newer server as skippable items", () => {
@@ -281,6 +347,7 @@ describe("orchestration V2 contracts", () => {
         supportsDeltaHandoff: true,
         supportsFullThreadHandoff: true,
         maxRecommendedHandoffChars: null,
+        deliversPinnedRules: false,
       },
       checkpointing: {
         appCanCheckpointFilesystem: true,

@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
   ChatAttachmentId,
@@ -18,12 +18,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProjectId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   ServerSettingsError,
   ThreadId,
+  type ThreadRulePin,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -899,6 +901,253 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     ),
   ),
 );
+
+it.effect("passes the project's pinned rules to the provider turn", () =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const started = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2TurnInput>();
+    const threadId = ThreadId.make("thread:run-execution-pinned-rules");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const attemptId = RunAttemptId.make("attempt:run-execution-pinned-rules");
+    const session = {
+      events: Stream.never,
+      startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        Deferred.succeed(started, input),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+
+    yield* runExecution.startRootRun({
+      commandId: CommandId.make("command:run-execution-pinned-rules"),
+      appThread: {
+        id: threadId,
+        projectId: ProjectId.make("project:pinned"),
+      } as OrchestrationV2AppThread,
+      providerSessionId: ProviderSessionId.make("session:run-execution-pinned-rules"),
+      session,
+      run: {
+        id: RunId.make("run:run-execution-pinned-rules"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+      } as OrchestrationV2Run,
+      rootNode: {
+        id: NodeId.make("node:run-execution-pinned-rules"),
+      } as OrchestrationV2ExecutionNode,
+      checkpointScope: {
+        id: CheckpointScopeId.make("checkpoint-scope:run-execution-pinned-rules"),
+      } as OrchestrationV2CheckpointScope,
+      providerThread: {
+        id: ProviderThreadId.make("provider-thread:run-execution-pinned-rules"),
+        driver,
+      } as OrchestrationV2ProviderThread,
+      attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+      attemptId,
+      providerTurnOrdinal: 1,
+      message: {
+        messageId: MessageId.make("message:run-execution-pinned-rules"),
+        text: "go",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: process.cwd() },
+    });
+
+    const input = yield* Deferred.await(started);
+    assert.equal(input.pinnedRules, "Never touch generated/ files.");
+    assert.equal(yield* input.readPinnedRules!, "Never touch generated/ files.");
+  }).pipe(
+    Effect.provide(
+      RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            McpAppModelContext.layerEmpty,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            layerTurnItemPositionsTest,
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest({
+              projectSettingsOverrides: {
+                [ProjectId.make("project:pinned")]: {
+                  pinnedRules: "Never touch generated/ files.",
+                },
+              },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+describe("thread rule pins", () => {
+  const startWithThreadPins = (input: {
+    readonly name: string;
+    readonly projectRules?: string;
+    readonly appThreadPins?: ReadonlyArray<ThreadRulePin>;
+    readonly readThreadPins?: () => Effect.Effect<ReadonlyArray<ThreadRulePin>, unknown>;
+  }) =>
+    Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      const started = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2TurnInput>();
+      const threadId = ThreadId.make(`thread:${input.name}`);
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const attemptId = RunAttemptId.make(`attempt:${input.name}`);
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:${input.name}`),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("project:pinned"),
+          ...(input.appThreadPins === undefined ? {} : { rulePins: input.appThreadPins }),
+        } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make(`session:${input.name}`),
+        session: {
+          events: Stream.never,
+          startTurn: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Deferred.succeed(started, turn),
+        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        run: {
+          id: RunId.make(`run:${input.name}`),
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: { id: NodeId.make(`node:${input.name}`) } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint-scope:${input.name}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ProviderThreadId.make(`provider-thread:${input.name}`),
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        ...(input.readThreadPins === undefined ? {} : { readThreadPins: input.readThreadPins }),
+        message: {
+          messageId: MessageId.make(`message:${input.name}`),
+          text: "go",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        },
+      });
+      return yield* Deferred.await(started);
+    }).pipe(
+      Effect.provide(
+        RunExecutionService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              McpAppModelContext.layerEmpty,
+              Layer.mock(CheckpointService.CheckpointServiceV2)({
+                captureBaseline: () => Effect.void,
+              }),
+              layerTurnItemPositionsTest,
+              Layer.mock(EventSink.EventSinkV2)({}),
+              IdAllocator.layer,
+              Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+                ingestNormalized: () => Effect.succeed([]),
+              }),
+              ServerSettings.layerTest({
+                projectSettingsOverrides: {
+                  [ProjectId.make("project:pinned")]: {
+                    pinnedRules: input.projectRules ?? "",
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  const pin = (id: string, text: string): ThreadRulePin => ({
+    id,
+    text,
+    sourceMessageId: null,
+    createdAt: "2026-10-23T00:00:00.000Z",
+  });
+
+  it.effect("delivers project rules, then the thread's pins in order, under headings", () =>
+    Effect.gen(function* () {
+      const turn = yield* startWithThreadPins({
+        name: "run-execution-thread-pins",
+        projectRules: "Never touch generated/ files.",
+        appThreadPins: [pin("p1", "Answer in French."), pin("p2", "Keep it short.")],
+      });
+      const expected = [
+        "## Project pinned rules",
+        "",
+        "Never touch generated/ files.",
+        "",
+        "## Thread pinned rules",
+        "",
+        "Answer in French.",
+        "",
+        "---",
+        "",
+        "Keep it short.",
+      ].join("\n");
+      assert.equal(turn.pinnedRules, expected);
+      assert.equal(yield* turn.readPinnedRules!, expected);
+    }),
+  );
+
+  it.effect("delivers thread pins alone when the project has no rules", () =>
+    Effect.gen(function* () {
+      const turn = yield* startWithThreadPins({
+        name: "run-execution-thread-pins-only",
+        appThreadPins: [pin("p1", "Answer in French.")],
+      });
+      assert.equal(turn.pinnedRules, "## Thread pinned rules\n\nAnswer in French.");
+    }),
+  );
+
+  it.effect(
+    "re-reads the thread's current pins each time the hook asks, and when all are cleared",
+    () =>
+      Effect.gen(function* () {
+        const current = yield* Ref.make<ReadonlyArray<ThreadRulePin>>([pin("p1", "First")]);
+        const turn = yield* startWithThreadPins({
+          name: "run-execution-thread-pins-live",
+          projectRules: "Project rule.",
+          readThreadPins: () => Ref.get(current),
+        });
+        assert.include(turn.pinnedRules ?? "", "First");
+        yield* Ref.set(current, [pin("p1", "First, edited"), pin("p2", "Second")]);
+        const edited = (yield* turn.readPinnedRules!) ?? "";
+        assert.include(edited, "First, edited");
+        assert.notInclude(edited, "First\n");
+        assert.include(edited, "Second");
+        yield* Ref.set(current, []);
+        assert.equal(yield* turn.readPinnedRules!, "Project rule.");
+      }),
+  );
+
+  it.effect(
+    "reports a failed pin read as unreadable, not as cleared, and still starts the turn",
+    () =>
+      Effect.gen(function* () {
+        const turn = yield* startWithThreadPins({
+          name: "run-execution-thread-pins-unreadable",
+          projectRules: "Project rule.",
+          readThreadPins: () => Effect.fail("database unavailable"),
+        });
+        assert.isUndefined(turn.pinnedRules);
+        assert.isUndefined(yield* turn.readPinnedRules!);
+      }),
+  );
+});
 
 it.effect("fails the run when its ownership check cannot be read before calling the provider", () =>
   Effect.gen(function* () {

@@ -109,6 +109,32 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("applies thread rule pins from a thread event and clears them when the list empties", () => {
+    const pins = [
+      {
+        id: "pin-1",
+        text: "Never touch generated/ files.",
+        sourceMessageId: null,
+        createdAt: "2026-10-23T00:00:00.000Z",
+      },
+    ];
+    const event = (id: string, rulePins: typeof pins): OrchestrationV2DomainEvent => ({
+      id: id as OrchestrationV2DomainEvent["id"],
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...emptyProjection.thread, rulePins },
+    });
+    const withPins = applyOrchestrationV2ProjectionEvent(
+      emptyProjection,
+      event("pins-added", pins),
+    );
+    expect(withPins?.thread.rulePins).toEqual(pins);
+    const cleared = applyOrchestrationV2ProjectionEvent(withPins, event("pins-removed", []));
+    expect(cleared?.thread.rulePins).toEqual([]);
+    expect(cleared?.runs).toBe(emptyProjection.runs);
+  });
+
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",

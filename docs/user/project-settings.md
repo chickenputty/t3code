@@ -168,6 +168,20 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Pinned rules
+
+Pinned rules are instructions you want an agent to keep following in a long thread, such as "never edit files under `generated/`" or "run the tests before saying a task is done". When a thread's context is compacted, T3 Code gives the agent your rules again word for word, instead of leaving them to the summary.
+
+Write them in **Settings → General → Pinned rules**. With a project selected, the rules apply to that project's threads only; otherwise they apply to every project on the environment, and a project's own rules replace them.
+
+Pinned rules work with Claude and Codex threads. Other providers ignore them.
+
+An edit reaches a Codex thread on its next message. A Claude thread picks it up the next time its context is compacted or a new session starts. Neither interrupts a turn that is already running.
+
+### Pinned rules for one thread
+
+A single thread can have its own pins too, for something that matters in that conversation only. Use the pin button under a message to pin its text, or open the thread's **Overview** tab to add, edit, or unpin rules. A thread's pins are sent after the project's rules and follow the same delivery. Pinning a message keeps a copy of its text, so editing or reverting the message later does not change the pin.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,

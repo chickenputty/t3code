@@ -22,6 +22,7 @@ import {
   type ProviderTurnId,
   type RunAttemptId,
   type ThreadId,
+  type ThreadRulePin,
   type TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -51,6 +52,7 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { composePinnedRules } from "./threadRulePins.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 export interface ProviderEventRoutingState {
@@ -573,6 +575,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  /** Current thread pins; absent means `appThread.rulePins` as of turn start. */
+  readonly readThreadPins?: () => Effect.Effect<ReadonlyArray<ThreadRulePin>, unknown>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1573,6 +1577,32 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
+        // The project's rules, then the thread's pins, re-read on every call so
+        // a Claude compact hook sees edits made after the session opened. When
+        // the caller cannot re-read the thread, the pins it started with stand.
+        const readPinnedRules = Effect.gen(function* () {
+          const settings = yield* serverSettings.getSettings;
+          const threadPins =
+            input.readThreadPins === undefined
+              ? (input.appThread.rulePins ?? [])
+              : yield* input.readThreadPins();
+          return composePinnedRules({
+            projectRules: resolveProjectSettings(settings, input.appThread.projectId).settings
+              .pinnedRules,
+            threadPins,
+          });
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to read pinned rules.", { cause }).pipe(
+              Effect.as<string | undefined>(undefined),
+            ),
+          ),
+        );
+        // A settings read failure must not fail the turn. Codex re-sends the
+        // rules on the next turn. A Claude session opened by this turn has no
+        // pins until its compact hook runs or the session restarts, because
+        // the system prompt is fixed at open.
+        const pinnedRules = (yield* readPinnedRules) ?? "";
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -1594,6 +1624,8 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(pinnedRules === "" ? {} : { pinnedRules }),
+          readPinnedRules,
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.

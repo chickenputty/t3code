@@ -93,6 +93,62 @@ describe("sameThreadStructure", () => {
   });
 });
 
+describe("rulePinsAtom", () => {
+  const ref = { environmentId: EnvironmentId.make("env"), threadId: v2ThreadId };
+  const pin = (id: string, text: string) => ({
+    id,
+    text,
+    sourceMessageId: null,
+    createdAt: "2026-10-23T00:00:00.000Z",
+  });
+
+  it("is empty for a thread from a server without rule pins", () => {
+    const state = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(v2Projection) }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const registry = AtomRegistry.make();
+    expect(registry.get(details.rulePinsAtom(ref))).toEqual([]);
+    registry.dispose();
+  });
+
+  it("keeps its identity through thread updates that leave the pins alone, and follows edits", () => {
+    const first = [pin("p1", "One")];
+    const projection = { ...v2Projection, thread: { ...v2Projection.thread, rulePins: first } };
+    const state = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(projection) }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(details.rulePinsAtom(ref));
+    const before = registry.get(details.rulePinsAtom(ref));
+    expect(before).toEqual(first);
+
+    // A rename delivers a whole new thread payload with decoded-again pins.
+    const renamed = {
+      ...projection,
+      thread: { ...projection.thread, title: "Renamed", rulePins: [pin("p1", "One")] },
+    };
+    registry.set(
+      state,
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(renamed) }),
+    );
+    expect(registry.get(details.rulePinsAtom(ref))).toBe(before);
+
+    const edited = {
+      ...renamed,
+      thread: { ...renamed.thread, rulePins: [pin("p1", "One, edited")] },
+    };
+    registry.set(
+      state,
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(edited) }),
+    );
+    expect(registry.get(details.rulePinsAtom(ref))).toEqual([pin("p1", "One, edited")]);
+    unmount();
+    registry.dispose();
+  });
+});
+
 describe("lastVisitedAtAtom", () => {
   it("follows a visit mark the quiet thread holds through", () => {
     const projection = withItem(assistant);

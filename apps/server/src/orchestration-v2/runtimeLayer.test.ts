@@ -5422,6 +5422,248 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
   );
 });
 
+it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread rule pins", (it) => {
+  const createThread = Effect.fn("test.createRulePinThread")(function* (name: string) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projects = yield* ProjectService.ProjectService;
+    const threadId = ThreadId.make(name);
+    const projectId = ProjectId.make(`${name}-project`);
+    yield* projects.create({
+      commandId: CommandId.make(`${name}-project-create`),
+      projectId,
+      title: "Rule pins",
+      workspaceRoot: `/tmp/${name}`,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}-create`),
+      threadId,
+      projectId,
+      title: "Rule pins",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    });
+    return threadId;
+  });
+
+  it.effect("adds, edits and removes pins, copying a pinned message's text", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* createThread("rule-pins-crud");
+      const messageId = MessageId.make("rule-pins-crud-message");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("rule-pins-crud-message"),
+        threadId,
+        messageId,
+        text: "Always answer in French.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(before.thread.rulePins);
+
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-crud-add-text"),
+        threadId,
+        pinId: "pin-text",
+        text: "Keep answers short.",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-crud-add-message"),
+        threadId,
+        pinId: "pin-message",
+        sourceMessageId: messageId,
+      });
+      const added = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepEqual(
+        added.rulePins?.map((pin) => [pin.id, pin.text, pin.sourceMessageId]),
+        [
+          ["pin-text", "Keep answers short.", null],
+          ["pin-message", "Always answer in French.", messageId],
+        ],
+      );
+      assert.deepEqual(
+        added.updatedAt,
+        before.thread.updatedAt,
+        "pinning is not thread activity, so it must not re-sort the thread",
+      );
+      const events = yield* sql<{ event_type: string }>`
+        SELECT event_type FROM orchestration_events
+        WHERE stream_id = ${threadId} AND command_id LIKE 'rule-pins-crud-add-%'
+        ORDER BY sequence
+      `;
+      assert.deepEqual(
+        events.map((row) => row.event_type),
+        ["thread.metadata-updated", "thread.metadata-updated"],
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.edit",
+        commandId: CommandId.make("rule-pins-crud-edit"),
+        threadId,
+        pinId: "pin-text",
+        text: "Keep answers under three lines.",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.remove",
+        commandId: CommandId.make("rule-pins-crud-remove"),
+        threadId,
+        pinId: "pin-message",
+      });
+      const after = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepEqual(
+        after.rulePins?.map((pin) => [pin.id, pin.text]),
+        [["pin-text", "Keep answers under three lines."]],
+      );
+    }),
+  );
+
+  it.effect("rejects an unknown thread, an unknown pin, and bad adds", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* createThread("rule-pins-reject");
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-reject-add"),
+        threadId,
+        pinId: "pin-1",
+        text: "One",
+      });
+      const rejects = (command: Parameters<typeof orchestrator.dispatch>[0]) =>
+        orchestrator.dispatch(command).pipe(Effect.flip);
+      // A client retry after a lost reply carries a new command id, same pin:
+      // it succeeds and leaves the list as it was.
+      const beforeRetry = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-reject-add-retry"),
+        threadId,
+        pinId: "pin-1",
+        text: "One",
+      });
+      const afterRetry = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepEqual(afterRetry.rulePins, beforeRetry.rulePins);
+      assert.deepEqual(afterRetry.updatedAt, beforeRetry.updatedAt);
+      // Likewise a retried remove of a pin that is already gone.
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.remove",
+        commandId: CommandId.make("rule-pins-reject-remove-gone"),
+        threadId,
+        pinId: "missing",
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins,
+        beforeRetry.rulePins,
+      );
+
+      const unknownThread = yield* rejects({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-reject-no-thread"),
+        threadId: ThreadId.make("rule-pins-no-such-thread"),
+        pinId: "pin-1",
+        text: "One",
+      });
+      assert.include(
+        ["OrchestratorDispatchError", "OrchestratorProjectionError"],
+        unknownThread._tag,
+      );
+      for (const command of [
+        {
+          type: "thread.rule-pin.edit",
+          commandId: CommandId.make("rule-pins-reject-edit"),
+          threadId,
+          pinId: "missing",
+          text: "x",
+        },
+        {
+          type: "thread.rule-pin.add",
+          commandId: CommandId.make("rule-pins-reject-duplicate"),
+          threadId,
+          pinId: "pin-1",
+          text: "Again",
+        },
+        {
+          type: "thread.rule-pin.add",
+          commandId: CommandId.make("rule-pins-reject-missing-message"),
+          threadId,
+          pinId: "pin-2",
+          sourceMessageId: MessageId.make("no-such-message"),
+        },
+      ] as const) {
+        assert.instanceOf(yield* rejects(command), Orchestrator.OrchestratorDispatchError);
+      }
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins?.map((pin) => pin.id),
+        ["pin-1"],
+      );
+    }),
+  );
+
+  it.effect("keeps pins through a projection rebuild and event compaction", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const threadId = yield* createThread("rule-pins-replay");
+      for (const [pinId, text] of [
+        ["pin-1", "First"],
+        ["pin-2", "Second"],
+        ["pin-3", "Third"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.rule-pin.add",
+          commandId: CommandId.make(`rule-pins-replay-add-${pinId}`),
+          threadId,
+          pinId,
+          text,
+        });
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.edit",
+        commandId: CommandId.make("rule-pins-replay-edit"),
+        threadId,
+        pinId: "pin-2",
+        text: "Second, reworded",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.remove",
+        commandId: CommandId.make("rule-pins-replay-remove"),
+        threadId,
+        pinId: "pin-1",
+      });
+      const expected = (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins;
+      assert.deepEqual(
+        expected?.map((pin) => pin.text),
+        ["Second, reworded", "Third"],
+      );
+
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins,
+        expected,
+      );
+
+      yield* maintenance.compactEventStore;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins,
+        expected,
+      );
+    }),
+  );
+});
+
 it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", (it) => {
   it.effect("persists only the changed PR link and replays it without losing other links", () =>
     Effect.gen(function* () {

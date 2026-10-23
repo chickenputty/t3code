@@ -5,8 +5,6 @@
  * Nothing mounts while the Chat tab is shown.
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
-
 import { Spinner } from "~/components/ui/spinner";
 import { buildInspectorModel, type InspectorModel } from "~/components/views/inspectorModel";
 import { useMinuteClock, useViewRow } from "~/components/views/useViewRows";
@@ -18,6 +16,7 @@ import { useThreadProjection } from "~/state/entities";
 import { ThreadActivityTab } from "./ThreadActivityTab";
 import { ThreadFilesTab } from "./ThreadFilesTab";
 import { ThreadOverviewTab } from "./ThreadOverviewTab";
+import { ThreadRulePinsSection } from "./ThreadRulePinsSection";
 import { type ThreadPaneTab, useShownThreadPaneTab } from "./threadPaneTabStore";
 import { ThreadUsageTab } from "./ThreadUsageTab";
 
@@ -54,7 +53,7 @@ function PaneTabContent({
   threadRef: ScopedThreadRef;
 }) {
   const thread = useThreadProjection(threadRef);
-  const model = useMemo(() => (thread ? buildInspectorModel(thread.projection) : null), [thread]);
+  const model = thread ? buildInspectorModel(thread.projection) : null;
   const nowMs = useMinuteClock();
   if (tab === "overview") return <PaneOverview threadRef={threadRef} model={model} />;
   if (model === null) return <PaneLoading />;
@@ -79,10 +78,7 @@ function PaneOverview({
   const categories = useThreadCategories();
   const { row, nowMs, archivedLoading } = useViewRow(threadRef, categories);
   const ops = useViewThreadOps();
-  const onAction = useCallback(
-    (target: ViewRow, action: ViewBulkAction) => void ops.runBulk([target], action),
-    [ops],
-  );
+  const onAction = (target: ViewRow, action: ViewBulkAction) => void ops.runBulk([target], action);
   if (row === null) {
     return archivedLoading ? (
       <PaneLoading />
@@ -90,7 +86,12 @@ function PaneOverview({
       <p className="text-muted-foreground text-sm">This thread is not loaded.</p>
     );
   }
-  return <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />;
+  return (
+    <div className="flex flex-col gap-6">
+      <ThreadRulePinsSection threadRef={threadRef} />
+      <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />
+    </div>
+  );
 }
 
 function PaneLoading() {

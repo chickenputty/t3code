@@ -117,6 +117,15 @@ export function collectComposerContextReferences(
   return occurrences;
 }
 
+/**
+ * Text that still carries context syntax after references were replaced by
+ * their labels: a link that did not parse, or a legacy envelope. Prose that
+ * merely mentions the protocol name is not matched.
+ */
+export function hasUnresolvedComposerContext(text: string): boolean {
+  return text.includes(`](${COMPOSER_CONTEXT_HREF_PREFIX}`) || text.includes("<t3_context>");
+}
+
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 
