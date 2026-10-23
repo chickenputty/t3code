@@ -13,6 +13,7 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as LedgerAutoContinue from "./LedgerAutoContinue.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessions from "./ProviderSessionManager.ts";
 import * as ProviderTurnControl from "./ProviderTurnControlService.ts";
@@ -84,6 +85,13 @@ it.effect.each([
     Layer.provide(
       Layer.mergeAll(
         finalization,
+        Layer.succeed(LedgerAutoContinue.LedgerAutoContinue, {
+          afterRun: (input) =>
+            Effect.sync(() => {
+              assert.deepEqual(input, { threadId, runId });
+              calls.push("ledger");
+            }),
+        }),
         Layer.mock(ProviderSessions.ProviderSessionManagerV2)({}),
         Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
         Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
@@ -125,7 +133,7 @@ it.effect.each([
     assert.equal(captured.attemptCount, 1);
     assert.equal(started.status, captureFails ? "pending" : "succeeded");
     assert.equal(started.attemptCount, captureFails ? 0 : 1);
-    assert.deepEqual(calls, captureFails ? ["capture"] : ["capture", "refresh", "start"]);
+    assert.deepEqual(calls, captureFails ? ["capture"] : ["capture", "refresh", "ledger", "start"]);
     if (captureFails) assert.include(captured.lastError ?? "", "checkpoint storage unavailable");
     else assert.equal(captured.lastError, null);
   }).pipe(Effect.provide(Layer.fresh(worker)));

@@ -43,6 +43,7 @@ import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as LedgerAutoContinue from "./LedgerAutoContinue.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -310,6 +311,11 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,
+      LedgerAutoContinue.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(layerOrchestratorProvided, layerEventSinkProvided, IdAllocator.layer),
+        ),
+      ),
       layerCheckpointRollbackServiceProvided,
       layerProviderSessionManagerProvided,
       layerProviderTurnControlServiceProvided,

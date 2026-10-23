@@ -49,6 +49,7 @@ import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
 import * as ProviderTurnStartServiceTestkit from "../ProviderTurnStartService.testkit.ts";
 import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
+import * as LedgerAutoContinue from "../LedgerAutoContinue.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
@@ -493,6 +494,11 @@ export function layerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         layerRunFinalizationServiceProvided,
+        LedgerAutoContinue.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(layerOrchestratorProvided, layerEventSinkProvided, IdAllocator.layer),
+          ),
+        ),
         layerCheckpointRollbackServiceProvided,
         layerProviderSessionManagerProvided,
         layerProviderTurnControlServiceProvided,
