@@ -193,7 +193,15 @@ describe("sidebar thread lineage helpers", () => {
     const forkChild = subagentOf("thread-fork-child", fork.id);
     const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
     const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
-    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
+    const threads = indexSidebarThreads([
+      root,
+      fork,
+      child,
+      grandchild,
+      forkChild,
+      orphan,
+      elsewhere,
+    ]);
 
     expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
     expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
@@ -202,7 +210,9 @@ describe("sidebar thread lineage helpers", () => {
     expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+    expect(
+      resolveSidebarRowThreadId(loopA.id, environmentId, indexSidebarThreads([loopA, loopB])),
+    ).toBe(loopA.id);
   });
 
   it("nests a thread launched by a hidden subagent under that subagent's visible row", () => {
@@ -1272,8 +1282,26 @@ describe("Working shelf (beta)", () => {
         ).toBe(true);
       });
 
+      it("holds a cross-section move at the destination's membership, not the source's children", () => {
+        // a1 and its children are dragged from Active to Pinned: the children stay
+        // nested in the active list, so the pinned held order must not list them.
+        expect(withNestedSidebarKeys(["p1", "a1"], nestedItems, "pinned")).toEqual(["p1", "a1"]);
+        // The reverse: a launcher pinned with pinned children comes back to Active.
+        const pinnedGroup: readonly SidebarListItem[] = [
+          row("p1", "pinned"),
+          { kind: "thread", key: "p1-child", section: "pinned", nested: true },
+          row("a0", "active"),
+        ];
+        expect(withNestedSidebarKeys(["a0", "p1"], pinnedGroup, "active")).toEqual(["a0", "p1"]);
+        expect(withNestedSidebarKeys(["p1", "a0"], pinnedGroup, "pinned")).toEqual([
+          "p1",
+          "p1-child",
+          "a0",
+        ]);
+      });
+
       it("holds a moved order with every nested key back in it", () => {
-        expect(withNestedSidebarKeys(["a0", "a2", "a1", "a3"], nestedItems)).toEqual([
+        expect(withNestedSidebarKeys(["a0", "a2", "a1", "a3"], nestedItems, "active")).toEqual([
           "a0",
           "a2",
           "a1",
@@ -1281,7 +1309,7 @@ describe("Working shelf (beta)", () => {
           "a1-child-2",
           "a3",
         ]);
-        expect(withNestedSidebarKeys(null, nestedItems)).toBeNull();
+        expect(withNestedSidebarKeys(null, nestedItems, "active")).toBeNull();
       });
 
       it("never drags a nested row", () => {

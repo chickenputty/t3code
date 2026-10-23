@@ -230,11 +230,14 @@ export function resolveSidebarDropTarget(
  * A drop plans over root rows, but the stored order still lists nested threads.
  * Putting each launcher's nested keys back after it keeps the held order the
  * same size and membership as the stored one, which the optimistic drop is
- * released against.
+ * released against. Only nested rows already in the destination section count:
+ * a dragged launcher's children stay nested in the source section until the
+ * server move lands, so they are not part of the destination's membership.
  */
 export function withNestedSidebarKeys(
   rootOrder: readonly string[] | null,
   items: readonly SidebarListItem[],
+  destination: SidebarSection,
 ): readonly string[] | null {
   if (rootOrder === null) return null;
   const nestedAfter = new Map<string, string[]>();
@@ -243,7 +246,7 @@ export function withNestedSidebarKeys(
     if (item.kind !== "thread") continue;
     if (item.nested !== true) {
       launcher = item.key;
-    } else if (launcher !== null) {
+    } else if (launcher !== null && item.section === destination) {
       const keys = nestedAfter.get(launcher);
       if (keys === undefined) nestedAfter.set(launcher, [item.key]);
       else keys.push(item.key);
@@ -586,12 +589,9 @@ export function indexSidebarThreads<T extends SidebarLineageThread>(
 export function resolveSidebarRowThreadId(
   threadId: ThreadId,
   environmentId: EnvironmentId,
-  threads: readonly SidebarLineageThread[] | ReadonlyMap<string, SidebarLineageThread>,
+  threads: ReadonlyMap<string, SidebarLineageThread>,
 ): ThreadId {
-  const findThread = (id: ThreadId) =>
-    "get" in threads
-      ? threads.get(sidebarThreadLookupKey(environmentId, id))
-      : threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
+  const findThread = (id: ThreadId) => threads.get(sidebarThreadLookupKey(environmentId, id));
   const visited = new Set<ThreadId>();
   let thread = findThread(threadId);
   while (thread !== undefined && isSidebarSubagentThread(thread)) {

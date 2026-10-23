@@ -406,6 +406,8 @@ function useSidebarThreads(input: {
     pinsInGroups,
   } = input;
   const threads = useQuietThreadShells();
+  // Launcher and subagent lookups: one map per shell update, not a scan per thread.
+  const threadIndex = indexSidebarThreads(threads);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -415,7 +417,7 @@ function useSidebarThreads(input: {
             resolveSidebarRowThreadId(
               routeThreadRef.threadId,
               routeThreadRef.environmentId,
-              threads,
+              threadIndex,
             ),
           ),
         );
@@ -541,8 +543,7 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
-    // Launcher lookups for the nesting pass: one map per shell update, not a scan per launched thread.
-    threadIndex: indexSidebarThreads(threads),
+    threadIndex,
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
@@ -2050,7 +2051,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         plan.kind === "pin" ||
         plan.kind === "settle" ||
         (plan.kind === "move-active" && plan.unsnooze),
-      order: plan.kind === "settle" ? null : withNestedSidebarKeys(plan.order, sidebarListItems),
+      order:
+        plan.kind === "settle"
+          ? null
+          : withNestedSidebarKeys(plan.order, sidebarListItems, target.section),
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
