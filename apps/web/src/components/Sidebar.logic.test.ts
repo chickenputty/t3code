@@ -9,8 +9,10 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  indexSidebarThreads,
   nestLaunchedSidebarThreads,
   resolveSidebarRowThreadId,
+  withNestedSidebarKeys,
   isSidebarThreadWorking,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -234,7 +236,7 @@ describe("sidebar thread lineage helpers", () => {
     const everything = [...visible, subagent, orphanedSubagent];
 
     expect(
-      nestLaunchedSidebarThreads(visible, everything).map(
+      nestLaunchedSidebarThreads(visible, indexSidebarThreads(everything)).map(
         ({ thread, nested }) => `${nested ? "  " : ""}${thread.id}`,
       ),
     ).toEqual(["root", "  launched", "strayed"]);
@@ -1202,6 +1204,90 @@ describe("Working shelf (beta)", () => {
       marker("settled-header"),
       row("s1", "settled"),
     ];
+
+    describe("with launched threads nested under their launcher", () => {
+      const nestedRow = (key: string): SidebarListItem => ({
+        kind: "thread",
+        key,
+        section: "active",
+        nested: true,
+      });
+      const nestedItems: readonly SidebarListItem[] = [
+        marker("pinned-header"),
+        marker("pinned-divider"),
+        row("a0", "active"),
+        row("a1", "active"),
+        nestedRow("a1-child-1"),
+        nestedRow("a1-child-2"),
+        row("a2", "active"),
+        row("a3", "active"),
+      ];
+      // The stored order has no nested rows: a nested row keeps no order key of its own.
+      const rootKeys = ["a0", "a1", "a2", "a3"];
+      const keys = new Map(rootKeys.map((key, index) => [key, "bdfh"[index]!]));
+      const planFor = (activeKey: string, overId: string) => {
+        const target = resolveSidebarDropTarget(nestedItems, activeKey, overId);
+        return {
+          target,
+          plan: planSidebarThreadDrop({
+            activeKey,
+            activeSection: "active",
+            target: target!,
+            pinnedOrder: [],
+            pinnedKeysById: new Map(),
+            activeOrder: rootKeys,
+            activeKeysById: keys,
+          }),
+        };
+      };
+
+      it("treats dropping a launcher where it already is as a no-op that rewrites no keys", () => {
+        const { target, plan } = planFor("a1", "a1");
+        expect(target?.activeOrder).toEqual(rootKeys);
+        expect(plan).toEqual({ kind: "none" });
+      });
+
+      it("moves a launcher with its children as one unit", () => {
+        expect(resolveSidebarDropTarget(nestedItems, "a1", "a3")?.activeOrder).toEqual([
+          "a0",
+          "a2",
+          "a3",
+          "a1",
+        ]);
+      });
+
+      it("lands a drop aimed at a nested row after its launcher's group", () => {
+        expect(planFor("a3", "a1-child-1").target?.activeOrder).toEqual(["a0", "a1", "a3", "a2"]);
+        expect(planFor("a3", "a1-child-2").target?.activeOrder).toEqual(["a0", "a1", "a3", "a2"]);
+        expect(planFor("a0", "a1-child-1").target?.activeOrder).toEqual(["a1", "a0", "a2", "a3"]);
+      });
+
+      it("bounds a drop below a nested child by the launcher, never by the child", () => {
+        const { plan } = planFor("a3", "a1-child-2");
+        expect(plan.kind).toBe("move-active");
+        const assigned = plan.kind === "move-active" ? plan.assignments : [];
+        expect(assigned.map(({ id }) => id)).toEqual(["a3"]);
+        expect(
+          assigned.every(({ id, orderKey }) => id === "a3" && orderKey > "d" && orderKey < "f"),
+        ).toBe(true);
+      });
+
+      it("holds a moved order with every nested key back in it", () => {
+        expect(withNestedSidebarKeys(["a0", "a2", "a1", "a3"], nestedItems)).toEqual([
+          "a0",
+          "a2",
+          "a1",
+          "a1-child-1",
+          "a1-child-2",
+          "a3",
+        ]);
+        expect(withNestedSidebarKeys(null, nestedItems)).toBeNull();
+      });
+
+      it("never drags a nested row", () => {
+        expect(resolveSidebarDropTarget(nestedItems, "a1-child-1", "a3")).toBeNull();
+      });
+    });
 
     it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
