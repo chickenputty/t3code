@@ -1944,7 +1944,7 @@ export function GeneralSettingsPanel() {
         <ThreadTitleInstructionsSettings />
       </SettingsSection>
 
-      <SettingsSection id="pinned-rules" title="Pinned rules">
+      <SettingsSection title="Pinned rules">
         <PinnedRulesSettings />
       </SettingsSection>
 

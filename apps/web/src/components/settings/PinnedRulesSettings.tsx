@@ -23,7 +23,7 @@ export function PinnedRulesSettings() {
       serverScoped
       settingKeys={["pinnedRules"]}
       {...searchableSetting("pinned-rules")}
-      description="Re-sent verbatim after every context compaction. Applies to Claude and Codex threads; a new Claude session or a restart picks up edits."
+      description="Re-sent verbatim after every context compaction. Applies to Claude and Codex threads; edits apply on the next message (Codex), or after the next compaction or when a session starts (Claude)."
       resetAction={
         mixed || settings.pinnedRules !== "" ? (
           <SettingResetButton

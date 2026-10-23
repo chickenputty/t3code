@@ -570,6 +570,63 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
 
+  it("re-sends the current pinned rules on compaction, following edits mid-session", async () => {
+    let current: string | undefined = "Rule A";
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pin-hook",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+      pinnedRules: "Rule A",
+      readCurrentPinnedRules: async () => current,
+    });
+    const matcher = options.hooks?.SessionStart?.[0];
+    assert.isDefined(matcher);
+    assert.isAbove(matcher?.timeout ?? 0, 0);
+    const fire = async (source: "startup" | "compact") =>
+      (await matcher!.hooks[0]!(
+        {
+          hook_event_name: "SessionStart",
+          source,
+          session_id: "s",
+          transcript_path: "t",
+          cwd: "/workspace",
+        },
+        undefined,
+        { signal: new AbortController().signal },
+      )) as { readonly hookSpecificOutput?: { readonly additionalContext?: string } };
+    const contextOf = async (source: "startup" | "compact") =>
+      (await fire(source)).hookSpecificOutput?.additionalContext;
+
+    assert.include((await contextOf("compact")) ?? "", "supersede");
+    assert.include((await contextOf("compact")) ?? "", "Rule A");
+    current = "Rule B\nsecond `line`";
+    const afterEdit = (await contextOf("compact")) ?? "";
+    assert.include(afterEdit, "Rule B\nsecond `line`");
+    assert.notInclude(afterEdit, "Rule A");
+    assert.isUndefined(await contextOf("startup"));
+    current = undefined;
+    assert.isUndefined(await contextOf("compact"));
+  });
+
+  it("registers no pinned rules hook without a reader", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-no-hook",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+    });
+    assert.isUndefined(options.hooks);
+  });
+
   it("appends pinned rules verbatim to the system prompt, outside the summarized transcript", () => {
     const pinnedRules = "Never touch generated/ files.\nAlways run `vp test` first.";
     const base = {

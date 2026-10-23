@@ -1815,12 +1815,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("restores pinned rules verbatim after compaction", () =>
+  it.effect.each([
+    {
+      name: "restores pinned rules verbatim after compaction",
+      pinnedRules: "Never touch generated/ files.\nAlways run `vp test` first.",
+      chunks: 1,
+    },
+    {
+      name: "restores chunked pinned rules in order after compaction",
+      pinnedRules: Array.from({ length: 150 }, (_, i) => `Rule ${i}: ${"z".repeat(60)}`).join("\n"),
+      chunks: 3,
+    },
+  ])("$name", ({ pinnedRules, chunks }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "pinned-thread";
         const nativeTurnId = "pinned-turn";
-        const pinnedRules = "Never touch generated/ files.\nAlways run `vp test` first.";
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
@@ -1828,6 +1838,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           pinnedRules,
         });
+        // Insertion order is the order Codex emits entries, so rejoining the
+        // injected values in that order must give the original text.
+        const pinEntries = Object.entries(params.additionalContext ?? {}).filter(([key]) =>
+          key.startsWith("pinned_rules"),
+        );
+        assert.lengthOf(pinEntries, chunks);
+        assert.equal(pinEntries.map(([, entry]) => entry.value).join(""), pinnedRules);
         const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
         const transcript = makeCodexReplayTranscript({
           scenario: "restore-pinned-rules",
@@ -1859,18 +1876,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 method: "thread/inject_items",
                 params: {
                   threadId: nativeThreadId,
-                  items: [
-                    {
-                      type: "message",
-                      role: "developer",
-                      content: [
-                        {
-                          type: "input_text",
-                          text: `<pinned_rules>${pinnedRules}</pinned_rules>`,
-                        },
-                      ],
-                    },
-                  ],
+                  items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                    type: "message",
+                    role: "developer",
+                    content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+                  })),
                 },
               },
             },

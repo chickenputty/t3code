@@ -549,7 +549,7 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
-        <SettingsSection id="pinned-rules" title="Pinned rules">
+        <SettingsSection title="Pinned rules">
           <PinnedRulesSettings />
         </SettingsSection>
         <ProjectActionsSettings />

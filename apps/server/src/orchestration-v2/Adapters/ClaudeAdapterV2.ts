@@ -43,6 +43,7 @@ import {
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
+  type HookCallbackMatcher,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -1283,6 +1284,39 @@ export function claudeQueryEnvironment(
   return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
+/**
+ * The adapter's only SDK hook. The system prompt is fixed when the CLI opens,
+ * so after a compaction (which starts a SessionStart with source "compact") this
+ * re-sends the rules as they are now, which a pin edit made mid-session needs.
+ * It never throws and has a short timeout: a failed read just skips the
+ * re-send, and the session-start copy still stands.
+ */
+export function claudePinnedRulesHook(
+  readCurrentPinnedRules: () => Promise<string | undefined>,
+): HookCallbackMatcher {
+  return {
+    matcher: "compact",
+    timeout: 5,
+    hooks: [
+      async (input) => {
+        if (input.hook_event_name !== "SessionStart" || input.source !== "compact") return {};
+        try {
+          const rules = await readCurrentPinnedRules();
+          if (rules === undefined || rules === "") return {};
+          return {
+            hookSpecificOutput: {
+              hookEventName: "SessionStart",
+              additionalContext: `These are the current pinned rules. They supersede any earlier version in the system prompt.\n\n${rules}`,
+            },
+          };
+        } catch {
+          return {};
+        }
+      },
+    ],
+  };
+}
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
@@ -1306,11 +1340,15 @@ export function makeClaudeQueryOptions(input: {
   /**
    * The system prompt sits outside the transcript Claude summarizes, so rules
    * appended here survive every compaction. It is fixed when the CLI process
-   * opens: an edit reaches a live process only after it restarts (new session,
-   * model or policy change, or server restart). Replacing a live process for
-   * a pin edit would fail while background work runs, so we do not.
+   * opens, so it carries the rules as of session start.
    */
   readonly pinnedRules?: string;
+  /**
+   * Reads the current rules so an edit reaches a live session at its next
+   * compaction; resolves undefined when the read failed. Replacing the live
+   * process instead would fail while background work runs.
+   */
+  readonly readCurrentPinnedRules?: () => Promise<string | undefined>;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1410,6 +1448,9 @@ export function makeClaudeQueryOptions(input: {
       ].join("\n\n"),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
+    ...(input.readCurrentPinnedRules === undefined
+      ? {}
+      : { hooks: { SessionStart: [claudePinnedRulesHook(input.readCurrentPinnedRules)] } }),
   };
   const additionalDirectories = [
     ...(input.cwd === null ? [] : [input.cwd]),
@@ -9287,6 +9328,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const readPinnedRules = turnInput.readPinnedRules;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9320,6 +9362,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(turnInput.pinnedRules === undefined ? {} : { pinnedRules: turnInput.pinnedRules }),
+            ...(readPinnedRules === undefined
+              ? {}
+              : {
+                  readCurrentPinnedRules: () => runPromise(readPinnedRules),
+                }),
           });
           const querySession = yield* queryRunner
             .open({

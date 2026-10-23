@@ -213,19 +213,23 @@ export function buildCodexPinnedRulesContext(
     return { pinned_rules: { kind: "application", value: pinnedRules } };
   }
   const chunks: Array<string> = [];
-  let chunk = "";
-  let chunkBytes = 0;
-  for (const character of pinnedRules) {
-    const bytes = Buffer.byteLength(character);
-    if (chunkBytes + bytes > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
-      chunks.push(chunk);
-      chunk = "";
-      chunkBytes = 0;
+  let rest = pinnedRules;
+  while (Buffer.byteLength(rest) > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+    // Longest prefix within the cap, counted in whole characters.
+    let end = 0;
+    let bytes = 0;
+    for (const character of rest) {
+      bytes += Buffer.byteLength(character);
+      if (bytes > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) break;
+      end += character.length;
     }
-    chunk += character;
-    chunkBytes += bytes;
+    // Prefer ending a chunk after a newline so a rule is not cut mid-line.
+    const newline = rest.lastIndexOf("\n", end - 1);
+    const cut = newline > 0 ? newline + 1 : end;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
   }
-  chunks.push(chunk);
+  chunks.push(rest);
   return Object.fromEntries(
     chunks.map((value, index) => [
       `pinned_rules_${String(index + 1).padStart(2, "0")}`,

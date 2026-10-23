@@ -84,6 +84,24 @@ describe("buildCodexPinnedRulesContext", () => {
     }
     NodeAssert.equal(entries.map(([, entry]) => entry.value).join(""), rules);
   });
+
+  it("cuts at the last newline under the cap and falls back to a character boundary", () => {
+    const line = `${"x".repeat(99)}\n`;
+    const byLines = line.repeat(100);
+    const lineChunks = Object.values(buildCodexPinnedRulesContext(byLines)).map((e) => e.value);
+    NodeAssert.ok(lineChunks.length > 1);
+    for (const chunk of lineChunks.slice(0, -1)) NodeAssert.ok(chunk.endsWith("\n"));
+    NodeAssert.equal(lineChunks.join(""), byLines);
+
+    const unbroken = "y".repeat(CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES + 10);
+    const unbrokenChunks = Object.values(buildCodexPinnedRulesContext(unbroken)).map(
+      (e) => e.value,
+    );
+    NodeAssert.deepEqual(
+      unbrokenChunks.map((chunk) => chunk.length),
+      [CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES, 10],
+    );
+  });
 });
 
 describe("buildCodexDeveloperInstructions", () => {

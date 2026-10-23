@@ -954,6 +954,7 @@ it.effect("passes the project's pinned rules to the provider turn", () =>
 
     const input = yield* Deferred.await(started);
     assert.equal(input.pinnedRules, "Never touch generated/ files.");
+    assert.equal(yield* input.readPinnedRules!, "Never touch generated/ files.");
   }).pipe(
     Effect.provide(
       RunExecutionService.layer.pipe(
