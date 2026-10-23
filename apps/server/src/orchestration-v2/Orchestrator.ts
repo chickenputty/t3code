@@ -77,10 +77,12 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import { type LedgerCommand, planLedgerCommand } from "./TaskLedger.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -11228,6 +11230,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const dispatchLedgerCommand = Effect.fn("orchestrationV2.dispatch.ledger")(function* (
+    command: LedgerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { thread, ledger } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["ledger"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    const planned = planLedgerCommand({ command, ledger, now });
+    if (Result.isFailure(planned)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: planned.failure,
+      });
+    }
+    for (const event of planned.success) {
+      yield* emit(
+        events,
+        command,
+      )({
+        ...event,
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+      } as Omit<OrchestrationV2DomainEvent, "id">);
+    }
+  });
+
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -11569,6 +11611,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;
+      case "ledger.create":
+      case "ledger.item.add":
+      case "ledger.item.update":
+      case "ledger.checkpoint.set":
+      case "ledger.close":
+      case "ledger.reopen":
+      case "ledger.item.verdict.record":
+        yield* dispatchLedgerCommand(command, events);
+        break;
       default:
         return yield* dispatchUnsupported(command);
     }
@@ -11659,6 +11710,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
+        // A ledger command that changes nothing is a redundant retry, not an error.
+        command.type.startsWith("ledger.") ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"

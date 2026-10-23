@@ -1,4 +1,5 @@
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
+import { applyLedgerEvent } from "@t3tools/shared/taskLedger";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -318,14 +319,15 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, messages: upsertEntity(base.messages, event.payload) };
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
-    // Ledger events are not reduced yet; a later ledger item folds them into `projection.ledger`.
     case "ledger.created":
     case "ledger.item.added":
     case "ledger.item.updated":
     case "ledger.checkpoint.updated":
     case "ledger.closed":
-    case "ledger.reopened":
-      return base;
+    case "ledger.reopened": {
+      const ledger = applyLedgerEvent(base.ledger, event);
+      return ledger === undefined ? base : { ...base, ledger };
+    }
     case "turn-item.updated": {
       // Streamed updates land on the newest items, so search from the end.
       let itemIndex = projection.turnItems.length - 1;
