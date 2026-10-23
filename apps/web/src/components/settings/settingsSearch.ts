@@ -574,6 +574,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
   },
   {
+    id: "loadouts",
+    title: "Loadouts",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["agent structure planner worker judge explorer solo model roles delegate"],
+  },
+  {
     id: "app-version",
     title: "Version",
     to: "/settings/general",

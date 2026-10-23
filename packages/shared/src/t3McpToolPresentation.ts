@@ -36,6 +36,8 @@ export type T3McpToolSummaryAction =
   | "queue-cancel"
   | "queue-reorder"
   | "queue-steer"
+  | "ledger-read"
+  | "ledger-update"
   | "question-list"
   | "question-read"
   | "question-respond"
@@ -329,6 +331,13 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "attachment-discard",
   ),
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  ledger_create: tool(["Create", "Creating", "Created", "a task ledger"], "ledger-update"),
+  ledger_add_items: tool(["Add", "Adding", "Added", "ledger items"], "ledger-update"),
+  ledger_update_item: tool(["Update", "Updating", "Updated", "a ledger item"], "ledger-update"),
+  ledger_set_checkpoint: tool(["Set", "Setting", "Set", "a ledger checkpoint"], "ledger-update"),
+  ledger_close: tool(["Close", "Closing", "Closed", "the task ledger"], "ledger-update"),
+  ledger_reopen: tool(["Reopen", "Reopening", "Reopened", "the task ledger"], "ledger-update"),
+  ledger_read: tool(["Read", "Reading", "Read", "the task ledger"], "ledger-read"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
 };

@@ -14,7 +14,9 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { applyLedgerEvent } from "@t3tools/shared/taskLedger";
 import type {
+  Ledger,
   OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
@@ -42,6 +44,7 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  LedgerJson,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -452,6 +455,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /** Open plus in-progress ledger items for the thread; 0 when it has none or no ledger. */
+  readonly getOpenLedgerItemCount: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -937,6 +944,16 @@ export function applyToProjection(
         ...base,
         contextHandoffs: upsertById(base.contextHandoffs, event.payload),
       };
+    case "ledger.created":
+    case "ledger.item.added":
+    case "ledger.item.updated":
+    case "ledger.checkpoint.updated":
+    case "ledger.closed":
+    case "ledger.reopened": {
+      // Ledger edits are not thread activity, so the thread and projection timestamps stay put.
+      const ledger = applyLedgerEvent(projection.ledger, event);
+      return ledger === undefined ? projection : { ...projection, ledger };
+    }
     case "context-transfer.created":
     case "context-transfer.updated":
       return {
@@ -1188,6 +1205,10 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
 const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
 );
+const openLedgerItemCount = (ledger: Ledger) =>
+  ledger.items.filter((item) => item.status === "open" || item.status === "in_progress").length;
+const encodeLedgerPayload = Schema.encodeEffect(Schema.fromJsonString(LedgerJson));
+const decodeLedgerPayload = Schema.decodeUnknownEffect(Schema.fromJsonString(LedgerJson));
 
 const decodeThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -1665,6 +1686,7 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    loadout: projection.thread.loadout ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -1908,6 +1930,7 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    loadout: input.state.thread.loadout ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -2729,6 +2752,49 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               break;
             }
+            case "ledger.created":
+            case "ledger.item.added":
+            case "ledger.item.updated":
+            case "ledger.checkpoint.updated":
+            case "ledger.closed":
+            case "ledger.reopened": {
+              // One row per thread holds the whole ledger, so a later event folds into the stored
+              // document with the same reducer the in-memory projection and clients use.
+              const stored = yield* sql<PayloadRow>`
+                SELECT payload_json FROM orchestration_v2_projection_ledgers
+                WHERE thread_id = ${event.threadId}
+              `;
+              const current =
+                stored[0] === undefined
+                  ? undefined
+                  : yield* decodeLedgerPayload(stored[0].payload_json);
+              const next = applyLedgerEvent(current, event);
+              if (next === undefined || next === current) break;
+              const payloadJson = yield* encodeLedgerPayload(next);
+              yield* sql`
+              INSERT INTO orchestration_v2_projection_ledgers (
+                thread_id,
+                ledger_id,
+                updated_at,
+                open_item_count,
+                payload_json
+              )
+              VALUES (
+                ${event.threadId},
+                ${next.id},
+                ${stringField(parseEncodedPayload(payloadJson), "updatedAt")},
+                ${openLedgerItemCount(next)},
+                ${payloadJson}
+              )
+              ON CONFLICT(thread_id)
+              DO UPDATE SET
+                ledger_id = excluded.ledger_id,
+                updated_at = excluded.updated_at,
+                open_item_count = excluded.open_item_count,
+                payload_json = excluded.payload_json
+            `;
+              break;
+            }
             case "context-transfer.created":
             case "context-transfer.updated": {
               const payloadJson = yield* encodeContextTransferPayload(event.payload);
@@ -2802,7 +2868,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.runtime-mode-updated" &&
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
-            event.type !== "thread.provider-switched"
+            event.type !== "thread.provider-switched" &&
+            // Ledger edits (a judge verdict, a UI change after a run) are not thread activity.
+            !event.type.startsWith("ledger.")
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -3185,6 +3253,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpointRows,
           contextHandoffRows,
           contextTransferRows,
+          ledgerRows,
         ] = yield* Effect.all([
           decodeThreadPayload(threadRow.payload_json),
           (fields !== undefined && !fields.includes("runs")) ||
@@ -3493,6 +3562,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   (SELECT value FROM json_each(${cohortHandoffIds})))
             ORDER BY rowid ASC
           `,
+          // The ledger is one small document per thread, so history windows never trim it.
+          fields !== undefined && !fields.includes("ledger")
+            ? Effect.succeed([])
+            : sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_ledgers
+            WHERE thread_id = ${threadId}
+          `,
         ]);
 
         const [
@@ -3510,6 +3586,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpoints,
           contextHandoffs,
           contextTransfers,
+          ledgers,
         ] = yield* Effect.all([
           decodeRows(decodeRunPayload, threadId)(runRows),
           decodeRows(decodeRunAttemptPayload, threadId)(attemptRows),
@@ -3525,6 +3602,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeCheckpointPayload, threadId)(checkpointRows),
           decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
+          decodeRows(decodeLedgerPayload, threadId)(ledgerRows),
         ]);
         const messageOrdinals = new Map<string, number>();
         if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
@@ -3554,6 +3632,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpoints,
           contextHandoffs,
           contextTransfers,
+          ...(ledgers[0] === undefined ? {} : { ledger: ledgers[0] }),
           visibleTurnItems: [],
           updatedAt: thread.updatedAt,
         } satisfies OrchestrationV2ThreadProjection;
@@ -4151,6 +4230,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             id: "context_transfer_id",
             decode: (payload) => decodeContextTransferPayload(payload),
           },
+          { name: "ledgers", id: "ledger_id", decode: (payload) => decodeLedgerPayload(payload) },
         ];
         const pageSize = 500;
         for (const table of tables) {
@@ -6152,6 +6232,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const getOpenLedgerItemCount: ProjectionStoreV2Shape["getOpenLedgerItemCount"] = (threadId) =>
+      sql<{ readonly open_item_count: number }>`
+        SELECT open_item_count FROM orchestration_v2_projection_ledgers
+        WHERE thread_id = ${threadId}
+      `.pipe(
+        Effect.map((rows) => rows[0]?.open_item_count ?? 0),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      );
+
     const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) =>
       sql<{ readonly thread_id: string; readonly worktree_path: string }>`
         SELECT thread_id, json_extract(payload_json, '$.worktreePath') AS worktree_path
@@ -6558,6 +6647,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
+      getOpenLedgerItemCount,
       getThreadWorktreePaths,
       getThreadProjection,
       getTurnStartContext,
@@ -6710,6 +6800,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             );
         },
       ),
+      getOpenLedgerItemCount: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            const ledger = state.projections.get(threadId)?.ledger;
+            return ledger === undefined ? 0 : openLedgerItemCount(ledger);
+          }),
+        ),
       getThreadWorktreePaths: (options) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

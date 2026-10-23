@@ -11,6 +11,7 @@ import {
 } from "../ui/menu";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
+import type { ComposerLoadout } from "./useComposerLoadout";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
@@ -31,6 +32,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Set while the loadout picker is among the blocks that spilled into this menu. */
+  loadout?: ComposerLoadout | null;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const size = props.size ?? "sm";
@@ -89,6 +92,28 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.loadout ? (
+          <>
+            <MenuDivider />
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Loadout</div>
+            <MenuRadioGroup
+              value={props.loadout.active.id}
+              onValueChange={(value) => {
+                if (value === "__clear__") props.loadout?.onClear();
+                else if (value) props.loadout?.onSelect(value);
+              }}
+            >
+              {props.loadout.loadouts.map((option) => (
+                <MenuRadioItem key={option.id} value={option.id}>
+                  {option.name}
+                </MenuRadioItem>
+              ))}
+              {props.loadout.choice?.setBy === "user" ? (
+                <MenuRadioItem value="__clear__">Clear (let the agent propose)</MenuRadioItem>
+              ) : null}
+            </MenuRadioGroup>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
