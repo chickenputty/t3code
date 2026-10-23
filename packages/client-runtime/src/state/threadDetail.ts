@@ -362,6 +362,13 @@ export function createEnvironmentThreadDetailAtoms<E>(
         Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.worktreePath ?? null,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
+  // The projection keeps the ledger's identity through every event that does not edit it, so
+  // readers of this atom re-render only on ledger changes, not on streamed text or other updates.
+  const ledgerAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get) => Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.ledger ?? null,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-ledger:${key}`)),
+  );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
       null;
@@ -420,6 +427,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
+    ledgerAtom: (ref: ScopedThreadRef) => ledgerAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),

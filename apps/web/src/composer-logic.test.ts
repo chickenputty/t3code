@@ -19,6 +19,7 @@ import {
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  expandLedgerSlashCommand,
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
@@ -571,5 +572,20 @@ describe("extendReplacementRangeForTrailingSpace", () => {
     expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("expandLedgerSlashCommand", () => {
+  it("wraps the task in an instruction to create a ledger first", () => {
+    const expanded = expandLedgerSlashCommand("/ledger migrate the billing page\nand its tests");
+    expect(expanded).toContain("ledger_create");
+    expect(expanded?.endsWith("Task: migrate the billing page\nand its tests")).toBe(true);
+  });
+
+  it("only expands a message that starts with the command and names a task", () => {
+    expect(expandLedgerSlashCommand("/ledger")).toBeNull();
+    expect(expandLedgerSlashCommand("/ledger   ")).toBeNull();
+    expect(expandLedgerSlashCommand("please /ledger do it")).toBeNull();
+    expect(expandLedgerSlashCommand("/ledgers do it")).toBeNull();
   });
 });

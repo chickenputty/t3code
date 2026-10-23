@@ -212,7 +212,8 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
     notification: {
       source: { kind: "ledger_continue", round: decision.round, items: [...decision.items] },
       outcome: "updated",
-      summary: `Task ledger: ${decision.open.length} open ${decision.open.length === 1 ? "item" : "items"}`,
+      // The timeline row shows only this, so it must say the server sent the follow-up.
+      summary: `Continuing the task ledger automatically (round ${decision.round}): ${decision.open.length} open ${decision.open.length === 1 ? "item" : "items"}`,
     },
     attachments: [],
     dispatchMode: { type: "queue_after_active" },

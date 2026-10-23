@@ -275,6 +275,7 @@ import {
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
+import { useSupportsThreadLedger } from "../../hooks/useThreadLedgerIfSupported";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -1191,6 +1192,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+  const supportsThreadLedger = useSupportsThreadLedger(environmentId);
+  // Only a leading /ledger is expanded on send, so it is not offered mid-message.
+  const ledgerSlashCommandAvailable =
+    supportsThreadLedger &&
+    composerTrigger?.kind === "slash-command" &&
+    prompt.slice(0, composerTrigger.rangeStart).trim() === "";
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
@@ -1205,6 +1212,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadPullRequests,
     planModeUiEnabled,
     compactSlashCommandAvailable,
+    ledgerSlashCommandAvailable,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -1951,6 +1959,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
           setIsComposerModelPickerOpen(true);
+        }
+        return;
+      }
+      if (item.command === "ledger") {
+        // Leaves `/ledger ` in the prompt for the user to finish with the task.
+        const replacement = "/ledger ";
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
         }
         return;
       }

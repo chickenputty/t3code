@@ -14,6 +14,7 @@ import { useThreadCategories } from "~/components/views/useThreadCategories";
 import { type ViewBulkAction, useViewThreadOps } from "~/components/views/useViewThreadOps";
 import type { ViewRow } from "~/components/views/viewEngine";
 import { useThreadProjection } from "~/state/entities";
+import { ThreadLedgerOverviewSection } from "~/components/chat/ThreadLedger";
 
 import { ThreadActivityTab } from "./ThreadActivityTab";
 import { ThreadFilesTab } from "./ThreadFilesTab";
@@ -90,7 +91,15 @@ function PaneOverview({
       <p className="text-muted-foreground text-sm">This thread is not loaded.</p>
     );
   }
-  return <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />;
+  return (
+    <ThreadOverviewTab
+      row={row}
+      model={model}
+      nowMs={nowMs}
+      onAction={onAction}
+      ledger={<ThreadLedgerOverviewSection threadRef={threadRef} />}
+    />
+  );
 }
 
 function PaneLoading() {
