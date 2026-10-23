@@ -9,6 +9,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  nestLaunchedSidebarThreads,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
   orderItemsByPreferredIds,
@@ -200,6 +201,53 @@ describe("sidebar thread lineage helpers", () => {
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
     expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+  });
+
+  it("nests launched threads under their launcher and keeps them at root when it is absent", () => {
+    const environmentId = EnvironmentId.make("environment-launch");
+    const otherEnvironmentId = EnvironmentId.make("environment-launch-other");
+    const make = (id: string, launchedBy?: string, environment = environmentId) =>
+      makeThreadFixture({
+        id: ThreadId.make(id),
+        environmentId: environment,
+        ...(launchedBy === undefined ? {} : { launchedByThreadId: ThreadId.make(launchedBy) }),
+      });
+    const orchestrator = make("orchestrator");
+    const unrelated = make("unrelated");
+    const workerA = make("worker-a", "orchestrator");
+    const workerB = make("worker-b", "orchestrator");
+    const nestedLauncher = make("worker-launcher", "orchestrator");
+    const grandchild = make("grandchild", "worker-launcher");
+    const strayWorker = make("stray-worker", "archived-launcher");
+    const wrongEnvironment = make("wrong-environment", "orchestrator", otherEnvironmentId);
+    const loopA = make("loop-a", "loop-b");
+    const loopB = make("loop-b", "loop-a");
+
+    const rows = nestLaunchedSidebarThreads([
+      workerA,
+      unrelated,
+      orchestrator,
+      workerB,
+      nestedLauncher,
+      grandchild,
+      strayWorker,
+      wrongEnvironment,
+      loopA,
+      loopB,
+    ]).map(({ thread, nested }) => `${nested ? "  " : ""}${thread.id}`);
+
+    expect(rows).toEqual([
+      "unrelated",
+      "orchestrator",
+      "  worker-a",
+      "  worker-b",
+      "  worker-launcher",
+      "  grandchild",
+      "stray-worker",
+      "wrong-environment",
+      "loop-a",
+      "loop-b",
+    ]);
   });
 });
 

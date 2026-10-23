@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
@@ -26,6 +27,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -37,6 +39,8 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
+  /** Calls as this live T3 thread instead of as an outside client. */
+  readonly callerThreadId?: ThreadId;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -61,16 +65,29 @@ const clientLaunchHarness = (input: {
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
-      thread: undefined,
-      client: {
-        sessionId: "session-1",
-        label: "Claude Code",
-        access: input.runtimeModeCeiling,
-      },
+      thread:
+        input.callerThreadId === undefined
+          ? undefined
+          : {
+              threadId: input.callerThreadId,
+              providerSessionId: "provider-session-1",
+              // liveThreadShell runs on codex, and a live caller must match it.
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+      client:
+        input.callerThreadId === undefined
+          ? {
+              sessionId: "session-1",
+              label: "Claude Code",
+              access: input.runtimeModeCeiling,
+            }
+          : undefined,
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
-    Layer.mock(ThreadManagement.ThreadManagementService)({}),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+    }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
@@ -195,6 +212,48 @@ it.effect(
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
     }),
+);
+
+it.effect("a launch from inside a thread records that thread as its launcher", () =>
+  Effect.gen(function* () {
+    const callerId = ThreadId.make("thread:caller");
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      callerThreadId: callerId,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Worker", projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ projectId });
+    expect(launched[0]?.launchedByThreadId).toBe(callerId);
+  }),
+);
+
+it.effect("a launch from outside a thread has no launcher", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    yield* toolkit
+      .handle("t3_thread_launch", { title: "Worker", projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(launched[0]).toBeDefined();
+    expect(launched[0]?.launchedByThreadId).toBeUndefined();
+  }),
 );
 
 it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>

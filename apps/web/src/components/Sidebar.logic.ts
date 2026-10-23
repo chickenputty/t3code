@@ -536,6 +536,49 @@ export function resolveSidebarRowThreadId(
   return thread?.id ?? threadId;
 }
 
+/**
+ * Places each thread an agent launched directly under the thread that launched
+ * it, as a visible row (unlike subagents). A launcher missing from `threads`
+ * (another environment, another section, hidden) leaves its launched threads at
+ * root, as before. Nesting is one level: a launched thread that itself launches
+ * stays beside its siblings under the first launcher, so a long chain cannot
+ * drift off screen.
+ */
+export function nestLaunchedSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "id" | "environmentId" | "launchedByThreadId">,
+>(threads: readonly T[]): { readonly thread: T; readonly nested: boolean }[] {
+  const keyOf = (environmentId: EnvironmentId, id: ThreadId) => `${environmentId}:${id}`;
+  const byKey = new Map(threads.map((thread) => [keyOf(thread.environmentId, thread.id), thread]));
+  const anchorOf = (thread: T): T => {
+    const visited = new Set<T>([thread]);
+    let current = thread;
+    while (current.launchedByThreadId != null) {
+      const launcher = byKey.get(keyOf(current.environmentId, current.launchedByThreadId));
+      if (launcher === undefined) return current;
+      // A launch cycle has no root, so the thread keeps its own row.
+      if (visited.has(launcher)) return thread;
+      visited.add(launcher);
+      current = launcher;
+    }
+    return current;
+  };
+  const anchors = new Map(threads.map((thread) => [thread, anchorOf(thread)]));
+  const nestedUnder = new Map<T, T[]>();
+  for (const thread of threads) {
+    const anchor = anchors.get(thread)!;
+    if (anchor === thread) continue;
+    nestedUnder.set(anchor, [...(nestedUnder.get(anchor) ?? []), thread]);
+  }
+  return threads.flatMap((thread) =>
+    anchors.get(thread) === thread
+      ? [
+          { thread, nested: false },
+          ...(nestedUnder.get(thread) ?? []).map((child) => ({ thread: child, nested: true })),
+        ]
+      : [],
+  );
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;
