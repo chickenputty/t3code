@@ -1205,7 +1205,12 @@ export default function ChatView(props: ChatViewProps) {
     };
   })();
   const promptRef = useRef("");
-  const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  // A plain stable object, not useRef: passing a useRef to focusedComposerHandle
+  // during render makes the React Compiler skip all of ChatView, and the
+  // incremental timeline then sets state on every render (React error #301).
+  const [localComposerRef] = useState<{ current: ChatComposerHandle | null }>(() => ({
+    current: null,
+  }));
   // The app-wide handle (the command palette inserts through it, so it must always
   // address the focused pane) is read at call time. It cannot be the render-time
   // `composerRef`: that identity changes when a pane takes focus, which re-runs the
@@ -1214,7 +1219,7 @@ export default function ChatView(props: ChatViewProps) {
   const sharedComposerRef = useComposerHandleContext();
   const focusedComposerRef = useMemo(
     () => focusedComposerHandle(sharedComposerRef, localComposerRef),
-    [sharedComposerRef],
+    [sharedComposerRef, localComposerRef],
   );
   // An unfocused split pane keeps its own composer on a local ref.
   const composerRef = isFocusedPane ? focusedComposerRef : localComposerRef;

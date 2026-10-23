@@ -3430,7 +3430,8 @@ export default function Sidebar() {
         return;
       }
       // The row lands a frame or two after the search clears; give up after ~1 s.
-      if (++attempts < 60) frame = requestAnimationFrame(reveal);
+      attempts += 1;
+      if (attempts < 60) frame = requestAnimationFrame(reveal);
       else setRevealThreadKey(null);
     };
     frame = requestAnimationFrame(reveal);

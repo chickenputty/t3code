@@ -104,24 +104,25 @@ export default function SourceControlPanel(props: {
   const runStage = useCallback(
     async (paths: readonly string[]) => {
       setBusy(true);
-      try {
-        reportFailure("Could not stage", await stage({ environmentId, input: { cwd, paths } }));
-      } finally {
-        setBusy(false);
-        refresh();
-      }
+      // A promise .finally, not try/finally: the React Compiler skips components with try/finally.
+      await stage({ environmentId, input: { cwd, paths } })
+        .then((result) => reportFailure("Could not stage", result))
+        .finally(() => {
+          setBusy(false);
+          refresh();
+        });
     },
     [cwd, environmentId, refresh, stage],
   );
   const runUnstage = useCallback(
     async (paths: readonly string[]) => {
       setBusy(true);
-      try {
-        reportFailure("Could not unstage", await unstage({ environmentId, input: { cwd, paths } }));
-      } finally {
-        setBusy(false);
-        refresh();
-      }
+      await unstage({ environmentId, input: { cwd, paths } })
+        .then((result) => reportFailure("Could not unstage", result))
+        .finally(() => {
+          setBusy(false);
+          refresh();
+        });
     },
     [cwd, environmentId, refresh, unstage],
   );
@@ -129,22 +130,23 @@ export default function SourceControlPanel(props: {
     const trimmed = message.trim();
     if (trimmed.length === 0) return;
     setBusy(true);
-    try {
-      const result = await commitStaged({ environmentId, input: { cwd, message: trimmed } });
-      if (result._tag === "Success") {
-        setMessage("");
-        toastManager.add({
-          type: "success",
-          title: "Committed",
-          description: result.value.commitSha.slice(0, 7),
-        });
-      } else {
-        reportFailure("Commit failed", result);
-      }
-    } finally {
-      setBusy(false);
-      refresh();
-    }
+    await commitStaged({ environmentId, input: { cwd, message: trimmed } })
+      .then((result) => {
+        if (result._tag === "Success") {
+          setMessage("");
+          toastManager.add({
+            type: "success",
+            title: "Committed",
+            description: result.value.commitSha.slice(0, 7),
+          });
+        } else {
+          reportFailure("Commit failed", result);
+        }
+      })
+      .finally(() => {
+        setBusy(false);
+        refresh();
+      });
   }, [commitStaged, cwd, environmentId, message, refresh]);
 
   const staged = data?.staged ?? [];
