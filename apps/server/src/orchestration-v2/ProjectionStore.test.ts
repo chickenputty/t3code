@@ -5808,3 +5808,48 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s projections persist thread rule pins from thread events", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("rule-pins");
+    const thread = yield* store.getThread(threadId);
+    assert.isUndefined(thread.rulePins);
+
+    const pins = [
+      {
+        id: "pin-1",
+        text: "Never touch generated/ files.\nSecond `line`",
+        sourceMessageId: MessageId.make("message:rule-pins"),
+        createdAt: "2026-10-23T00:00:00.000Z",
+      },
+      {
+        id: "pin-2",
+        text: "Be terse.",
+        sourceMessageId: null,
+        createdAt: "2026-10-23T00:01:00.000Z",
+      },
+    ];
+    yield* store.apply({
+      id: EventId.make("event:rule-pins:added"),
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: thread.updatedAt,
+      payload: { ...thread, rulePins: pins },
+    });
+    assert.deepEqual((yield* store.getThread(threadId)).rulePins, pins);
+    assert.deepEqual((yield* store.getThreadProjection(threadId)).thread.rulePins, pins);
+
+    yield* store.apply({
+      id: EventId.make("event:rule-pins:removed"),
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: thread.updatedAt,
+      payload: { ...thread, rulePins: pins.slice(1) },
+    });
+    assert.deepEqual((yield* store.getThread(threadId)).rulePins, pins.slice(1));
+  }).pipe(Effect.provide(layer)),
+);

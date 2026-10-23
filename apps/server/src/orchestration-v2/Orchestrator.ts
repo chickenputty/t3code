@@ -30,6 +30,7 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
+  type ThreadRulePin,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
@@ -144,6 +145,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { planRulePinChange } from "./threadRulePins.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -457,6 +459,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.rule-pin.add":
+    case "thread.rule-pin.edit":
+    case "thread.rule-pin.remove":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
@@ -2634,6 +2639,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.rule-pin.add"
+          | "thread.rule-pin.edit"
+          | "thread.rule-pin.remove"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
@@ -3050,8 +3058,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
+    let rulePins: ReadonlyArray<ThreadRulePin> = thread.rulePins ?? [];
+    if (
+      command.type === "thread.rule-pin.add" ||
+      command.type === "thread.rule-pin.edit" ||
+      command.type === "thread.rule-pin.remove"
+    ) {
+      // Only an add naming a message needs the transcript; load just that row.
+      const sourceMessage =
+        command.type === "thread.rule-pin.add" && command.sourceMessageId !== undefined
+          ? (yield* loadProjectionForCommand(command, ["messages"], {
+              messageIds: [command.sourceMessageId],
+            })).messages.find((message) => message.id === command.sourceMessageId)
+          : undefined;
+      const plan = planRulePinChange({
+        pins: rulePins,
+        now: DateTime.formatIso(now),
+        command,
+        sourceMessage,
+      });
+      if (plan._tag === "rejected") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: plan.reason,
+        });
+      }
+      rulePins = plan.pins;
+    }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
+        case "thread.rule-pin.add":
+        case "thread.rule-pin.edit":
+        case "thread.rule-pin.remove":
+          // Pins configure the thread but are not activity, so the thread
+          // keeps its place in activity-sorted lists.
+          return { ...thread, rulePins };
         case "thread.archive":
           return {
             ...thread,
@@ -3526,6 +3568,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.rule-pin.add":
+        case "thread.rule-pin.edit":
+        case "thread.rule-pin.remove":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
@@ -11337,6 +11382,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.active.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.rule-pin.add":
+      case "thread.rule-pin.edit":
+      case "thread.rule-pin.remove":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":

@@ -135,6 +135,12 @@ while background work runs. Codex sends them as trusted `additionalContext` on e
 re-injects them after a `contextCompaction` item. Long rules span numbered keys, cut at newlines
 where possible, because Codex silently truncates any single value over its cap.
 
+A thread's rule pins ride the same path as one composed string (project rules, then the thread's
+pins, under headings; project rules untouched when the thread has no pins). `RunExecutionService`
+re-reads both on every call to `readPinnedRules`, so the hook sees pin edits, and the hook withdraws
+rules it delivered itself as well as the ones the session opened with. Pins live on the thread
+payload and change through `thread.metadata-updated`, an event every older client already decodes.
+
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
 therefore rejects revert before touching files. Native permission and question option IDs must

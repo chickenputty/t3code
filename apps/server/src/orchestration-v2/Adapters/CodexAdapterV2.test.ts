@@ -1,4 +1,5 @@
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { composePinnedRules } from "../threadRulePins.ts";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -1824,6 +1825,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     {
       name: "restores chunked pinned rules in order after compaction",
       pinnedRules: Array.from({ length: 150 }, (_, i) => `Rule ${i}: ${"z".repeat(60)}`).join("\n"),
+      chunks: 3,
+    },
+    {
+      name: "restores project rules and thread pins together, verbatim, after compaction",
+      pinnedRules: composePinnedRules({
+        projectRules: "Never touch generated/ files.",
+        threadPins: [
+          { text: "Answer in French.\nKeep `code` blocks as they are." },
+          { text: "Ask before deleting." },
+        ],
+      }),
+      chunks: 1,
+    },
+    {
+      name: "restores a long thread pin after project rules in order, across chunks",
+      pinnedRules: composePinnedRules({
+        projectRules: Array.from({ length: 60 }, (_, i) => `Rule ${i}: ${"z".repeat(60)}`).join(
+          "\n",
+        ),
+        threadPins: [
+          {
+            text: Array.from({ length: 60 }, (_, i) => `Pin line ${i}: ${"y".repeat(60)}`).join(
+              "\n",
+            ),
+          },
+          { text: "Last pin." },
+        ],
+      }),
       chunks: 3,
     },
   ])("$name", ({ pinnedRules, chunks }) =>

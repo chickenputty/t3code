@@ -374,6 +374,32 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/**
+ * Every thread event carries the whole thread, so the pin list rides each one:
+ * these caps keep a runaway list from bloating all of them.
+ */
+export const THREAD_RULE_PIN_TEXT_MAX_LENGTH = 8_000;
+export const THREAD_RULE_PINS_MAX_COUNT = 20;
+
+const ThreadRulePinText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(THREAD_RULE_PIN_TEXT_MAX_LENGTH),
+);
+
+/**
+ * Text the user wants delivered verbatim on every turn of one thread, and kept
+ * through compaction. `text` is a copy: a pinned message that is later edited
+ * or reverted does not change its pin.
+ */
+export const ThreadRulePin = Schema.Struct({
+  /** Chosen by the client that adds it, so a retried add cannot create two pins. */
+  id: TrimmedNonEmptyString,
+  text: ThreadRulePinText,
+  /** Set when the pin was made from a message; informational once copied. */
+  sourceMessageId: Schema.NullOr(MessageId),
+  createdAt: IsoDateTime,
+});
+export type ThreadRulePin = typeof ThreadRulePin.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -417,6 +443,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Absent on threads and servers from before rule pins; read as empty. */
+  rulePins: Schema.optional(Schema.Array(ThreadRulePin)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2706,6 +2734,36 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  }),
+  // Pin free text, or a message by `sourceMessageId`, whose text the server
+  // copies at pin time. The two are exclusive so the pinned text is never
+  // ambiguous.
+  Schema.Struct({
+    type: Schema.Literal("thread.rule-pin.add"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    pinId: TrimmedNonEmptyString,
+    text: Schema.optional(ThreadRulePinText),
+    sourceMessageId: Schema.optional(MessageId),
+  }).check(
+    Schema.makeFilter(
+      (command) =>
+        (command.text === undefined) !== (command.sourceMessageId === undefined) ||
+        "A rule pin needs either text or a source message, not both.",
+    ),
+  ),
+  Schema.Struct({
+    type: Schema.Literal("thread.rule-pin.edit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    pinId: TrimmedNonEmptyString,
+    text: ThreadRulePinText,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.rule-pin.remove"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    pinId: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

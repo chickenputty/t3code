@@ -1291,7 +1291,10 @@ export function claudeQueryEnvironment(
  * It never throws and has a short timeout: a failed read just skips the
  * re-send, and the session-start copy still stands. Rules cleared since the
  * session opened with some are withdrawn explicitly, because the system prompt
- * cannot be edited and would otherwise keep them in force.
+ * cannot be edited and would otherwise keep them in force. So are rules that
+ * only this hook ever delivered (a session that opened with none, then got
+ * pins that a compaction re-sent): the sent copy sits in the conversation, and
+ * clearing the pins must retract it.
  */
 export function claudePinnedRulesHook(input: {
   /** Undefined means the read failed, which is not the same as cleared (""). */
@@ -1302,6 +1305,9 @@ export function claudePinnedRulesHook(input: {
   const context = (additionalContext: string) => ({
     hookSpecificOutput: { hookEventName: "SessionStart" as const, additionalContext },
   });
+  // Sticky on purpose: a later compaction may summarize the copy away, but the
+  // summary can still carry its gist, so every later clear withdraws again.
+  let deliveredByHook = false;
   return {
     matcher: "compact",
     timeout: 5,
@@ -1314,12 +1320,13 @@ export function claudePinnedRulesHook(input: {
           const rules = await input.readCurrentPinnedRules(options.signal);
           if (rules === undefined) return {};
           if (rules === "") {
-            return input.openedWithPinnedRules
+            return input.openedWithPinnedRules || deliveredByHook
               ? context(
-                  "There are no pinned rules now. Any earlier pinned rules in the system prompt are withdrawn.",
+                  "There are no pinned rules now. Any earlier pinned rules, in the system prompt or re-sent after a compaction, are withdrawn.",
                 )
               : {};
           }
+          deliveredByHook = true;
           return context(
             `These are the current pinned rules. They supersede any earlier version in the system prompt.\n\n${rules}`,
           );

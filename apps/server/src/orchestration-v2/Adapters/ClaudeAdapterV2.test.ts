@@ -74,6 +74,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
+import { composePinnedRules } from "../threadRulePins.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -656,6 +657,46 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.include(context, "withdrawn");
   });
 
+  it("picks up a thread pin edited after the session opened, at the next compaction", async () => {
+    const pins = [{ text: "Answer in French." }];
+    const compose = () => composePinnedRules({ projectRules: "Project rule.", threadPins: pins });
+    const options = hookOptions({ pinnedRules: compose(), read: async () => compose() });
+    pins[0] = { text: "Answer in German.\nSecond `line`" };
+    const context = (await fireCompactHook(options)).hookSpecificOutput?.additionalContext ?? "";
+    assert.include(context, "Project rule.");
+    assert.include(context, "## Thread pinned rules\n\nAnswer in German.\nSecond `line`");
+    assert.notInclude(context, "French");
+  });
+
+  it("withdraws rules that only the hook ever delivered, once they are cleared", async () => {
+    // The session opened with no pins, so the system prompt holds nothing to
+    // withdraw; but a compaction delivered pins through the hook, and clearing
+    // them must retract that copy too.
+    let current: string | undefined = "";
+    const options = hookOptions({ read: async () => current });
+    assert.deepEqual(await fireCompactHook(options), {});
+
+    current = "Thread pin: answer in French.";
+    const delivered = await fireCompactHook(options);
+    assert.include(delivered.hookSpecificOutput?.additionalContext ?? "", "answer in French");
+
+    current = undefined;
+    assert.deepEqual(await fireCompactHook(options), {}, "an unreadable list is not a clear");
+
+    current = "";
+    const withdrawn = (await fireCompactHook(options)).hookSpecificOutput?.additionalContext ?? "";
+    assert.include(withdrawn, "no pinned rules");
+    assert.include(withdrawn, "withdrawn");
+  });
+
+  it("does not withdraw for a session whose hook never delivered anything", async () => {
+    let current: string | undefined = undefined;
+    const options = hookOptions({ read: async () => current });
+    assert.deepEqual(await fireCompactHook(options), {});
+    current = "";
+    assert.deepEqual(await fireCompactHook(options), {});
+  });
+
   it("adds nothing when the session opened with no rules and there are still none", async () => {
     assert.deepEqual(await fireCompactHook(hookOptions({ read: async () => "" })), {});
     assert.deepEqual(
@@ -735,6 +776,14 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.include(
       append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules })),
       pinnedRules,
+    );
+    const composed = composePinnedRules({
+      projectRules: "Never touch generated/ files.",
+      threadPins: [{ text: "Answer in French.\nKeep `code` blocks as they are." }],
+    });
+    assert.include(
+      append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules: composed })),
+      composed,
     );
     assert.notInclude(append(ClaudeAdapterV2.makeClaudeQueryOptions(base)), "Never touch");
     assert.equal(
