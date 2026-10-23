@@ -5,6 +5,7 @@ import {
   LedgerCheckpointId,
   LedgerId,
   LedgerItemId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -220,7 +221,7 @@ describe("decideLedgerAutoContinue", () => {
         ledger: withItems(item("a")),
         messages: [userMessage, ...rounds],
       }),
-    ).toEqual({ type: "stuck", reason: "cap", openCount: 1 });
+    ).toEqual({ type: "stuck", reason: "cap", openIds: [LedgerItemId.make("item:a")] });
   });
 
   it("stops when no item changed since the previous follow-up", () => {
@@ -235,7 +236,7 @@ describe("decideLedgerAutoContinue", () => {
           ]),
         ],
       }),
-    ).toEqual({ type: "stuck", reason: "stalled", openCount: 1 });
+    ).toEqual({ type: "stuck", reason: "stalled", openIds: [LedgerItemId.make("item:a")] });
     expect(
       decideLedgerAutoContinue({
         ledger: withItems(item("a", { status: "in_progress" }), item("b", { status: "closed" })),
@@ -246,6 +247,22 @@ describe("decideLedgerAutoContinue", () => {
             ["b", "closed"],
           ]),
         ],
+      }).type,
+    ).toBe("continue");
+  });
+
+  it("stays quiet after the user cancels a follow-up, until they speak again", () => {
+    const cancelled = { ...followUp(1, [["a", "open"]]), runId: RunId.make("run:cancelled") };
+    const cancelledRunIds = new Set(["run:cancelled"]);
+    const ledger = withItems(item("a", { status: "in_progress" }));
+    expect(
+      decideLedgerAutoContinue({ ledger, messages: [userMessage, cancelled], cancelledRunIds }),
+    ).toEqual({ type: "idle" });
+    expect(
+      decideLedgerAutoContinue({
+        ledger,
+        messages: [cancelled, userMessage],
+        cancelledRunIds,
       }).type,
     ).toBe("continue");
   });

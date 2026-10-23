@@ -16,12 +16,16 @@ export type LedgerAutoContinueDecision =
       readonly open: ReadonlyArray<LedgerItem>;
       readonly items: ReadonlyArray<Pick<LedgerItem, "id" | "status">>;
     }
-  | { readonly type: "stuck"; readonly reason: "cap" | "stalled"; readonly openCount: number };
+  | {
+      readonly type: "stuck";
+      readonly reason: "cap" | "stalled";
+      readonly openIds: ReadonlyArray<LedgerItem["id"]>;
+    };
 
 type LedgerContinueMessage = Pick<
   OrchestrationV2ConversationMessage,
   "role" | "createdBy" | "creationSource" | "notification"
->;
+> & { readonly runId?: OrchestrationV2ConversationMessage["runId"] };
 
 const isOpen = (item: Pick<LedgerItem, "status">) =>
   item.status === "open" || item.status === "in_progress";
@@ -36,15 +40,19 @@ const signatureOf = (items: ReadonlyArray<Pick<LedgerItem, "id" | "status">>) =>
  * What the server does when a run ends and the thread's ledger may still have work. Derived from
  * the ledger and the thread's messages alone: each follow-up records its round and the item
  * statuses it was sent against, so the streak since the user last spoke is both the counter and
- * the progress check, and neither can drift from the event log. Clients use the same function to
- * show a stuck thread.
+ * the progress check, and neither can drift from the event log. The server calls this when a run
+ * ends and records a stop as a timeline notice; clients render that notice and do not re-derive it.
  *
  * `messages` is chronological. Only a message the user sent resets the streak; the server's own
  * wakes (limit resume, restart continuation, other notifications) neither count nor reset it.
+ *
+ * A follow-up in that streak whose run is in `cancelledRunIds` means the user declined it, so the
+ * thread stays quiet until their next message.
  */
 export function decideLedgerAutoContinue(input: {
   readonly ledger: Ledger | undefined;
   readonly messages: ReadonlyArray<LedgerContinueMessage>;
+  readonly cancelledRunIds?: ReadonlySet<string>;
 }): LedgerAutoContinueDecision {
   const { ledger } = input;
   if (ledger === undefined || ledger.closedAt !== null) return { type: "idle" };
@@ -57,6 +65,9 @@ export function decideLedgerAutoContinue(input: {
     const message = input.messages[index]!;
     if (message.role !== "user") continue;
     if (message.notification?.source.kind === "ledger_continue") {
+      if (message.runId != null && input.cancelledRunIds?.has(message.runId) === true) {
+        return { type: "idle" };
+      }
       streak += 1;
       previous ??= message.notification.source.items;
     } else if (message.createdBy === "user" && message.creationSource !== "server") {
@@ -66,10 +77,10 @@ export function decideLedgerAutoContinue(input: {
 
   const items = ledger.items.map(({ id, status }) => ({ id, status }));
   if (streak >= LEDGER_AUTO_CONTINUE_CAP) {
-    return { type: "stuck", reason: "cap", openCount: open.length };
+    return { type: "stuck", reason: "cap", openIds: open.map((item) => item.id) };
   }
   if (previous !== undefined && signatureOf(previous) === signatureOf(items)) {
-    return { type: "stuck", reason: "stalled", openCount: open.length };
+    return { type: "stuck", reason: "stalled", openIds: open.map((item) => item.id) };
   }
   return { type: "continue", round: streak + 1, open, items };
 }

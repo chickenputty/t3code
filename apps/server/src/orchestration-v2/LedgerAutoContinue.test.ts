@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -26,7 +27,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import { continueLedgerAfterRun } from "./LedgerAutoContinue.ts";
+import { continueLedgerAfterRun, continueLedgerAfterRunSafely } from "./LedgerAutoContinue.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -61,7 +62,15 @@ const nextId = (prefix: string) => `${prefix}:${counter++}`;
 
 const afterRun = (event: OrchestrationV2DomainEvent) =>
   Orchestrator.OrchestratorV2.use((orchestrator) =>
-    continueLedgerAfterRun(orchestrator, { threadId: event.threadId, runId: event.runId! }),
+    EventSink.EventSinkV2.use((eventSink) =>
+      continueLedgerAfterRun(
+        { orchestrator, eventSink },
+        {
+          threadId: event.threadId,
+          runId: event.runId!,
+        },
+      ),
+    ),
   );
 
 const setup = (name: string, items: ReadonlyArray<string> = ["a", "b"]) =>
@@ -153,6 +162,12 @@ const addItem = (threadId: ThreadId, name: string) =>
     });
   });
 
+const projectionRuns = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    return (yield* projections.getThreadRecords(threadId, ["runs"])).runs;
+  });
+
 const latestRun = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -200,6 +215,19 @@ const roundOf = (message: OrchestrationV2ConversationMessage | undefined) =>
   message?.notification?.source.kind === "ledger_continue"
     ? message.notification.source.round
     : undefined;
+
+const stopNotices = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["system_notice"],
+    });
+    return turnItems.flatMap((item) =>
+      item.type === "system_notice" && item.message.startsWith("Auto-continue stopped")
+        ? [item.message]
+        : [],
+    );
+  });
 
 const isMarkedStuck = (threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -249,7 +277,7 @@ it.effect("does nothing for a replayed finalization of the same run", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["interrupted", "failed", "cancelled"] as const)(
+it.effect.each(["interrupted", "cancelled"] as const)(
   "does nothing when the run ends %s",
   (status) =>
     Effect.gen(function* () {
@@ -371,9 +399,15 @@ it.effect("stops at the cap and marks the thread stuck", () =>
       // New work each round, so only the cap can stop it.
       yield* addItem(threadId, `extra-${round}`);
     }
+    assert.deepEqual(yield* stopNotices(threadId), []);
     yield* completeLatest(threadId);
     assert.equal((yield* autoContinues(threadId)).length, LEDGER_AUTO_CONTINUE_CAP);
     assert.isTrue(yield* isMarkedStuck(threadId));
+    const [notice, ...others] = yield* stopNotices(threadId);
+    assert.equal(others.length, 0);
+    assert.include(notice, "Auto-continue stopped: 7 ledger items still open");
+    assert.include(notice, "limit of 5");
+    assert.include(notice, "item:a");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -385,10 +419,97 @@ it.effect("stops when a round made no ledger progress and marks the thread stuck
     assert.equal((yield* autoContinues(threadId)).length, 1);
     assert.isFalse(yield* isMarkedStuck(threadId));
 
-    yield* completeLatest(threadId);
+    assert.deepEqual(yield* stopNotices(threadId), []);
+
+    const event = yield* completeLatest(threadId);
+    yield* afterRun(event);
     assert.equal((yield* autoContinues(threadId)).length, 1);
     assert.isTrue(yield* isMarkedStuck(threadId));
+    const notices = yield* stopNotices(threadId);
+    assert.equal(notices.length, 1);
+    assert.include(notices[0], "Auto-continue stopped: 2 ledger items still open");
+    assert.include(notices[0], "no progress last round");
+    assert.include(notices[0], "item:a, item:b");
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "stays off after the user cancels the queued follow-up, even for a later server wake",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* setup("cancel-queued");
+      yield* sendUserMessage(threadId);
+      // A follow-up only queues when a run became live between the server's check and its send,
+      // so recreate that: the same message the server sends, queued behind an active run.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(nextId("queued-follow-up")),
+        messageId: MessageId.make(nextId("message:ledger-continue")),
+        threadId,
+        text: "Continue the ledger",
+        notification: {
+          source: { kind: "ledger_continue", round: 1, items: [] },
+          outcome: "updated",
+          summary: "Task ledger: 2 open items",
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      const queued = yield* latestRun(threadId);
+      assert.equal(queued.status, "queued");
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(nextId("cancel")),
+        threadId,
+        runId: queued.id,
+      });
+      assert.equal((yield* latestRun(threadId)).status, "cancelled");
+      const active = (yield* projectionRuns(threadId)).find((run) => run.status !== "cancelled")!;
+      yield* afterRun(yield* endRun(active));
+      assert.equal((yield* autoContinues(threadId)).length, 1);
+
+      const id = nextId("server-wake");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "A background task finished",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      yield* addItem(threadId, "fresh");
+      yield* completeLatest(threadId);
+      assert.equal((yield* autoContinues(threadId)).length, 1);
+
+      yield* sendUserMessage(threadId);
+      yield* completeLatest(threadId);
+      assert.deepEqual((yield* autoContinues(threadId)).map(roundOf), [1, 1]);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("marks the thread unread when the follow-up itself fails", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<string> = [];
+    const orchestrator = {
+      getThreadRecords: () => Effect.die("projection unavailable"),
+      dispatch: (command: { readonly type: string }) =>
+        Effect.sync(() => {
+          dispatched.push(command.type);
+        }),
+    } as unknown as Parameters<typeof continueLedgerAfterRunSafely>[0]["orchestrator"];
+    const eventSink = {} as Parameters<typeof continueLedgerAfterRunSafely>[0]["eventSink"];
+    yield* continueLedgerAfterRunSafely(
+      { orchestrator, eventSink },
+      { threadId: ThreadId.make("thread:failing"), runId: RunId.make("run:failing") },
+    );
+    assert.deepEqual(dispatched, ["thread.mark-unread"]);
+  }),
 );
 
 it.effect("keeps going while each round moves an item", () =>

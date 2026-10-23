@@ -311,7 +311,9 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,
-      LedgerAutoContinue.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+      LedgerAutoContinue.layer.pipe(
+        Layer.provide(Layer.merge(layerOrchestratorProvided, layerEventSinkProvided)),
+      ),
       layerCheckpointRollbackServiceProvided,
       layerProviderSessionManagerProvided,
       layerProviderTurnControlServiceProvided,
