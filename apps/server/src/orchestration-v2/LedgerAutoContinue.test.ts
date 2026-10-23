@@ -66,10 +66,9 @@ const afterRun = (event: OrchestrationV2DomainEvent) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const eventSink = yield* EventSink.EventSinkV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
     yield* continueLedgerAfterRun(
-      { orchestrator, eventSink, projections, ids },
+      { orchestrator, eventSink, ids },
       { threadId: event.threadId, runId: event.runId! },
     );
   });
@@ -151,7 +150,7 @@ const updateItem = (
     });
   });
 
-const addItem = (threadId: ThreadId, name: string) =>
+const addItem = (threadId: ThreadId, name: string, title = `Item ${name}`) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
@@ -159,7 +158,7 @@ const addItem = (threadId: ThreadId, name: string) =>
       commandId: CommandId.make(nextId("add")),
       threadId,
       ledgerId,
-      items: [{ id: itemId(name), title: `Item ${name}`, acceptance: `${name} works` }],
+      items: [{ id: itemId(name), title, acceptance: `${name} works` }],
     });
   });
 
@@ -508,7 +507,7 @@ it.effect("marks the thread unread when the follow-up itself fails", () =>
     } as unknown as Parameters<typeof continueLedgerAfterRunSafely>[0]["orchestrator"];
     const unused = {} as never;
     yield* continueLedgerAfterRunSafely(
-      { orchestrator, eventSink: unused, projections: unused, ids: unused },
+      { orchestrator, eventSink: unused, ids: unused },
       { threadId: ThreadId.make("thread:failing"), runId: RunId.make("run:failing") },
     );
     assert.deepEqual(dispatched, ["thread.mark-unread"]);
@@ -547,34 +546,76 @@ it.effect("starts counting again after a message from the user", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["interrupted", "cancelled"] as const)(
-  "does not continue again after the user ends the follow-up run (%s)",
-  (status) =>
-    Effect.gen(function* () {
-      const threadId = yield* setup(`stopped-follow-up-${status}`);
-      yield* sendUserMessage(threadId);
-      yield* completeLatest(threadId);
-      const followUp = (yield* autoContinues(threadId))[0]!;
-      assert.equal((yield* latestRun(threadId)).userMessageId, followUp.id);
-      yield* completeLatest(threadId, status);
-      assert.equal((yield* autoContinues(threadId)).length, 1);
+const serverWake = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const id = nextId("server-wake");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(id),
+      threadId,
+      messageId: MessageId.make(id),
+      text: "A background task finished",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+  });
 
-      // A later server wake finishes a run; the stopped follow-up keeps auto-continue off.
-      const id = nextId("server-wake");
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
+/** Runs one auto-continue round, then ends the follow-up run the way `stop` says. */
+const stopFollowUp = (name: string, stop: "cancelled" | "user-interrupt" | "provider-interrupt") =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = yield* setup(`stopped-follow-up-${name}`);
+    yield* sendUserMessage(threadId);
+    yield* completeLatest(threadId);
+    const followUp = (yield* autoContinues(threadId))[0]!;
+    const followUpRun = yield* latestRun(threadId);
+    assert.equal(followUpRun.userMessageId, followUp.id);
+    if (stop === "user-interrupt") {
+      // The real stop path records the user's interrupt request next to the status.
       yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(id),
+        type: "run.interrupt",
+        commandId: CommandId.make(nextId("interrupt")),
         threadId,
-        messageId: MessageId.make(id),
-        text: "A background task finished",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "agent",
-        creationSource: "server",
+        runId: followUpRun.id,
       });
-      yield* addItem(threadId, "fresh");
-      yield* completeLatest(threadId);
-      assert.equal((yield* autoContinues(threadId)).length, 1);
+    } else {
+      yield* completeLatest(threadId, stop === "cancelled" ? "cancelled" : "interrupted");
+    }
+    assert.equal((yield* autoContinues(threadId)).length, 1);
+    yield* serverWake(threadId);
+    yield* addItem(threadId, "fresh");
+    yield* completeLatest(threadId);
+    return yield* autoContinues(threadId);
+  });
+
+it.effect.each(["cancelled", "user-interrupt"] as const)(
+  "does not continue again after the user ends the follow-up run (%s)",
+  (stop) =>
+    Effect.gen(function* () {
+      assert.equal((yield* stopFollowUp(stop, stop)).length, 1);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps going after the provider ends the follow-up turn on its own", () =>
+  Effect.gen(function* () {
+    const followUps = yield* stopFollowUp("provider", "provider-interrupt");
+    assert.deepEqual(followUps.map(roundOf), [1, 2]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("truncates a long item title in the stop notice", () =>
+  Effect.gen(function* () {
+    const threadId = yield* setup("long-title", ["a"]);
+    const longTitle = "Rework the whole onboarding flow so every step explains itself clearly";
+    yield* addItem(threadId, "long", longTitle);
+    yield* sendUserMessage(threadId);
+    yield* completeLatest(threadId);
+    yield* completeLatest(threadId);
+    const [notice] = yield* stopNotices(threadId);
+    assert.include(notice, `${longTitle.slice(0, 47)}…`);
+    assert.notInclude(notice, longTitle);
+  }).pipe(Effect.provide(layerTest)),
 );

@@ -22,7 +22,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
 
 const NON_TERMINAL_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
   "preparing",
@@ -42,10 +41,6 @@ export interface LedgerAutoContinueDeps {
     "dispatch" | "getThreadRecords"
   >;
   readonly eventSink: Pick<EventSink.EventSinkV2["Service"], "commitCommand">;
-  readonly projections: Pick<
-    ProjectionStore.ProjectionStoreV2["Service"],
-    "getNextTurnItemOrdinal"
-  >;
   readonly ids: Pick<IdAllocator.IdAllocatorV2["Service"], "allocate" | "derive">;
 }
 
@@ -102,7 +97,7 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
   const records = yield* orchestrator.getThreadRecords(
     input.threadId,
     ["runs", "runtimeRequests", "ledger", "turnItems"],
-    { turnItemTypes: ["run_interrupt_request"], turnItemRunIds: [input.runId] },
+    { turnItemTypes: ["run_interrupt_request"] },
   );
   const { thread, runs, runtimeRequests, ledger, turnItems } = records;
   const run = runs.find((candidate) => candidate.id === input.runId);
@@ -122,7 +117,7 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
   if (thread.archivedAt !== null || thread.deletedAt != null) return;
   if (thread.settledOverride === "settled") return;
   // A stop that raced the provider's own completion still means the user wants this to end.
-  if (turnItems.length > 0) return;
+  if (turnItems.some((item) => item.runId === run.id)) return;
   if (runtimeRequests.some((request) => request.status === "pending")) return;
 
   const ordinalByRun = new Map(runs.map((candidate) => [candidate.id, candidate.ordinal]));
@@ -144,10 +139,15 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
       (a, b) => (ordinalByRun.get(a.runId!) ?? 0) - (ordinalByRun.get(b.runId!) ?? 0),
     ),
     // A follow-up the user cancelled or stopped means they want it off until they speak again.
+    // `interrupted` alone does not say who stopped it (the provider can end a turn itself), so
+    // it counts only with the user's interrupt request on the run.
     cancelledRunIds: new Set(
       runs
         .filter(
-          (candidate) => candidate.status === "cancelled" || candidate.status === "interrupted",
+          (candidate) =>
+            candidate.status === "cancelled" ||
+            (candidate.status === "interrupted" &&
+              turnItems.some((item) => item.runId === candidate.id)),
         )
         .map(({ id }) => id),
     ),
@@ -157,7 +157,6 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
     // The timeline notice says why; the unread mark is the existing "look at me" signal.
     const now = yield* DateTime.now;
     const noticeCommandId = CommandId.make(`server:ledger-stuck-notice:${run.id}`);
-    const ordinal = yield* deps.projections.getNextTurnItemOrdinal(input.threadId);
     yield* deps.eventSink.commitCommand({
       commandId: noticeCommandId,
       threadId: input.threadId,
@@ -188,7 +187,8 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
             providerTurnId: null,
             nativeItemRef: null,
             parentItemId: null,
-            ordinal,
+            // Placeholder: EventSink assigns turn item positions when it commits.
+            ordinal: 0,
             status: "completed",
             title: "Auto-continue stopped",
             startedAt: now,
@@ -274,11 +274,9 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const eventSink = yield* EventSink.EventSinkV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
     return {
-      afterRun: (input) =>
-        continueLedgerAfterRunSafely({ orchestrator, eventSink, projections, ids }, input),
+      afterRun: (input) => continueLedgerAfterRunSafely({ orchestrator, eventSink, ids }, input),
     };
   }),
 );
