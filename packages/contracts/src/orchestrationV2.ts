@@ -20,6 +20,7 @@ import {
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
   isUnknownUnionMember,
+  LedgerItemId,
   NonNegativeInt,
   PlanId,
   PositiveInt,
@@ -52,6 +53,7 @@ import {
   LedgerCommands,
   LedgerItemsAddedPayload,
   LedgerItemsAddedPayloadJson,
+  LedgerItemStatus,
   LedgerItemUpdatedPayload,
   LedgerItemUpdatedPayloadJson,
   LedgerReopenedPayload,
@@ -1089,6 +1091,16 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
+    /**
+     * The server's follow-up while a ledger has open items. It carries its round and the item
+     * statuses it was sent against, so the cap and the no-progress stop derive from the messages
+     * alone, with no counter to keep in step with the event log.
+     */
+    Schema.Struct({
+      kind: Schema.Literal("ledger_continue"),
+      round: PositiveInt,
+      items: Schema.Array(Schema.Struct({ id: LedgerItemId, status: LedgerItemStatus })),
+    }),
     Schema.Struct({ kind: Schema.Literal("system") }),
   ],
   (kind) => Schema.Struct({ kind }),

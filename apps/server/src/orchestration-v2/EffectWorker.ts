@@ -17,6 +17,7 @@ import {
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as LedgerAutoContinue from "./LedgerAutoContinue.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -84,6 +85,7 @@ export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
+    const ledgerAutoContinue = yield* LedgerAutoContinue.LedgerAutoContinue;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -450,6 +452,12 @@ export const layerExecutor: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                Effect.andThen(
+                  ledgerAutoContinue.afterRun({
+                    threadId: effect.threadId,
+                    runId: effect.request.runId,
+                  }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

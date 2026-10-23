@@ -1,4 +1,78 @@
-import type { Ledger, OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import type {
+  Ledger,
+  LedgerItem,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
+
+/** Consecutive server follow-ups per thread before it stops and waits for the user. */
+export const LEDGER_AUTO_CONTINUE_CAP = 5;
+
+export type LedgerAutoContinueDecision =
+  | { readonly type: "idle" }
+  | {
+      readonly type: "continue";
+      readonly round: number;
+      readonly open: ReadonlyArray<LedgerItem>;
+      readonly items: ReadonlyArray<Pick<LedgerItem, "id" | "status">>;
+    }
+  | { readonly type: "stuck"; readonly reason: "cap" | "stalled"; readonly openCount: number };
+
+type LedgerContinueMessage = Pick<
+  OrchestrationV2ConversationMessage,
+  "role" | "createdBy" | "creationSource" | "notification"
+>;
+
+const isOpen = (item: Pick<LedgerItem, "status">) =>
+  item.status === "open" || item.status === "in_progress";
+
+const signatureOf = (items: ReadonlyArray<Pick<LedgerItem, "id" | "status">>) =>
+  items
+    .map((item) => `${item.id}:${item.status}`)
+    .sort()
+    .join("\n");
+
+/**
+ * What the server does when a run ends and the thread's ledger may still have work. Derived from
+ * the ledger and the thread's messages alone: each follow-up records its round and the item
+ * statuses it was sent against, so the streak since the user last spoke is both the counter and
+ * the progress check, and neither can drift from the event log. Clients use the same function to
+ * show a stuck thread.
+ *
+ * `messages` is chronological. Only a message the user sent resets the streak; the server's own
+ * wakes (limit resume, restart continuation, other notifications) neither count nor reset it.
+ */
+export function decideLedgerAutoContinue(input: {
+  readonly ledger: Ledger | undefined;
+  readonly messages: ReadonlyArray<LedgerContinueMessage>;
+}): LedgerAutoContinueDecision {
+  const { ledger } = input;
+  if (ledger === undefined || ledger.closedAt !== null) return { type: "idle" };
+  const open = ledger.items.filter(isOpen);
+  if (open.length === 0) return { type: "idle" };
+
+  let streak = 0;
+  let previous: ReadonlyArray<Pick<LedgerItem, "id" | "status">> | undefined;
+  for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+    const message = input.messages[index]!;
+    if (message.role !== "user") continue;
+    if (message.notification?.source.kind === "ledger_continue") {
+      streak += 1;
+      previous ??= message.notification.source.items;
+    } else if (message.createdBy === "user" && message.creationSource !== "server") {
+      break;
+    }
+  }
+
+  const items = ledger.items.map(({ id, status }) => ({ id, status }));
+  if (streak >= LEDGER_AUTO_CONTINUE_CAP) {
+    return { type: "stuck", reason: "cap", openCount: open.length };
+  }
+  if (previous !== undefined && signatureOf(previous) === signatureOf(items)) {
+    return { type: "stuck", reason: "stalled", openCount: open.length };
+  }
+  return { type: "continue", round: streak + 1, open, items };
+}
 
 export type LedgerDomainEvent = Extract<
   OrchestrationV2DomainEvent,

@@ -418,6 +418,7 @@ export function notificationChildThreadId(
     case "command":
     case "monitor":
     case "background_task":
+    case "ledger_continue":
     case "system":
       return undefined;
     default:
