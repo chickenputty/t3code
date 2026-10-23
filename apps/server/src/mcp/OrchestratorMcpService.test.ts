@@ -1714,6 +1714,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.equal(first.threads.length, 1);
             assert.equal(child.providerInstanceId, selection.instanceId);
             assert.equal(child.model, selection.model);
+            // create_threads makes top-level threads from inside a thread too.
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(child.threadId)).thread.launchedByThreadId,
+              parentThreadId,
+            );
             assert.deepEqual(yield* service.createThreads(scope, request), first);
 
             // The creation receipt exists, but this prompt has not been accepted yet.

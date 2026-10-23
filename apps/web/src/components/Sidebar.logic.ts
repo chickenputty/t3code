@@ -146,7 +146,13 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      /** Shown under the thread that launched it; it moves with that thread. */
+      readonly nested?: boolean;
+    }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
 
 export function sidebarListItemId(item: SidebarListItem): string {
@@ -177,12 +183,30 @@ export function resolveSidebarDropTarget(
   activeKey: string,
   overId: string,
 ): SidebarDropTarget | null {
-  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
-  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
-  if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
-  const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
+  const isNested = (item: SidebarListItem | undefined) =>
+    item?.kind === "thread" && item.nested === true;
+  // Order is decided over root rows only: a launcher and its nested children
+  // move as one unit, and a nested row keeps no order key of its own. The
+  // result must be comparable with the stored (un-nested) order.
+  const overItemIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
+  const overNested = isNested(items[overItemIndex]);
+  let launcherIndex = overItemIndex;
+  while (launcherIndex > 0 && isNested(items[launcherIndex])) launcherIndex -= 1;
+  const overRoot = items[launcherIndex];
+  const roots = items.filter((item) => !isNested(item));
+  const activeIndex = roots.findIndex((item) => sidebarListItemId(item) === activeKey);
+  const overIndex =
+    overItemIndex === -1 || overRoot === undefined
+      ? -1
+      : roots.findIndex((item) => sidebarListItemId(item) === sidebarListItemId(overRoot));
+  if (activeIndex === -1 || overIndex === -1 || roots[activeIndex]?.kind !== "thread") return null;
+  const moved = roots.filter((_, index) => index !== activeIndex);
+  // Dropping onto a nested row means "after its launcher's group", also when
+  // the dragged row comes from below, where dropping on the launcher itself
+  // would place it before.
+  const insertAt = overNested && activeIndex > overIndex ? overIndex + 1 : overIndex;
+  moved.splice(insertAt, 0, roots[activeIndex]!);
+  const section = sectionAtSidebarSlot(moved, insertAt);
   if (section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
@@ -200,6 +224,35 @@ export function resolveSidebarDropTarget(
     else activeOrder.push(item.key);
   }
   return { section, pinnedOrder, activeOrder };
+}
+
+/**
+ * A drop plans over root rows, but the stored order still lists nested threads.
+ * Putting each launcher's nested keys back after it keeps the held order the
+ * same size and membership as the stored one, which the optimistic drop is
+ * released against. Only nested rows already in the destination section count:
+ * a dragged launcher's children stay nested in the source section until the
+ * server move lands, so they are not part of the destination's membership.
+ */
+export function withNestedSidebarKeys(
+  rootOrder: readonly string[] | null,
+  items: readonly SidebarListItem[],
+  destination: SidebarSection,
+): readonly string[] | null {
+  if (rootOrder === null) return null;
+  const nestedAfter = new Map<string, string[]>();
+  let launcher: string | null = null;
+  for (const item of items) {
+    if (item.kind !== "thread") continue;
+    if (item.nested !== true) {
+      launcher = item.key;
+    } else if (launcher !== null && item.section === destination) {
+      const keys = nestedAfter.get(launcher);
+      if (keys === undefined) nestedAfter.set(launcher, [item.key]);
+      else keys.push(item.key);
+    }
+  }
+  return rootOrder.flatMap((key) => [key, ...(nestedAfter.get(key) ?? [])]);
 }
 
 export type SidebarThreadDropPlan =
@@ -519,13 +572,26 @@ function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">):
 // Subagent threads have no sidebar row, so an open subagent is represented by
 // its nearest non-subagent ancestor. A broken chain (missing parent, cycle,
 // other environment) resolves to the thread itself, which then matches no row.
+type SidebarLineageThread = Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">;
+
+const sidebarThreadLookupKey = (environmentId: EnvironmentId, id: ThreadId) =>
+  `${environmentId}:${id}`;
+
+/** Build once per thread list; the nesting pass looks up every launcher through it. */
+export function indexSidebarThreads<T extends SidebarLineageThread>(
+  threads: readonly T[],
+): ReadonlyMap<string, T> {
+  return new Map(
+    threads.map((thread) => [sidebarThreadLookupKey(thread.environmentId, thread.id), thread]),
+  );
+}
+
 export function resolveSidebarRowThreadId(
   threadId: ThreadId,
   environmentId: EnvironmentId,
-  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
+  threads: ReadonlyMap<string, SidebarLineageThread>,
 ): ThreadId {
-  const findThread = (id: ThreadId) =>
-    threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
+  const findThread = (id: ThreadId) => threads.get(sidebarThreadLookupKey(environmentId, id));
   const visited = new Set<ThreadId>();
   let thread = findThread(threadId);
   while (thread !== undefined && isSidebarSubagentThread(thread)) {
@@ -534,6 +600,64 @@ export function resolveSidebarRowThreadId(
     thread = findThread(thread.lineage.parentThreadId);
   }
   return thread?.id ?? threadId;
+}
+
+/**
+ * Places each thread an agent launched directly under the thread that launched
+ * it, as a visible row (unlike subagents). A launcher missing from `threads`
+ * (another environment, another section, hidden) leaves its launched threads at
+ * root, as before. A launcher that is a subagent has no row of its own, so
+ * `allThreads` (every thread, hidden ones included) lets it stand for its
+ * nearest visible ancestor. Nesting is one level: a launched thread that itself
+ * launches stays beside its siblings under the first launcher, so a long chain
+ * cannot drift off screen.
+ */
+export function nestLaunchedSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "id" | "environmentId" | "launchedByThreadId" | "lineage">,
+>(
+  threads: readonly T[],
+  allThreads: ReadonlyMap<string, SidebarLineageThread> = indexSidebarThreads(threads),
+): { readonly thread: T; readonly nested: boolean }[] {
+  const keyOf = sidebarThreadLookupKey;
+  const byKey = indexSidebarThreads(threads);
+  const launcherOf = (thread: T): T | undefined =>
+    thread.launchedByThreadId == null
+      ? undefined
+      : byKey.get(
+          keyOf(
+            thread.environmentId,
+            resolveSidebarRowThreadId(thread.launchedByThreadId, thread.environmentId, allThreads),
+          ),
+        );
+  const anchorOf = (thread: T): T => {
+    const visited = new Set<T>([thread]);
+    let current = thread;
+    while (current.launchedByThreadId != null) {
+      const launcher = launcherOf(current);
+      if (launcher === undefined) return current;
+      // A launch cycle has no root, so the thread keeps its own row.
+      if (visited.has(launcher)) return thread;
+      visited.add(launcher);
+      current = launcher;
+    }
+    return current;
+  };
+  const anchors = new Map(threads.map((thread) => [thread, anchorOf(thread)]));
+  const nestedUnder = new Map<T, T[]>();
+  for (const thread of threads) {
+    const anchor = anchors.get(thread)!;
+    if (anchor === thread) continue;
+    const siblings = nestedUnder.get(anchor);
+    if (siblings === undefined) nestedUnder.set(anchor, [thread]);
+    else siblings.push(thread);
+  }
+  const rows: { readonly thread: T; readonly nested: boolean }[] = [];
+  for (const thread of threads) {
+    if (anchors.get(thread) !== thread) continue;
+    rows.push({ thread, nested: false });
+    for (const child of nestedUnder.get(thread) ?? []) rows.push({ thread: child, nested: true });
+  }
+  return rows;
 }
 
 export function filterSidebarV2VisibleThreads<

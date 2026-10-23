@@ -878,6 +878,7 @@ function listItemFromShell(
     ...threadSnooze(shell, nowMs),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
+    launchedByThreadId: shell.launchedByThreadId ?? null,
     itemCount: shell.visibleItemCount,
     createdAt: DateTime.formatIso(shell.createdAt),
     updatedAt: DateTime.formatIso(shell.updatedAt),
@@ -919,6 +920,7 @@ function threadDetail(
     worktreePath: projection.thread.worktreePath,
     parentThreadId: projection.thread.lineage.parentThreadId,
     relationshipToParent: projection.thread.lineage.relationshipToParent,
+    launchedByThreadId: projection.thread.launchedByThreadId ?? null,
     runCount: projection.runs.length,
     itemCount,
     pendingRequestCount: projection.runtimeRequests.filter(
@@ -2597,6 +2599,7 @@ const make = Effect.gen(function* () {
                   interactionMode,
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
+                  launchedByThreadId: scope.thread.threadId,
                 })
                 .pipe(
                   Effect.mapError((error) =>

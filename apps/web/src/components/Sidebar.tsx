@@ -145,7 +145,10 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
+  indexSidebarThreads,
   isSidebarNestedLinkClick,
+  nestLaunchedSidebarThreads,
+  withNestedSidebarKeys,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -403,6 +406,8 @@ function useSidebarThreads(input: {
     pinsInGroups,
   } = input;
   const threads = useQuietThreadShells();
+  // Launcher and subagent lookups: one map per shell update, not a scan per thread.
+  const threadIndex = indexSidebarThreads(threads);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -412,7 +417,7 @@ function useSidebarThreads(input: {
             resolveSidebarRowThreadId(
               routeThreadRef.threadId,
               routeThreadRef.environmentId,
-              threads,
+              threadIndex,
             ),
           ),
         );
@@ -538,6 +543,7 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
+    threadIndex,
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
@@ -1167,6 +1173,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleWorkingThreads,
     orderedThreadKeys,
     threadByKey,
+    threadIndex,
     settledThreadKeys,
     snoozedThreadKeys,
     sectionByThreadKey,
@@ -1813,13 +1820,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
+    // A thread an agent launched sits under its launcher within one section's
+    // list. Grouped active rows render under project headers, which stay flat.
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
       section: SidebarSection,
     ): SidebarListItem[] =>
-      list.map((thread) => {
+      (section === "active" && activeArrangement.groups !== null
+        ? list.map((thread) => ({ thread, nested: false }))
+        : nestLaunchedSidebarThreads(list, threadIndex)
+      ).map(({ thread, nested }) => {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        return { kind: "thread", key, section };
+        return nested
+          ? { kind: "thread", key, section, nested: true }
+          : { kind: "thread", key, section };
       });
     if (
       pinnedThreads.length +
@@ -1860,7 +1874,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // list's identity until its order changes, so the sorting strategy, the
   // sortable context and every sortable row stay memoized meanwhile.
   const sidebarListItemsKey = sidebarListItemsFresh
-    .map((item) => (item.kind === "thread" ? item.section + ":" + item.key : item.marker))
+    .map((item) =>
+      item.kind === "thread"
+        ? item.section + ":" + item.key + (item.nested === true ? ":nested" : "")
+        : item.marker,
+    )
     .join("\n");
   const [sidebarListItemsState, setSidebarListItems] = useState(sidebarListItemsFresh);
   const [sidebarListItemsKeyState, setSidebarListItemsKeyState] = useState(sidebarListItemsKey);
@@ -1873,6 +1891,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // into the collapsed Settled shelf.
     sidebarListItems = sidebarListItemsFresh;
   }
+  // Nested rows move with their launcher and are neither drag sources nor drop
+  // targets, so reorders are planned over root rows only; the stored order the
+  // plan is compared with must leave them out too.
+  const nestedThreadKeys = new Set(
+    sidebarListItems.flatMap((item) => (item.kind === "thread" && item.nested ? [item.key] : [])),
+  );
+  const rootActiveKeys = activeKeys.filter((key) => !nestedThreadKeys.has(key));
+  const rootPinnedKeys = pinnedKeys.filter((key) => !nestedThreadKeys.has(key));
   useEffect(() => {
     if (
       dragState !== null &&
@@ -1953,10 +1979,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               serverConfigs.get(source.environmentId)?.environment.capabilities.threadSettlement ===
               true,
             target,
-            pinnedOrder: pinnedKeys,
+            pinnedOrder: rootPinnedKeys,
             pinnedKeysById,
             reorderableKeys: draggableThreadKeys,
-            activeOrder: activeKeys,
+            activeOrder: rootActiveKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
             activeTimeOrdered: workingShelfEnabled,
@@ -1988,10 +2014,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         serverConfigs.get(activeThread.environmentId)?.environment.capabilities.threadSettlement ===
         true,
       target,
-      pinnedOrder: pinnedKeys,
+      pinnedOrder: rootPinnedKeys,
       pinnedKeysById,
       reorderableKeys: draggableThreadKeys,
-      activeOrder: activeKeys,
+      activeOrder: rootActiveKeys,
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
       activeTimeOrdered: workingShelfEnabled,
@@ -2025,7 +2051,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         plan.kind === "pin" ||
         plan.kind === "settle" ||
         (plan.kind === "move-active" && plan.unsnooze),
-      order: plan.kind === "settle" ? null : plan.order,
+      order:
+        plan.kind === "settle"
+          ? null
+          : withNestedSidebarKeys(plan.order, sidebarListItems, target.section),
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
@@ -3098,6 +3127,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         indented = false,
+                        nested = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3114,6 +3144,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
+                              nestedThreadKeys.has(threadKey) ||
                               optimisticDrop !== null ||
                               // Fork: a sorted or grouped list has no manual order to write.
                               threadListArranged
@@ -3127,7 +3158,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             hideProjectIcon={!showProjectIcons}
                             grouped={indented}
-                            indent={indented ? threadIndent : "none"}
+                            // A nested row must look nested even when the user's Indent is none.
+                            indent={
+                              nested && threadIndent === "none"
+                                ? "small"
+                                : indented || nested
+                                  ? threadIndent
+                                  : "none"
+                            }
                             propertiesText={threadsView.propertiesTextOf(threadKey)}
                             variantAction={
                               section === "snoozed"
@@ -3234,7 +3272,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           if (item.section === "active" && activeArrangement.groups !== null) {
                             continue;
                           }
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          items.push(
+                            renderThreadRow(
+                              threadByKey.get(item.key)!,
+                              item.section,
+                              false,
+                              item.nested === true,
+                            ),
+                          );
                           continue;
                         }
                         switch (item.marker) {

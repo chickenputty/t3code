@@ -9,7 +9,10 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  indexSidebarThreads,
+  nestLaunchedSidebarThreads,
   resolveSidebarRowThreadId,
+  withNestedSidebarKeys,
   isSidebarThreadWorking,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -190,7 +193,15 @@ describe("sidebar thread lineage helpers", () => {
     const forkChild = subagentOf("thread-fork-child", fork.id);
     const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
     const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
-    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
+    const threads = indexSidebarThreads([
+      root,
+      fork,
+      child,
+      grandchild,
+      forkChild,
+      orphan,
+      elsewhere,
+    ]);
 
     expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
     expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
@@ -199,7 +210,93 @@ describe("sidebar thread lineage helpers", () => {
     expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+    expect(
+      resolveSidebarRowThreadId(loopA.id, environmentId, indexSidebarThreads([loopA, loopB])),
+    ).toBe(loopA.id);
+  });
+
+  it("nests a thread launched by a hidden subagent under that subagent's visible row", () => {
+    const environmentId = EnvironmentId.make("environment-subagent-launch");
+    const root = makeThreadFixture({ id: ThreadId.make("root"), environmentId });
+    const subagent = makeThreadFixture({
+      id: ThreadId.make("subagent"),
+      environmentId,
+      lineage: { rootThreadId: root.id, parentThreadId: root.id, relationshipToParent: "subagent" },
+    });
+    const launched = makeThreadFixture({
+      id: ThreadId.make("launched"),
+      environmentId,
+      launchedByThreadId: subagent.id,
+    });
+    const orphanedSubagent = makeThreadFixture({
+      id: ThreadId.make("orphaned-subagent"),
+      environmentId,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: ThreadId.make("gone"),
+        relationshipToParent: "subagent",
+      },
+    });
+    const strayed = makeThreadFixture({
+      id: ThreadId.make("strayed"),
+      environmentId,
+      launchedByThreadId: orphanedSubagent.id,
+    });
+    const visible = [launched, root, strayed];
+    const everything = [...visible, subagent, orphanedSubagent];
+
+    expect(
+      nestLaunchedSidebarThreads(visible, indexSidebarThreads(everything)).map(
+        ({ thread, nested }) => `${nested ? "  " : ""}${thread.id}`,
+      ),
+    ).toEqual(["root", "  launched", "strayed"]);
+  });
+
+  it("nests launched threads under their launcher and keeps them at root when it is absent", () => {
+    const environmentId = EnvironmentId.make("environment-launch");
+    const otherEnvironmentId = EnvironmentId.make("environment-launch-other");
+    const make = (id: string, launchedBy?: string, environment = environmentId) =>
+      makeThreadFixture({
+        id: ThreadId.make(id),
+        environmentId: environment,
+        ...(launchedBy === undefined ? {} : { launchedByThreadId: ThreadId.make(launchedBy) }),
+      });
+    const orchestrator = make("orchestrator");
+    const unrelated = make("unrelated");
+    const workerA = make("worker-a", "orchestrator");
+    const workerB = make("worker-b", "orchestrator");
+    const nestedLauncher = make("worker-launcher", "orchestrator");
+    const grandchild = make("grandchild", "worker-launcher");
+    const strayWorker = make("stray-worker", "archived-launcher");
+    const wrongEnvironment = make("wrong-environment", "orchestrator", otherEnvironmentId);
+    const loopA = make("loop-a", "loop-b");
+    const loopB = make("loop-b", "loop-a");
+
+    const rows = nestLaunchedSidebarThreads([
+      workerA,
+      unrelated,
+      orchestrator,
+      workerB,
+      nestedLauncher,
+      grandchild,
+      strayWorker,
+      wrongEnvironment,
+      loopA,
+      loopB,
+    ]).map(({ thread, nested }) => `${nested ? "  " : ""}${thread.id}`);
+
+    expect(rows).toEqual([
+      "unrelated",
+      "orchestrator",
+      "  worker-a",
+      "  worker-b",
+      "  worker-launcher",
+      "  grandchild",
+      "stray-worker",
+      "wrong-environment",
+      "loop-a",
+      "loop-b",
+    ]);
   });
 });
 
@@ -1117,6 +1214,108 @@ describe("Working shelf (beta)", () => {
       marker("settled-header"),
       row("s1", "settled"),
     ];
+
+    describe("with launched threads nested under their launcher", () => {
+      const nestedRow = (key: string): SidebarListItem => ({
+        kind: "thread",
+        key,
+        section: "active",
+        nested: true,
+      });
+      const nestedItems: readonly SidebarListItem[] = [
+        marker("pinned-header"),
+        marker("pinned-divider"),
+        row("a0", "active"),
+        row("a1", "active"),
+        nestedRow("a1-child-1"),
+        nestedRow("a1-child-2"),
+        row("a2", "active"),
+        row("a3", "active"),
+      ];
+      // The stored order has no nested rows: a nested row keeps no order key of its own.
+      const rootKeys = ["a0", "a1", "a2", "a3"];
+      const keys = new Map(rootKeys.map((key, index) => [key, "bdfh"[index]!]));
+      const planFor = (activeKey: string, overId: string) => {
+        const target = resolveSidebarDropTarget(nestedItems, activeKey, overId);
+        return {
+          target,
+          plan: planSidebarThreadDrop({
+            activeKey,
+            activeSection: "active",
+            target: target!,
+            pinnedOrder: [],
+            pinnedKeysById: new Map(),
+            activeOrder: rootKeys,
+            activeKeysById: keys,
+          }),
+        };
+      };
+
+      it("treats dropping a launcher where it already is as a no-op that rewrites no keys", () => {
+        const { target, plan } = planFor("a1", "a1");
+        expect(target?.activeOrder).toEqual(rootKeys);
+        expect(plan).toEqual({ kind: "none" });
+      });
+
+      it("moves a launcher with its children as one unit", () => {
+        expect(resolveSidebarDropTarget(nestedItems, "a1", "a3")?.activeOrder).toEqual([
+          "a0",
+          "a2",
+          "a3",
+          "a1",
+        ]);
+      });
+
+      it("lands a drop aimed at a nested row after its launcher's group", () => {
+        expect(planFor("a3", "a1-child-1").target?.activeOrder).toEqual(["a0", "a1", "a3", "a2"]);
+        expect(planFor("a3", "a1-child-2").target?.activeOrder).toEqual(["a0", "a1", "a3", "a2"]);
+        expect(planFor("a0", "a1-child-1").target?.activeOrder).toEqual(["a1", "a0", "a2", "a3"]);
+      });
+
+      it("bounds a drop below a nested child by the launcher, never by the child", () => {
+        const { plan } = planFor("a3", "a1-child-2");
+        expect(plan.kind).toBe("move-active");
+        const assigned = plan.kind === "move-active" ? plan.assignments : [];
+        expect(assigned.map(({ id }) => id)).toEqual(["a3"]);
+        expect(
+          assigned.every(({ id, orderKey }) => id === "a3" && orderKey > "d" && orderKey < "f"),
+        ).toBe(true);
+      });
+
+      it("holds a cross-section move at the destination's membership, not the source's children", () => {
+        // a1 and its children are dragged from Active to Pinned: the children stay
+        // nested in the active list, so the pinned held order must not list them.
+        expect(withNestedSidebarKeys(["p1", "a1"], nestedItems, "pinned")).toEqual(["p1", "a1"]);
+        // The reverse: a launcher pinned with pinned children comes back to Active.
+        const pinnedGroup: readonly SidebarListItem[] = [
+          row("p1", "pinned"),
+          { kind: "thread", key: "p1-child", section: "pinned", nested: true },
+          row("a0", "active"),
+        ];
+        expect(withNestedSidebarKeys(["a0", "p1"], pinnedGroup, "active")).toEqual(["a0", "p1"]);
+        expect(withNestedSidebarKeys(["p1", "a0"], pinnedGroup, "pinned")).toEqual([
+          "p1",
+          "p1-child",
+          "a0",
+        ]);
+      });
+
+      it("holds a moved order with every nested key back in it", () => {
+        expect(withNestedSidebarKeys(["a0", "a2", "a1", "a3"], nestedItems, "active")).toEqual([
+          "a0",
+          "a2",
+          "a1",
+          "a1-child-1",
+          "a1-child-2",
+          "a3",
+        ]);
+        expect(withNestedSidebarKeys(null, nestedItems, "active")).toBeNull();
+      });
+
+      it("never drags a nested row", () => {
+        expect(resolveSidebarDropTarget(nestedItems, "a1-child-1", "a3")).toBeNull();
+      });
+    });
 
     it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -556,6 +557,42 @@ describe("background work kinds from older or newer servers", () => {
         pendingBackgroundTasks: [{ taskId: "", kind: "command" }],
       }),
     ).toThrow();
+  });
+});
+
+describe("launchedByThreadId", () => {
+  const storedThread = {
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Worker",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+    forkedFrom: null,
+    createdBy: "agent",
+    creationSource: "mcp",
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    archivedAt: null,
+    deletedAt: null,
+  };
+  const decodeAppThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+
+  it("decodes a record stored before the field existed", () => {
+    const thread = decodeAppThread(storedThread);
+    expect(thread.launchedByThreadId).toBeUndefined();
+    expect(thread.lineage.relationshipToParent).toBeNull();
+  });
+
+  it("decodes a launched thread and leaves its lineage top level", () => {
+    const thread = decodeAppThread({ ...storedThread, launchedByThreadId: "thread-0" });
+    expect(thread.launchedByThreadId).toBe("thread-0");
+    expect(thread.lineage.parentThreadId).toBeNull();
   });
 });
 

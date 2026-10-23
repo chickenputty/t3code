@@ -80,6 +80,7 @@ function threadDetailToShell(
     branchPullRequest: thread.branchPullRequest ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     lineage: thread.lineage,
+    ...(thread.launchedByThreadId == null ? {} : { launchedByThreadId: thread.launchedByThreadId }),
     forkedFrom: thread.forkedFrom,
     createdBy: thread.createdBy,
     creationSource: thread.creationSource,
