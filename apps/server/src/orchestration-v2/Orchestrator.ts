@@ -492,7 +492,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "ledger.create":
     case "ledger.item.add":
     case "ledger.item.update":
-    case "ledger.checkpoint.reach":
+    case "ledger.checkpoint.set":
     case "ledger.close":
     case "ledger.reopen":
     case "ledger.item.verdict.record":

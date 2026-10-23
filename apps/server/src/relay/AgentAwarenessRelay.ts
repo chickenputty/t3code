@@ -136,7 +136,7 @@ function shouldPublishAgentAwarenessEvent(
     case "ledger.created":
     case "ledger.item.added":
     case "ledger.item.updated":
-    case "ledger.checkpoint.reached":
+    case "ledger.checkpoint.updated":
     case "ledger.closed":
     case "ledger.reopened":
       return false;

@@ -146,11 +146,12 @@ export const LedgerCommands = [
     ),
   ),
   Schema.Struct({
-    type: Schema.Literal("ledger.checkpoint.reach"),
+    type: Schema.Literal("ledger.checkpoint.set"),
     commandId: CommandId,
     threadId: ThreadId,
     ledgerId: LedgerId,
     checkpointId: LedgerCheckpointId,
+    reached: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("ledger.close"),
@@ -204,14 +205,14 @@ export const LedgerItemUpdatedPayloadJson = LedgerItemUpdatedPayload.mapFields((
   updatedAt: Schema.DateTimeUtcFromString,
 }));
 
-export const LedgerCheckpointReachedPayload = Schema.Struct({
+export const LedgerCheckpointUpdatedPayload = Schema.Struct({
   ledgerId: LedgerId,
   checkpoint: LedgerCheckpoint,
   updatedAt: Schema.DateTimeUtc,
 });
-export type LedgerCheckpointReachedPayload = typeof LedgerCheckpointReachedPayload.Type;
+export type LedgerCheckpointUpdatedPayload = typeof LedgerCheckpointUpdatedPayload.Type;
 
-export const LedgerCheckpointReachedPayloadJson = LedgerCheckpointReachedPayload.mapFields(
+export const LedgerCheckpointUpdatedPayloadJson = LedgerCheckpointUpdatedPayload.mapFields(
   (fields) => ({
     ...fields,
     checkpoint: LedgerCheckpointJson,
@@ -222,12 +223,14 @@ export const LedgerCheckpointReachedPayloadJson = LedgerCheckpointReachedPayload
 export const LedgerClosedPayload = Schema.Struct({
   ledgerId: LedgerId,
   closedAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
 });
 export type LedgerClosedPayload = typeof LedgerClosedPayload.Type;
 
 export const LedgerClosedPayloadJson = LedgerClosedPayload.mapFields((fields) => ({
   ...fields,
   closedAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
 }));
 
 export const LedgerReopenedPayload = Schema.Struct({

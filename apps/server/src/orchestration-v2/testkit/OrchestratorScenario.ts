@@ -179,7 +179,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "ledger.create":
     case "ledger.item.add":
     case "ledger.item.update":
-    case "ledger.checkpoint.reach":
+    case "ledger.checkpoint.set":
     case "ledger.close":
     case "ledger.reopen":
       return [command.threadId];

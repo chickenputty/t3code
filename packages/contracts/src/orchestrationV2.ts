@@ -45,8 +45,8 @@ import {
 } from "./checkpointDiff.ts";
 import {
   Ledger,
-  LedgerCheckpointReachedPayload,
-  LedgerCheckpointReachedPayloadJson,
+  LedgerCheckpointUpdatedPayload,
+  LedgerCheckpointUpdatedPayloadJson,
   LedgerClosedPayload,
   LedgerClosedPayloadJson,
   LedgerCommands,
@@ -1745,8 +1745,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
-    type: Schema.Literal("ledger.checkpoint.reached"),
-    payload: LedgerCheckpointReachedPayload,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayload,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2592,8 +2592,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
-    type: Schema.Literal("ledger.checkpoint.reached"),
-    payload: LedgerCheckpointReachedPayloadJson,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayloadJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
