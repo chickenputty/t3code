@@ -143,8 +143,12 @@ it.effect("creates and reads a ledger through the real orchestrator and projecti
     );
     assert.equal(close.ledger?.unfinished, 1);
   }).pipe(
-    Effect.provide(LedgerMcpService.layer.pipe(Layer.provideMerge(layerThreads))),
-    Effect.provide(layerOrchestrator),
-    Effect.provide(NodeCrypto.layer),
+    Effect.provide(
+      LedgerMcpService.layer.pipe(
+        Layer.provideMerge(layerThreads),
+        Layer.provideMerge(layerOrchestrator),
+        Layer.provideMerge(NodeCrypto.layer),
+      ),
+    ),
   ),
 );
