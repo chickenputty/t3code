@@ -324,7 +324,8 @@ export function applyOrchestrationV2ProjectionEvent(
     case "ledger.item.updated":
     case "ledger.checkpoint.reached":
     case "ledger.closed":
-      return projection;
+    case "ledger.reopened":
+      return base;
     case "turn-item.updated": {
       // Streamed updates land on the newest items, so search from the end.
       let itemIndex = projection.turnItems.length - 1;

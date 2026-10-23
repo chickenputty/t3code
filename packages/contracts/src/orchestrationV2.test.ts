@@ -11,6 +11,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentJson,
+  OrchestrationV2Command,
   OrchestrationV2DomainEventJson,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjectionJson,
@@ -684,8 +685,24 @@ describe("task ledger contracts", () => {
       decodeEvent({
         ...base,
         type: "ledger.item.updated",
-        payload: { ledgerId: "ledger-1", items: ledger.items, updatedAt: iso },
+        payload: { ledgerId: "ledger-1", item: ledger.items[0], updatedAt: iso },
       }).type,
     ).toBe("ledger.item.updated");
+  });
+
+  it("rejects an empty item update and a client-supplied verdict", () => {
+    const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+    const update = {
+      type: "ledger.item.update",
+      commandId: "command-1",
+      threadId: "thread-1",
+      ledgerId: "ledger-1",
+      itemId: "item-1",
+    };
+    expect(() => decodeCommand(update)).toThrow();
+    expect(decodeCommand({ ...update, status: "in_progress" }).type).toBe("ledger.item.update");
+    expect(
+      decodeCommand({ ...update, status: "closed", verdict: ledger.items[0]?.verdict }),
+    ).not.toHaveProperty("verdict");
   });
 });

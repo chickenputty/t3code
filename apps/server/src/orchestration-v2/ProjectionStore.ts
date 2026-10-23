@@ -943,6 +943,7 @@ export function applyToProjection(
     case "ledger.item.updated":
     case "ledger.checkpoint.reached":
     case "ledger.closed":
+    case "ledger.reopened":
       return base;
     case "context-transfer.created":
     case "context-transfer.updated":

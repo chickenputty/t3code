@@ -8,14 +8,21 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const LedgerItemStatus = Schema.Literals(["open", "in_progress", "closed", "dropped"]);
 export type LedgerItemStatus = typeof LedgerItemStatus.Type;
 
+/** Who judged, without the provider options a full `ModelSelection` carries. */
+export const LedgerVerdictJudge = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+});
+export type LedgerVerdictJudge = typeof LedgerVerdictJudge.Type;
+
 export const LedgerItemVerdict = Schema.Struct({
   outcome: Schema.Literals(["pass", "fail"]),
-  judge: ModelSelection,
+  judge: LedgerVerdictJudge,
   notes: Schema.String,
   at: Schema.DateTimeUtc,
 });
@@ -128,8 +135,16 @@ export const LedgerCommands = [
     status: Schema.optional(LedgerItemStatus),
     evidence: Schema.optional(Schema.NullOr(Schema.String)),
     dropReason: Schema.optional(Schema.NullOr(Schema.String)),
-    verdict: Schema.optional(Schema.NullOr(LedgerItemVerdict)),
-  }),
+    // No verdict: only the server attests one, via the internal `ledger.item.verdict.record`.
+  }).check(
+    Schema.makeFilter(
+      (update) =>
+        update.status !== undefined ||
+        update.evidence !== undefined ||
+        update.dropReason !== undefined ||
+        "A ledger item update must change status, evidence or dropReason.",
+    ),
+  ),
   Schema.Struct({
     type: Schema.Literal("ledger.checkpoint.reach"),
     commandId: CommandId,
@@ -143,19 +158,49 @@ export const LedgerCommands = [
     threadId: ThreadId,
     ledgerId: LedgerId,
   }),
+  Schema.Struct({
+    type: Schema.Literal("ledger.reopen"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ledgerId: LedgerId,
+  }),
 ] as const;
 
-/** Event payload for `ledger.item.added`, `ledger.item.updated` and `ledger.checkpoint.reached`. */
-export const LedgerItemsEventPayload = Schema.Struct({
+/** Server-only: keeps a judge verdict from being asserted by a client. */
+export const LedgerVerdictRecordCommand = Schema.Struct({
+  type: Schema.Literal("ledger.item.verdict.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  ledgerId: LedgerId,
+  itemId: LedgerItemId,
+  verdict: LedgerItemVerdict,
+});
+
+/** Payload of `ledger.item.added`: only the newly added items, which readers upsert. */
+export const LedgerItemsAddedPayload = Schema.Struct({
   ledgerId: LedgerId,
   items: Schema.Array(LedgerItem),
   updatedAt: Schema.DateTimeUtc,
 });
-export type LedgerItemsEventPayload = typeof LedgerItemsEventPayload.Type;
+export type LedgerItemsAddedPayload = typeof LedgerItemsAddedPayload.Type;
 
-export const LedgerItemsEventPayloadJson = LedgerItemsEventPayload.mapFields((fields) => ({
+export const LedgerItemsAddedPayloadJson = LedgerItemsAddedPayload.mapFields((fields) => ({
   ...fields,
   items: Schema.Array(LedgerItemJson),
+  updatedAt: Schema.DateTimeUtcFromString,
+}));
+
+/** Payload of `ledger.item.updated`: the one item after the change. */
+export const LedgerItemUpdatedPayload = Schema.Struct({
+  ledgerId: LedgerId,
+  item: LedgerItem,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type LedgerItemUpdatedPayload = typeof LedgerItemUpdatedPayload.Type;
+
+export const LedgerItemUpdatedPayloadJson = LedgerItemUpdatedPayload.mapFields((fields) => ({
+  ...fields,
+  item: LedgerItemJson,
   updatedAt: Schema.DateTimeUtcFromString,
 }));
 
@@ -183,4 +228,15 @@ export type LedgerClosedPayload = typeof LedgerClosedPayload.Type;
 export const LedgerClosedPayloadJson = LedgerClosedPayload.mapFields((fields) => ({
   ...fields,
   closedAt: Schema.DateTimeUtcFromString,
+}));
+
+export const LedgerReopenedPayload = Schema.Struct({
+  ledgerId: LedgerId,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type LedgerReopenedPayload = typeof LedgerReopenedPayload.Type;
+
+export const LedgerReopenedPayloadJson = LedgerReopenedPayload.mapFields((fields) => ({
+  ...fields,
+  updatedAt: Schema.DateTimeUtcFromString,
 }));

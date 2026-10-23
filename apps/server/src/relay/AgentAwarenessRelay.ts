@@ -138,6 +138,7 @@ function shouldPublishAgentAwarenessEvent(
     case "ledger.item.updated":
     case "ledger.checkpoint.reached":
     case "ledger.closed":
+    case "ledger.reopened":
       return false;
   }
 }

@@ -50,8 +50,13 @@ import {
   LedgerClosedPayload,
   LedgerClosedPayloadJson,
   LedgerCommands,
-  LedgerItemsEventPayload,
-  LedgerItemsEventPayloadJson,
+  LedgerItemsAddedPayload,
+  LedgerItemsAddedPayloadJson,
+  LedgerItemUpdatedPayload,
+  LedgerItemUpdatedPayloadJson,
+  LedgerReopenedPayload,
+  LedgerReopenedPayloadJson,
+  LedgerVerdictRecordCommand,
   LedgerJson,
 } from "./ledger.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -1730,8 +1735,13 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
-    type: Schema.Literals(["ledger.item.added", "ledger.item.updated"]),
-    payload: LedgerItemsEventPayload,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayload,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -1742,6 +1752,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("ledger.closed"),
     payload: LedgerClosedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayload,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2567,8 +2582,13 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
-    type: Schema.Literals(["ledger.item.added", "ledger.item.updated"]),
-    payload: LedgerItemsEventPayloadJson,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayloadJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -2579,6 +2599,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("ledger.closed"),
     payload: LedgerClosedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayloadJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3117,6 +3142,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  LedgerVerdictRecordCommand,
   /**
    * Internal so no client can mark a request saved without the value being
    * stored.

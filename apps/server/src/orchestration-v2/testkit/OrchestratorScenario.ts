@@ -181,6 +181,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "ledger.item.update":
     case "ledger.checkpoint.reach":
     case "ledger.close":
+    case "ledger.reopen":
       return [command.threadId];
     case "delegated_task.request":
     case "delegated_task.wake-policy":
