@@ -247,6 +247,10 @@
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"
     },
+    "./taskLedger": {
+      "types": "./src/taskLedger.ts",
+      "import": "./src/taskLedger.ts"
+    },
     "./changeRequestUrl": {
       "types": "./src/changeRequestUrl.ts",
       "import": "./src/changeRequestUrl.ts"

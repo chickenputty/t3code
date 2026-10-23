@@ -117,6 +117,7 @@ export const layer: Layer.Layer<
       yield* sql.withTransaction(
         Effect.gen(function* () {
           const throughSequence = yield* eventStore.latestSequence();
+          yield* sql`DELETE FROM orchestration_v2_projection_ledgers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
           yield* sql`DELETE FROM orchestration_v2_projection_checkpoints`;

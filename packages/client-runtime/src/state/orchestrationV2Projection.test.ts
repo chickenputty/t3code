@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type Ledger,
+  LedgerId,
+  LedgerItemId,
   type ThreadPullRequestLink,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderSession,
@@ -107,6 +110,96 @@ const emptyProjection = {
   visibleTurnItems: [],
   updatedAt: now,
 } as OrchestrationV2ThreadProjection;
+
+describe("applyOrchestrationV2ProjectionEvent ledger", () => {
+  const ledgerId = LedgerId.make("ledger:client");
+  const itemId = LedgerItemId.make("item:client");
+  const event = <E extends OrchestrationV2DomainEvent>(body: Omit<E, "id" | "threadId">) =>
+    ({ ...body, id: "ledger-event", threadId }) as unknown as E;
+
+  it("folds the same event sequence the server projects into the same ledger", () => {
+    const openItem = {
+      id: itemId,
+      title: "Item",
+      acceptance: "works",
+      status: "open" as const,
+      evidence: null,
+      dropReason: null,
+      verdict: null,
+      createdAt: now,
+      updatedAt: now,
+      closedAt: null,
+    };
+    const later = DateTime.add(now, { seconds: 10 });
+    const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+      event({
+        type: "ledger.created",
+        occurredAt: now,
+        payload: {
+          id: ledgerId,
+          threadId,
+          title: "Client",
+          startState: "",
+          checkpoints: [],
+          winConditions: [],
+          items: [openItem],
+          createdAt: now,
+          updatedAt: now,
+          closedAt: null,
+        },
+      }),
+      event({
+        type: "ledger.item.updated",
+        occurredAt: later,
+        payload: {
+          ledgerId,
+          item: { ...openItem, status: "dropped", dropReason: "no", updatedAt: later },
+          updatedAt: later,
+        },
+      }),
+      event({
+        type: "ledger.closed",
+        occurredAt: later,
+        payload: { ledgerId, closedAt: later, updatedAt: later },
+      }),
+    ];
+
+    const projected = events.reduce<OrchestrationV2ThreadProjection | null>(
+      (projection, next) => applyOrchestrationV2ProjectionEvent(projection, next),
+      emptyProjection,
+    );
+    // The server test projects this same sequence through SQL and a rebuild to this same ledger.
+    const expected: Ledger = {
+      id: ledgerId,
+      threadId,
+      title: "Client",
+      startState: "",
+      checkpoints: [],
+      winConditions: [],
+      items: [{ ...openItem, status: "dropped", dropReason: "no", updatedAt: later }],
+      createdAt: now,
+      updatedAt: later,
+      closedAt: later,
+    };
+    expect(projected?.ledger).toEqual(expected);
+    // Events occurred later than the projection, yet ledger edits are not activity.
+    expect(projected?.updatedAt).toEqual(emptyProjection.updatedAt);
+    expect(projected?.thread.updatedAt).toEqual(emptyProjection.thread.updatedAt);
+  });
+
+  it("leaves a thread without a ledger unchanged by events it has no ledger for", () => {
+    const projected = applyOrchestrationV2ProjectionEvent(
+      emptyProjection,
+      event({
+        type: "ledger.reopened",
+        occurredAt: now,
+        payload: { ledgerId, updatedAt: now },
+      }),
+    );
+    expect(projected?.ledger).toBeUndefined();
+    expect(projected && "ledger" in projected).toBe(false);
+  });
+});
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
   it("applies a compact PR sync without replacing other links or thread metadata", () => {

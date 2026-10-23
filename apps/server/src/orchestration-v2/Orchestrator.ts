@@ -77,10 +77,17 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import {
+  type LedgerCommand,
+  type LedgerEventBody,
+  ledgerEventFromPlan,
+  planLedgerCommand,
+} from "./TaskLedger.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -489,6 +496,13 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "thread.stop":
     case "provider.switch":
+    case "ledger.create":
+    case "ledger.item.add":
+    case "ledger.item.update":
+    case "ledger.checkpoint.set":
+    case "ledger.close":
+    case "ledger.reopen":
+    case "ledger.item.verdict.record":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":
@@ -11221,6 +11235,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const dispatchLedgerCommand = Effect.fn("orchestrationV2.dispatch.ledger")(function* (
+    command: LedgerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { thread, ledger } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["ledger"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    const planned = planLedgerCommand({ command, ledger, now });
+    if (Result.isFailure(planned)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: planned.failure,
+      });
+    }
+    for (const event of planned.success) {
+      yield* emit(
+        events,
+        command,
+      )<LedgerEventBody>(
+        ledgerEventFromPlan(event, {
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+        }),
+      );
+    }
+    // The planner returns no events for a redundant command; that is accepted, not an error.
+    return { redundant: planned.success.length === 0 };
+  });
+
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -11235,6 +11292,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+      /** The command was valid but already in effect, so it commits a receipt and no events. */
+      readonly acceptsNoEvents?: true;
       readonly cancelUnsettledEffects?: {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
@@ -11250,6 +11309,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+    let acceptsNoEvents = false;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -11562,12 +11622,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;
+      case "ledger.create":
+      case "ledger.item.add":
+      case "ledger.item.update":
+      case "ledger.checkpoint.set":
+      case "ledger.close":
+      case "ledger.reopen":
+      case "ledger.item.verdict.record":
+        acceptsNoEvents = (yield* dispatchLedgerCommand(command, events)).redundant;
+        break;
       default:
         return yield* dispatchUnsupported(command);
     }
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
+      ...(acceptsNoEvents ? { acceptsNoEvents } : {}),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
     };
   });
@@ -11652,6 +11722,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
+        planned.acceptsNoEvents === true ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"

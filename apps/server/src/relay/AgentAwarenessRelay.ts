@@ -133,6 +133,15 @@ function shouldPublishAgentAwarenessEvent(
     case "context-handoff.updated":
     case "context-transfer.created":
     case "context-transfer.updated":
+    // The relay announces when an agent needs a person (finished, blocked, asking). Ledger
+    // bookkeeping is progress inside a run, not one of those moments, and an item flipping
+    // state would otherwise ping on every step of a long task.
+    case "ledger.created":
+    case "ledger.item.added":
+    case "ledger.item.updated":
+    case "ledger.checkpoint.updated":
+    case "ledger.closed":
+    case "ledger.reopened":
       return false;
   }
 }
