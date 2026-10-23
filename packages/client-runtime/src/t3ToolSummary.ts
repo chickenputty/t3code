@@ -272,6 +272,12 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("queuedRunId")), "queued message"),
       );
       break;
+    case "ledger-read":
+      label = phrase("Read", "read", "the task ledger");
+      break;
+    case "ledger-update":
+      label = phrase("Updated", "update", "the task ledger");
+      break;
     case "question-list":
       label = phrase("Listed", "list", `pending questions ${times}`);
       break;
