@@ -22,6 +22,8 @@
       // Windows verify script with esbuild through a path knip does not trace, and
       // electron-builder loads the macOS signer by path.
       "entry": [
+        // These fixture scripts are injected into a browser page by path.
+        "fixtures/issue-16534/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
@@ -85,6 +87,10 @@
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+    },
+    "apps/marketing": {
+      // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
+      "ignoreDependencies": ["@astrojs/check"],
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.

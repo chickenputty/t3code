@@ -51,7 +51,7 @@ On web and desktop, unpinning, settling, snoozing, and archiving a thread each s
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
 viewing. Discarding an unsent draft from the sidebar works the same way: Undo brings
-back its text and attachments. `mod+z` triggers the most recent Undo when no text field is focused; see
+back its text and attachments. `mod+z` triggers the most recent Undo, even from the composer; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
 On web and desktop, you can also drag files from your computer onto any thread row:
@@ -106,6 +106,10 @@ their default order until the server is updated.
 To generate a fresh title from the conversation, open a thread's menu and choose
 **Regenerate title**. The action is unavailable while title generation is in progress
 or when the connected environment needs a server update.
+
+To change how titles are written, add **Thread title instructions** in **Settings → General →
+Text generation**, such as a length limit or an identifier to put first. They apply to new and
+regenerated titles. Select a project to give it its own instructions.
 
 Agents connected through T3 Code can use the same server-owned metadata workflow to
 rename a thread, regenerate its title, or link and unlink a pull request. These changes
