@@ -1,15 +1,20 @@
 import {
   EnvironmentId,
+  EventId,
   LedgerId,
   LedgerItemId,
+  MessageId,
   type Ledger,
   type LedgerItem,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import { deriveLedgerProgress, formatLedgerProgress } from "./threadLedger.ts";
@@ -50,8 +55,6 @@ describe("deriveLedgerProgress", () => {
       total: 5,
       closed: 2,
       dropped: 1,
-      inProgress: 1,
-      open: 1,
       remaining: 2,
       active: true,
     });
@@ -95,7 +98,7 @@ describe("formatLedgerProgress", () => {
 describe("ledgerAtom", () => {
   it("keeps its value through updates that leave the ledger alone", () => {
     const ledger = ledgerOf(["open"]);
-    const projection = { ...v2Projection, ledger };
+    const projection: OrchestrationV2ThreadProjection = { ...v2Projection, ledger };
     const state = Atom.make(
       AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(projection) }),
     );
@@ -107,15 +110,34 @@ describe("ledgerAtom", () => {
       immediate: true,
     });
 
-    // A streamed update replaces the projection but not the ledger inside it.
+    // A real message event produces a new projection that carries the same ledger object.
+    const afterMessage = applyOrchestrationV2ProjectionEvent(projection, {
+      id: EventId.make("event-message"),
+      type: "message.updated",
+      threadId: v2ThreadId,
+      occurredAt: DateTime.add(v2Now, { seconds: 1 }),
+      payload: {
+        id: MessageId.make("message-1"),
+        threadId: v2ThreadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        text: "Streaming",
+        streaming: true,
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: v2Now,
+        updatedAt: v2Now,
+      },
+    } as OrchestrationV2DomainEvent);
+    expect(afterMessage).not.toBe(projection);
+    expect(afterMessage?.ledger).toBe(ledger);
     registry.set(
       state,
       AsyncResult.success({
         ...EMPTY_ENVIRONMENT_THREAD_STATE,
-        data: Option.some({
-          ...projection,
-          updatedAt: DateTime.add(v2Now, { seconds: 1 }),
-        }),
+        data: Option.some(afterMessage!),
       }),
     );
     expect(seen).toEqual([ledger]);

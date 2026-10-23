@@ -4,8 +4,6 @@ export interface LedgerProgress {
   readonly total: number;
   readonly closed: number;
   readonly dropped: number;
-  readonly inProgress: number;
-  readonly open: number;
   /** Items still to do, which is what the server's auto-continue keeps working on. */
   readonly remaining: number;
   /** The ledger has unfinished work: not closed, and an item is open or in progress. */
@@ -32,8 +30,6 @@ export function deriveLedgerProgress(ledger: Ledger): LedgerProgress {
     total: ledger.items.length,
     closed: counts.closed,
     dropped: counts.dropped,
-    inProgress: counts.in_progress,
-    open: counts.open,
     remaining,
     active: ledger.closedAt === null && remaining > 0,
   };

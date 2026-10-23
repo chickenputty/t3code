@@ -235,7 +235,7 @@ session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
 
 Provider commands must start the message to run. T3 Code commands such as
-`/model` and `/plan`, and skill mentions, work on any line. `/ledger` must start the message.
+`/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
@@ -260,7 +260,7 @@ row above the composer shows the goal and its progress.
 
 For a task with several parts, the agent can keep a task ledger: a checklist for the thread with a title, where the work started, checkpoints, win conditions, and items that each say what done means. Start one by sending `/ledger` followed by the task, for example `/ledger move the settings page to the new layout`. The message must start with `/ledger`. The agent itemizes the task into a ledger first, then works through it, recording evidence as it closes each item. Only the agent edits the ledger. The command appears when the environment supports task ledgers.
 
-Watch progress in the **Overview** tab, which lists every item as open, in progress, done or dropped, with its evidence, the reason for any dropped item, and a judge's verdict when there is one. While items remain open, a **Ledger** count such as `3/8` also shows beside the thread title.
+Watch progress in two places: the **Overview** tab and the thread details panel. Both list every item as open, in progress, done or dropped, with its evidence, the reason for any dropped item, and a judge's verdict when there is one. While items remain open, a **Ledger** count such as `3/8` also shows at the right of the thread header.
 
 If a turn ends while items are still open, T3 Code continues for you. It sends a follow-up marked as automatic in the thread, so it is not mistaken for something you typed. It continues up to five times in a row, and stops sooner if a round makes no progress. When it stops, the thread says why and is marked unread.
 

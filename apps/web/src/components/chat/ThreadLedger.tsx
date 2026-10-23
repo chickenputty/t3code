@@ -74,8 +74,10 @@ function LedgerList({ heading, entries }: { heading: string; entries: ReadonlyAr
     <div className="flex flex-col gap-0.5">
       <p className="text-2xs font-medium text-muted-foreground">{heading}</p>
       <ul className="m-0 list-disc ps-4 text-xs text-foreground/80 marker:text-muted-foreground/60">
-        {entries.map((entry) => (
-          <li key={entry} className="break-words">
+        {entries.map((entry, index) => (
+          // Win conditions are bare strings with no id; the list is replaced whole, never reordered.
+          // oxlint-disable-next-line react/no-array-index-key
+          <li key={`${index}:${entry}`} className="break-words">
             {entry}
           </li>
         ))}
@@ -160,8 +162,11 @@ export function ThreadLedgerHeaderProgress({ threadRef }: { threadRef: ScopedThr
   const progress = deriveLedgerProgress(ledger);
   if (!progress.active) return null;
   return (
-    <Badge variant="info" size="sm" aria-label={`Task ledger: ${formatLedgerProgress(progress)}`}>
-      Ledger {progress.closed}/{progress.total - progress.dropped}
+    <Badge variant="info" size="sm">
+      <span aria-hidden>
+        Ledger {progress.closed}/{progress.total - progress.dropped}
+      </span>
+      <span className="sr-only">Task ledger: {formatLedgerProgress(progress)}</span>
     </Badge>
   );
 }

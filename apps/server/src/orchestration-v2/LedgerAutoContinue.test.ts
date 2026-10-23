@@ -257,6 +257,7 @@ it.effect("enqueues one follow-up naming the open items after a completed run", 
     assert.equal(message.createdBy, "agent");
     assert.equal(message.creationSource, "server");
     assert.equal(roundOf(message), 1);
+    assert.include(message.notification?.summary ?? "", "Continuing the task ledger automatically");
     assert.include(message.text, "item:a");
     assert.include(message.text, "Item a");
     assert.include(message.text, "a works");

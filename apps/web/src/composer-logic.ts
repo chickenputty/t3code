@@ -363,6 +363,11 @@ export function expandLedgerSlashCommand(text: string): string | null {
   return task === undefined ? null : `${LEDGER_PREAMBLE}\n\nTask: ${task}`;
 }
 
+/** A `/ledger` with no task has nothing to itemize, so it is held in the composer, not sent. */
+export function isBareLedgerSlashCommand(text: string): boolean {
+  return /^\/ledger$/i.test(text.trim());
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model" | "ledger"> | null {

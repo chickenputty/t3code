@@ -22,6 +22,7 @@ import {
   expandLedgerSlashCommand,
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
+  isBareLedgerSlashCommand,
   isCollapsedCursorAdjacentToInlineToken,
   isPathSuggestionCurrent,
   replaceTextRange,
@@ -587,5 +588,12 @@ describe("expandLedgerSlashCommand", () => {
     expect(expandLedgerSlashCommand("/ledger   ")).toBeNull();
     expect(expandLedgerSlashCommand("please /ledger do it")).toBeNull();
     expect(expandLedgerSlashCommand("/ledgers do it")).toBeNull();
+  });
+
+  it("recognises a bare /ledger so it can be held back", () => {
+    expect(isBareLedgerSlashCommand("/ledger")).toBe(true);
+    expect(isBareLedgerSlashCommand("  /Ledger \n")).toBe(true);
+    expect(isBareLedgerSlashCommand("/ledger fix it")).toBe(false);
+    expect(isBareLedgerSlashCommand("/ledgers")).toBe(false);
   });
 });

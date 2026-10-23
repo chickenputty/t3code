@@ -53,6 +53,7 @@ import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
   expandLedgerSlashCommand,
+  isBareLedgerSlashCommand,
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
@@ -722,6 +723,13 @@ export function useComposerSend(input: ComposerSendInput) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      return;
+    }
+    if (
+      isBareLedgerSlashCommand(trimmed) &&
+      readEnvironmentPresentation(environmentId)?.serverConfig?.environment.capabilities
+        .threadLedger === true
+    ) {
       return;
     }
     if (!hasSendableContent) {
