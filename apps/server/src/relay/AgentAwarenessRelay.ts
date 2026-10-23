@@ -133,6 +133,12 @@ function shouldPublishAgentAwarenessEvent(
     case "context-handoff.updated":
     case "context-transfer.created":
     case "context-transfer.updated":
+    case "ledger.created":
+    case "ledger.item.added":
+    case "ledger.item.updated":
+    case "ledger.checkpoint.updated":
+    case "ledger.closed":
+    case "ledger.reopened":
       return false;
   }
 }
