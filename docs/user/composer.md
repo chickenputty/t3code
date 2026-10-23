@@ -113,6 +113,14 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Loadouts
+
+A loadout is a named agent structure: which provider instance, model, and effort each role runs on (planner, sub-planner, explorer, worker, judge). Every thread starts **Solo**, one agent on the thread's own model, because a strong solo agent is usually cheaper and as good. Pick a different loadout from the **Loadout** control next to the access mode once a thread exists. The agent can also propose one, with a reason, when it sizes a larger task. Your own pick always wins: the agent cannot replace a loadout you chose.
+
+Under a loadout, the agent delegates to a role instead of naming a model. A loadout with a judge role also gates the task ledger: each item closes only after a separate judge model passes it, and the agent cannot record that verdict itself. The gate is fixed when the ledger is created, so switching to Solo later does not lift it for a ledger already in progress.
+
+Edit the list in **Settings → General → Loadouts**. A project can override the environment's list. A role left empty runs on the thread's own model, and a thread whose loadout was deleted runs solo.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

@@ -6,6 +6,11 @@ import { DEFAULT_LOADOUTS, Loadout, SOLO_LOADOUT_ID } from "./loadout.ts";
 import { ProjectSettingsOverrides, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const decodeLoadout = Schema.decodeUnknownSync(Loadout);
+const encodeLoadout = Schema.encodeSync(Loadout);
+const decodeSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeProjectOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
+const decodeLedgerJson = Schema.decodeUnknownSync(LedgerJson);
 
 describe("loadout settings", () => {
   it("defaults to the built-in loadouts, solo first", () => {
@@ -27,9 +32,7 @@ describe("loadout settings", () => {
 
   it("ships built-ins that decode as loadouts and never name a role twice", () => {
     for (const loadout of DEFAULT_LOADOUTS) {
-      expect(Schema.decodeUnknownSync(Loadout)(Schema.encodeSync(Loadout)(loadout))).toEqual(
-        loadout,
-      );
+      expect(decodeLoadout(encodeLoadout(loadout))).toEqual(loadout);
     }
     expect(DEFAULT_LOADOUTS.map(({ id }) => id)).toEqual([
       "solo",
@@ -40,10 +43,10 @@ describe("loadout settings", () => {
   });
 
   it("accepts loadouts in a settings patch and a project override", () => {
-    expect(Schema.decodeUnknownSync(ServerSettingsPatch)({ loadouts: [] }).loadouts).toEqual([]);
-    expect(
-      Schema.decodeUnknownSync(ProjectSettingsOverrides)({ loadouts: DEFAULT_LOADOUTS }).loadouts,
-    ).toEqual(DEFAULT_LOADOUTS);
+    expect(decodeSettingsPatch({ loadouts: [] }).loadouts).toEqual([]);
+    expect(decodeProjectOverrides({ loadouts: DEFAULT_LOADOUTS }).loadouts).toEqual(
+      DEFAULT_LOADOUTS,
+    );
   });
 });
 
@@ -62,9 +65,8 @@ describe("ledger requiresJudge", () => {
   };
 
   it("decodes a record written before the field existed, leaving it unset", () => {
-    const decoded = Schema.decodeUnknownSync(LedgerJson)(stored);
-    expect(decoded.requiresJudge).toBeUndefined();
-    expect(Schema.decodeUnknownSync(LedgerJson)({ ...stored, requiresJudge: true })).toMatchObject({
+    expect(decodeLedgerJson(stored).requiresJudge).toBeUndefined();
+    expect(decodeLedgerJson({ ...stored, requiresJudge: true })).toMatchObject({
       requiresJudge: true,
     });
   });
