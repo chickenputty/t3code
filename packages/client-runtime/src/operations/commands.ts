@@ -129,6 +129,21 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly expectedEmpty?: boolean;
 }
 
+/** Pin free text, or a message whose text the server copies at pin time. */
+export type AddThreadRulePinInput = ThreadCommandInput & { readonly pinId: string } & (
+    | { readonly text: string; readonly sourceMessageId?: never }
+    | { readonly sourceMessageId: MessageId; readonly text?: never }
+  );
+
+export interface EditThreadRulePinInput extends ThreadCommandInput {
+  readonly pinId: string;
+  readonly text: string;
+}
+
+export interface RemoveThreadRulePinInput extends ThreadCommandInput {
+  readonly pinId: string;
+}
+
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
   readonly runtimeMode: RuntimeMode;
 }
@@ -551,6 +566,42 @@ export const markThreadUnread = Effect.fn("EnvironmentCommands.markThreadUnread"
     type: "thread.mark-unread",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+  });
+});
+
+export const addThreadRulePin = Effect.fn("EnvironmentCommands.addThreadRulePin")(function* (
+  input: AddThreadRulePinInput,
+) {
+  return yield* dispatch({
+    type: "thread.rule-pin.add",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    pinId: input.pinId,
+    ...(input.text === undefined ? {} : { text: input.text }),
+    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
+  });
+});
+
+export const editThreadRulePin = Effect.fn("EnvironmentCommands.editThreadRulePin")(function* (
+  input: EditThreadRulePinInput,
+) {
+  return yield* dispatch({
+    type: "thread.rule-pin.edit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    pinId: input.pinId,
+    text: input.text,
+  });
+});
+
+export const removeThreadRulePin = Effect.fn("EnvironmentCommands.removeThreadRulePin")(function* (
+  input: RemoveThreadRulePinInput,
+) {
+  return yield* dispatch({
+    type: "thread.rule-pin.remove",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    pinId: input.pinId,
   });
 });
 

@@ -24,6 +24,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   ThreadId,
+  ThreadRulePin,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
@@ -70,6 +71,10 @@ const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
 );
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
+);
+const EMPTY_RULE_PINS: ReadonlyArray<ThreadRulePin> = Object.freeze([]);
+const EMPTY_RULE_PINS_ATOM = Atom.make(EMPTY_RULE_PINS).pipe(
+  Atom.withLabel("web-thread-rule-pins:empty"),
 );
 const EMPTY_THREAD_HISTORY_ATOM = Atom.make<ThreadHistoryMeta>(EMPTY_THREAD_HISTORY_META).pipe(
   Atom.withLabel("web-thread-history:empty"),
@@ -185,6 +190,13 @@ export function useThreadLastVisitedAt(ref: ScopedThreadRef | null): DateTime.Ut
 export function useThreadUpdatedAt(ref: ScopedThreadRef | null): DateTime.Utc | null {
   return useAtomValue(
     ref === null ? EMPTY_UPDATED_AT_ATOM : environmentThreadDetails.updatedAtAtom(ref),
+  );
+}
+
+/** The thread's rule pins, stable through updates that leave them unchanged. */
+export function useThreadRulePinList(ref: ScopedThreadRef | null): ReadonlyArray<ThreadRulePin> {
+  return useAtomValue(
+    ref === null ? EMPTY_RULE_PINS_ATOM : environmentThreadDetails.rulePinsAtom(ref),
   );
 }
 

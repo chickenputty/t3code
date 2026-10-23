@@ -3,6 +3,7 @@ import {
   OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
+  type ThreadRulePin,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -40,6 +41,18 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTurnItem> =
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
+
+const EMPTY_RULE_PINS: ReadonlyArray<ThreadRulePin> = Object.freeze([]);
+
+function sameRulePins(left: ReadonlyArray<ThreadRulePin>, right: ReadonlyArray<ThreadRulePin>) {
+  return (
+    left.length === right.length &&
+    left.every((pin, index) => {
+      const other = right[index]!;
+      return pin.id === other.id && pin.text === other.text;
+    })
+  );
+}
 
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
 type VisibleTurnItem = OrchestrationV2ThreadProjection["visibleTurnItems"][number];
@@ -345,6 +358,18 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoint-summaries:${key}`));
   });
 
+  // Message rows read this to mark their own pin, so it must not change when a
+  // rename or run update delivers the same pins decoded into new objects.
+  const rulePinsAtomFamily = Atom.family((key: string) => {
+    let value: ReadonlyArray<ThreadRulePin> = EMPTY_RULE_PINS;
+    return Atom.make((get) => {
+      const next =
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.rulePins ??
+        EMPTY_RULE_PINS;
+      if (!sameRulePins(value, next)) value = next;
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-rule-pins:${key}`));
+  });
   const lastVisitedAtAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get) =>
@@ -420,6 +445,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
+    rulePinsAtom: (ref: ScopedThreadRef) => rulePinsAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),

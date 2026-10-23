@@ -18,6 +18,12 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type AddThreadRulePinInput,
+  type EditThreadRulePinInput,
+  type RemoveThreadRulePinInput,
+  addThreadRulePin,
+  editThreadRulePin,
+  removeThreadRulePin,
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
   type RetryWorkspacePreparationInput,
@@ -101,6 +107,9 @@ export type LoadEarlierThreadHistoryInput = {
 };
 
 export type {
+  AddThreadRulePinInput,
+  EditThreadRulePinInput,
+  RemoveThreadRulePinInput,
   ArchiveThreadInput,
   CancelQueuedRunInput,
   CreateThreadInput,
@@ -254,6 +263,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     markUnread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:mark-unread",
       execute: (input: MarkThreadUnreadInput) => markThreadUnread(input),
+      scheduler,
+      concurrency,
+    }),
+    addRulePin: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:add-rule-pin",
+      execute: (input: AddThreadRulePinInput) => addThreadRulePin(input),
+      scheduler,
+      concurrency,
+    }),
+    editRulePin: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:edit-rule-pin",
+      execute: (input: EditThreadRulePinInput) => editThreadRulePin(input),
+      scheduler,
+      concurrency,
+    }),
+    removeRulePin: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:remove-rule-pin",
+      execute: (input: RemoveThreadRulePinInput) => removeThreadRulePin(input),
       scheduler,
       concurrency,
     }),

@@ -18,6 +18,7 @@ import { useThreadProjection } from "~/state/entities";
 import { ThreadActivityTab } from "./ThreadActivityTab";
 import { ThreadFilesTab } from "./ThreadFilesTab";
 import { ThreadOverviewTab } from "./ThreadOverviewTab";
+import { ThreadRulePinsSection } from "./ThreadRulePinsSection";
 import { type ThreadPaneTab, useShownThreadPaneTab } from "./threadPaneTabStore";
 import { ThreadUsageTab } from "./ThreadUsageTab";
 
@@ -90,7 +91,12 @@ function PaneOverview({
       <p className="text-muted-foreground text-sm">This thread is not loaded.</p>
     );
   }
-  return <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />;
+  return (
+    <div className="flex flex-col gap-6">
+      <ThreadRulePinsSection threadRef={threadRef} />
+      <ThreadOverviewTab row={row} model={model} nowMs={nowMs} onAction={onAction} />
+    </div>
+  );
 }
 
 function PaneLoading() {

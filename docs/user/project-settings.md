@@ -178,6 +178,10 @@ Pinned rules work with Claude and Codex threads. Other providers ignore them.
 
 An edit reaches a Codex thread on its next message. A Claude thread picks it up the next time its context is compacted or a new session starts. Neither interrupts a turn that is already running.
 
+### Pinned rules for one thread
+
+A single thread can have its own pins too, for something that matters in that conversation only. Use the pin button under a message to pin its text, or open the thread's **Overview** tab to add, edit, or unpin rules. A thread's pins are sent after the project's rules and follow the same delivery. Pinning a message keeps a copy of its text, so editing or reverting the message later does not change the pin.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
