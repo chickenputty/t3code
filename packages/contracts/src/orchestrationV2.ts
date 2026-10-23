@@ -299,6 +299,10 @@ export const OrchestrationV2ContextCapabilities = Schema.Struct({
   supportsDeltaHandoff: Schema.Boolean,
   supportsFullThreadHandoff: Schema.Boolean,
   maxRecommendedHandoffChars: Schema.NullOr(PositiveInt),
+  // True only when the adapter re-delivers pinned rules outside the summarized
+  // transcript, so they survive compaction. Capabilities persisted before this
+  // field existed decode to false rather than overclaiming.
+  deliversPinnedRules: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;
 

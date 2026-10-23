@@ -569,6 +569,32 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
+
+  it("appends pinned rules verbatim to the system prompt, outside the summarized transcript", () => {
+    const pinnedRules = "Never touch generated/ files.\nAlways run `vp test` first.";
+    const base = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pins",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+    };
+    const append = (options: ReturnType<typeof ClaudeAdapterV2.makeClaudeQueryOptions>) =>
+      (options.systemPrompt as { readonly append?: string }).append ?? "";
+
+    assert.include(
+      append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules })),
+      pinnedRules,
+    );
+    assert.notInclude(append(ClaudeAdapterV2.makeClaudeQueryOptions(base)), "Never touch");
+    assert.equal(
+      append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules: "" })),
+      append(ClaudeAdapterV2.makeClaudeQueryOptions(base)),
+    );
+  });
 });
 
 describe("ClaudeAdapterV2 context usage", () => {

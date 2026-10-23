@@ -436,6 +436,11 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /**
+   * User-authored rules that must survive context compaction verbatim. Only
+   * adapters declaring `context.deliversPinnedRules` act on it.
+   */
+  readonly pinnedRules?: string;
 }
 
 export interface ProviderAdapterV2SteerInput {

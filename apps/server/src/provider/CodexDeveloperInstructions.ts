@@ -200,6 +200,41 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
 }
 
 /**
+ * Pinned rules must reach the model verbatim, but Codex silently cuts the middle
+ * out of an over-cap value. A long block therefore spans numbered keys, which
+ * Codex emits in key order, so the pieces read back as the original text. The
+ * short case keeps the bare `pinned_rules` key.
+ */
+export function buildCodexPinnedRulesContext(
+  pinnedRules: string,
+): Record<string, V2TurnStartParams__AdditionalContextEntry> {
+  if (pinnedRules === "") return {};
+  if (Buffer.byteLength(pinnedRules) <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+    return { pinned_rules: { kind: "application", value: pinnedRules } };
+  }
+  const chunks: Array<string> = [];
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of pinnedRules) {
+    const bytes = Buffer.byteLength(character);
+    if (chunkBytes + bytes > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+      chunks.push(chunk);
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += character;
+    chunkBytes += bytes;
+  }
+  chunks.push(chunk);
+  return Object.fromEntries(
+    chunks.map((value, index) => [
+      `pinned_rules_${String(index + 1).padStart(2, "0")}`,
+      { kind: "application" as const, value },
+    ]),
+  );
+}
+
+/**
  * This must stay out of the collaboration mode: when the model catalog ships
  * its own text for a mode, as newer models do, Codex uses that text and drops
  * the client's `developer_instructions` entirely.

@@ -164,6 +164,7 @@ const OpenCode2ProviderCapabilities = {
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
+    deliversPinnedRules: false,
   },
   checkpointing: {
     appCanCheckpointFilesystem: true,

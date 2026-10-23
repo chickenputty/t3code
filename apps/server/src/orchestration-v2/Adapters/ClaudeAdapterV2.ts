@@ -427,6 +427,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
+    deliversPinnedRules: true,
   },
   checkpointing: {
     appCanCheckpointFilesystem: true,
@@ -1302,6 +1303,14 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /**
+   * The system prompt sits outside the transcript Claude summarizes, so rules
+   * appended here survive every compaction. It is fixed when the CLI process
+   * opens: an edit reaches a live process only after it restarts (new session,
+   * model or policy change, or server restart). Replacing a live process for
+   * a pin edit would fail while background work runs, so we do not.
+   */
+  readonly pinnedRules?: string;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1396,6 +1405,7 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        ...(input.pinnedRules === undefined || input.pinnedRules === "" ? [] : [input.pinnedRules]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -9309,6 +9319,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(turnInput.pinnedRules === undefined ? {} : { pinnedRules: turnInput.pinnedRules }),
           });
           const querySession = yield* queryRunner
             .open({

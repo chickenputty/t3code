@@ -8,6 +8,7 @@ import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
+  buildCodexPinnedRulesContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
 
@@ -57,6 +58,31 @@ describe("buildCodexAdditionalContext", () => {
       sections.map((entry) => entry.value).join("\n\n"),
       T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
     );
+  });
+});
+
+describe("buildCodexPinnedRulesContext", () => {
+  it("keeps short rules under one trusted key", () => {
+    NodeAssert.deepEqual(buildCodexPinnedRulesContext("Rule one\nRule two"), {
+      pinned_rules: { kind: "application", value: "Rule one\nRule two" },
+    });
+    NodeAssert.deepEqual(buildCodexPinnedRulesContext(""), {});
+  });
+
+  it("splits rules over the per-entry cap into ordered keys that rejoin verbatim", () => {
+    // Multi-byte characters make a split mid-codepoint or mid-cap easy to get wrong.
+    const rules = "Rule 🦊 ".repeat(1_500);
+    const context = buildCodexPinnedRulesContext(rules);
+    const entries = Object.entries(context).sort(([a], [b]) => a.localeCompare(b));
+
+    NodeAssert.ok(entries.length > 1);
+    for (const [, entry] of entries) {
+      NodeAssert.equal(entry.kind, "application");
+      NodeAssert.ok(
+        Buffer.byteLength(entry.value, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+      );
+    }
+    NodeAssert.equal(entries.map(([, entry]) => entry.value).join(""), rules);
   });
 });
 

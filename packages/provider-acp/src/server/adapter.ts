@@ -543,6 +543,8 @@ export const AcpProviderCapabilitiesV2 = {
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
+    // Not supported in v1: ACP has no channel outside the compacted transcript.
+    deliversPinnedRules: false,
   },
   checkpointing: {
     appCanCheckpointFilesystem: true,

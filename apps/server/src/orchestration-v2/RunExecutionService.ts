@@ -1573,6 +1573,17 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
+        // A settings read failure must not fail the turn; the rules are
+        // re-sent on the next one.
+        const pinnedRules = yield* serverSettings.getSettings.pipe(
+          Effect.map(
+            (settings) =>
+              resolveProjectSettings(settings, input.appThread.projectId).settings.pinnedRules,
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to read pinned rules.", { cause }).pipe(Effect.as("")),
+          ),
+        );
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -1594,6 +1605,7 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(pinnedRules === "" ? {} : { pinnedRules }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.
