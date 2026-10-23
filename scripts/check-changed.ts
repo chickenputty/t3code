@@ -99,11 +99,19 @@ const steps = [
   },
 ].filter((step) => step !== false);
 
+// Windows cannot spawn the `vp.cmd` shim without a shell, so every step failed
+// instantly there; running the package's bin with this Node works everywhere.
+const vp = NodePath.join(root, "node_modules", "vite-plus", "bin", "vp");
+
 console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 const results = steps.map((step) => {
   console.log(`\n> vp ${step.name}`);
   const started = performance.now();
-  const { status } = NodeChildProcess.spawnSync("vp", step.args, { cwd: root, stdio: "inherit" });
+  const { status, error } = NodeChildProcess.spawnSync(process.execPath, [vp, ...step.args], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (error) console.error(`check:changed: could not start vp: ${error.message}`);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   return { name: step.name, ok: status === 0, seconds };
 });
