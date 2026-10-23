@@ -5,7 +5,10 @@ import {
   type MessageId,
   type ThreadRulePin,
 } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  hasUnresolvedComposerContext,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 
 /**
  * The text delivered to providers for one turn: project rules, then the
@@ -110,10 +113,7 @@ export function planRulePinChange(input: {
       if (text === "") return rejected("There is no text to pin.");
       // Legacy messages carry an envelope instead of records; there is no cheap
       // faithful text for them, so they are refused rather than pinned raw.
-      if (
-        command.sourceMessageId !== undefined &&
-        (text.includes("t3-context:") || text.includes("<t3_context"))
-      ) {
+      if (command.sourceMessageId !== undefined && hasUnresolvedComposerContext(text)) {
         return rejected("This message has attached context that cannot be pinned as text.");
       }
       const tooLong = lengthIssue(text, pins, undefined);
@@ -148,8 +148,9 @@ export function planRulePinChange(input: {
       };
     }
     case "thread.rule-pin.remove":
+      // Already gone is the state the caller wanted, so a retry succeeds.
       return pins.some((pin) => pin.id === command.pinId)
         ? { _tag: "changed", pins: pins.filter((pin) => pin.id !== command.pinId) }
-        : rejected(`Rule pin ${command.pinId} was not found.`);
+        : { _tag: "unchanged" };
   }
 }

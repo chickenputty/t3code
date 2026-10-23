@@ -27,6 +27,22 @@ describe("messagePinState", () => {
     ).toEqual({ kind: "pinned", pinId: "p1" });
   });
 
+  it("disables a message with unresolved context syntax, with the reason, but not mere prose", () => {
+    const envelope = messagePinState({
+      messageId: "m1",
+      text: "<t3_context>\n<context id='a'/>\n</t3_context>\nHi",
+      pins: [],
+    });
+    expect(envelope.kind).toBe("unavailable");
+    expect(envelope.kind === "unavailable" ? envelope.reason : "").toContain("attached context");
+    expect(
+      messagePinState({ messageId: "m1", text: "See [x](t3-context://v1/file/a)", pins: [] }).kind,
+    ).toBe("unavailable");
+    expect(
+      messagePinState({ messageId: "m1", text: "The t3-context: scheme is internal.", pins: [] }),
+    ).toEqual({ kind: "available" });
+  });
+
   it("does not offer an empty message, an over-long one, or a full list", () => {
     expect(messagePinState({ messageId: "m1", text: "  \n", pins: [] }).kind).toBe("unavailable");
     expect(

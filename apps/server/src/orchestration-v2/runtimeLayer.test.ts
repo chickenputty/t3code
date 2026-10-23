@@ -5556,6 +5556,17 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread rule pins", (
       const afterRetry = (yield* orchestrator.getThreadProjection(threadId)).thread;
       assert.deepEqual(afterRetry.rulePins, beforeRetry.rulePins);
       assert.deepEqual(afterRetry.updatedAt, beforeRetry.updatedAt);
+      // Likewise a retried remove of a pin that is already gone.
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.remove",
+        commandId: CommandId.make("rule-pins-reject-remove-gone"),
+        threadId,
+        pinId: "missing",
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.rulePins,
+        beforeRetry.rulePins,
+      );
 
       const unknownThread = yield* rejects({
         type: "thread.rule-pin.add",
@@ -5575,12 +5586,6 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread rule pins", (
           threadId,
           pinId: "missing",
           text: "x",
-        },
-        {
-          type: "thread.rule-pin.remove",
-          commandId: CommandId.make("rule-pins-reject-remove"),
-          threadId,
-          pinId: "missing",
         },
         {
           type: "thread.rule-pin.add",

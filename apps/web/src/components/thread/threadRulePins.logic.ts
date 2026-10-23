@@ -4,6 +4,7 @@ import {
   THREAD_RULE_PINS_TOTAL_MAX_LENGTH,
   type ThreadRulePin,
 } from "@t3tools/contracts";
+import { hasUnresolvedComposerContext } from "@t3tools/shared/composerContextReferences";
 
 type PinLike = Pick<ThreadRulePin, "id" | "text" | "sourceMessageId">;
 
@@ -28,6 +29,12 @@ export function messagePinState(input: {
   if (existing !== undefined) return { kind: "pinned", pinId: existing.id };
   const text = input.text.trim();
   if (text === "") return { kind: "unavailable", reason: "This message has no text to pin." };
+  if (hasUnresolvedComposerContext(text)) {
+    return {
+      kind: "unavailable",
+      reason: "This message has attached context that cannot be pinned as text.",
+    };
+  }
   if (text.length > THREAD_RULE_PIN_TEXT_MAX_LENGTH) {
     return { kind: "unavailable", reason: "This message is too long to pin." };
   }

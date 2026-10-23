@@ -271,13 +271,49 @@ describe("planRulePinChange", () => {
     assert.deepEqual(plan, { _tag: "changed", pins: [pin("p1", "One"), pin("p3", "Three")] });
   });
 
-  it("rejects an edit or remove of an unknown pin", () => {
-    for (const command of [
-      { type: "thread.rule-pin.edit", pinId: "missing", text: "x" },
-      { type: "thread.rule-pin.remove", pinId: "missing" },
-    ] as const) {
-      const plan = planRulePinChange({ pins: [pin("p1", "One")], now, command });
-      assert.equal(plan._tag, "rejected");
-    }
+  it("rejects an edit of an unknown pin", () => {
+    const plan = planRulePinChange({
+      pins: [pin("p1", "One")],
+      now,
+      command: { type: "thread.rule-pin.edit", pinId: "missing", text: "x" },
+    });
+    assert.equal(plan._tag, "rejected");
+  });
+
+  it("treats a retried remove of a pin that is already gone as a no-op", () => {
+    assert.deepEqual(
+      planRulePinChange({
+        pins: [pin("p1", "One")],
+        now,
+        command: { type: "thread.rule-pin.remove", pinId: "missing" },
+      }),
+      { _tag: "unchanged" },
+    );
+  });
+
+  it("pins a message that mentions the context protocol as prose", () => {
+    const sourceMessageId = MessageId.make("message-1");
+    const text = "Links like t3-context: are internal; never print a <t3_context-style tag.";
+    const plan = planRulePinChange({
+      pins: [],
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "p1", sourceMessageId },
+      sourceMessage: { id: sourceMessageId, text },
+    });
+    assert.deepEqual(plan, {
+      _tag: "changed",
+      pins: [{ id: "p1", text, sourceMessageId, createdAt: now }],
+    });
+  });
+
+  it("rejects a message with leftover link syntax that did not parse as a reference", () => {
+    const sourceMessageId = MessageId.make("message-1");
+    const plan = planRulePinChange({
+      pins: [],
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "p1", sourceMessageId },
+      sourceMessage: { id: sourceMessageId, text: "See [x](t3-context://v1/bad kind/id) now" },
+    });
+    assert.equal(plan._tag, "rejected");
   });
 });
