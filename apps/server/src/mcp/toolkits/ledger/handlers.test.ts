@@ -135,7 +135,7 @@ const makeFakeThreads = () => {
 };
 
 const withServer = <A, E>(
-  fake: ReturnType<typeof makeFakeThreads>,
+  fake: { readonly layer: Layer.Layer<ThreadManagement.ThreadManagementService> },
   body: (
     call: (
       name: string,
@@ -310,13 +310,110 @@ it.effect("does not duplicate work when a call is retried with the same request 
       expect(failureOf(replayed)).toBeUndefined();
       expect(fake.ledgers.get(ownThread)?.items.map((item) => item.id)).toEqual(["L1", "L2", "L3"]);
       expect(fake.planned()).toBe(2);
+    }),
+  );
+});
 
-      // Without a key two identical calls are two requests, so the second collides on the ids.
-      const bare = { items: [{ id: "L4", title: "More", acceptance: "Done" }] };
-      yield* call("ledger_add_items", bare);
-      expect(failureOf(yield* call("ledger_add_items", bare))).toMatchObject({
-        message: "Duplicate item id L4.",
+it.effect("recognises an identical retry without a key and replays it", () => {
+  const fake = makeFakeThreads();
+  return withServer(fake, (call) =>
+    Effect.gen(function* () {
+      const retried = (name: string, args: Record<string, unknown>) =>
+        Effect.gen(function* () {
+          const first = yield* call(name, args);
+          const planned = fake.planned();
+          const second = yield* call(name, args);
+          expect(failureOf(first), name).toBeUndefined();
+          expect(second.structuredContent, name).toEqual(first.structuredContent);
+          expect(fake.planned(), name).toBe(planned);
+          return first;
+        });
+
+      const created = yield* retried("ledger_create", { title: "Ship", items: twoItems });
+      expect(fake.ledgers.get(ownThread)?.items).toHaveLength(2);
+      const ledgerId = fake.ledgers.get(ownThread)?.id;
+      expect(created.structuredContent).toMatchObject({ ledger: { ledgerId } });
+
+      yield* retried("ledger_update_item", { itemId: "L1", status: "closed", evidence: "ok" });
+      yield* retried("ledger_update_item", { itemId: "L2", status: "dropped", dropReason: "no" });
+      yield* retried("ledger_close", {});
+      yield* retried("ledger_reopen", {});
+      expect(fake.ledgers.get(ownThread)?.id).toBe(ledgerId);
+
+      // Add and checkpoint calls hash on their arguments too.
+      yield* retried("ledger_add_items", {
+        items: [{ id: "L3", title: "Docs", acceptance: "README" }],
       });
+    }),
+  );
+});
+
+it.effect("does not let an earlier identical call replay once its effect is stale", () => {
+  const fake = makeFakeThreads();
+  return withServer(fake, (call) =>
+    Effect.gen(function* () {
+      yield* call("ledger_create", { title: "Ship", items: [twoItems[0]] });
+      // Rejected while L1 is open; the same call must work after L1 is closed.
+      expect(failureOf(yield* call("ledger_close", {}))).toMatchObject({
+        message: expect.stringContaining("items still open or in progress: L1"),
+      });
+      yield* call("ledger_update_item", { itemId: "L1", status: "closed", evidence: "ok" });
+      expect(failureOf(yield* call("ledger_close", {}))).toBeUndefined();
+      expect(fake.ledgers.get(ownThread)?.closedAt).not.toBeNull();
+
+      // Close, reopen, close again with identical arguments each round.
+      yield* call("ledger_reopen", {});
+      expect(fake.ledgers.get(ownThread)?.closedAt).toBeNull();
+      yield* call("ledger_close", {});
+      expect(fake.ledgers.get(ownThread)?.closedAt).not.toBeNull();
+      yield* call("ledger_reopen", {});
+      expect(fake.ledgers.get(ownThread)?.closedAt).toBeNull();
+
+      // An item closed, reopened and closed again with the same evidence.
+      yield* call("ledger_update_item", { itemId: "L1", status: "open" });
+      yield* call("ledger_update_item", { itemId: "L1", status: "closed", evidence: "ok" });
+      expect(fake.ledgers.get(ownThread)?.items[0]?.status).toBe("closed");
+
+      // A replacement ledger with the same arguments is a new ledger, not the first one's receipt.
+      yield* call("ledger_close", {});
+      const first = fake.ledgers.get(ownThread)?.id;
+      yield* call("ledger_create", { title: "Ship", items: [twoItems[0]] });
+      expect(fake.ledgers.get(ownThread)?.id).not.toBe(first);
+      expect(fake.ledgers.get(ownThread)?.closedAt).toBeNull();
+    }),
+  );
+});
+
+it.effect("keeps one key from replaying a replaced ledger's receipt", () => {
+  const fake = makeFakeThreads();
+  return withServer(fake, (call) =>
+    Effect.gen(function* () {
+      yield* call("ledger_create", {
+        title: "One",
+        items: [twoItems[0]],
+        clientRequestId: "create-a",
+      });
+      yield* call("ledger_update_item", {
+        itemId: "L1",
+        status: "closed",
+        evidence: "ok",
+        clientRequestId: "shared",
+      });
+      yield* call("ledger_close", { clientRequestId: "close-a" });
+      yield* call("ledger_create", {
+        title: "Two",
+        items: [twoItems[0]],
+        clientRequestId: "create-b",
+      });
+      // Same key and arguments against the new ledger's L1 is a new command, so it takes effect.
+      const second = yield* call("ledger_update_item", {
+        itemId: "L1",
+        status: "closed",
+        evidence: "ok",
+        clientRequestId: "shared",
+      });
+      expect(failureOf(second)).toBeUndefined();
+      expect(fake.ledgers.get(ownThread)?.items[0]?.status).toBe("closed");
     }),
   );
 });
@@ -329,7 +426,9 @@ it.effect("tells the agent a rejected request key stays rejected", () =>
       yield* call("ledger_update_item", bad);
       expect(failureOf(yield* call("ledger_update_item", bad))).toMatchObject({
         code: "invalid_request",
-        message: expect.stringContaining("retry with a new clientRequestId"),
+        message: expect.stringContaining(
+          "already rejected: Item L1 needs evidence in the same update to close from open.",
+        ),
       });
       const fixed = yield* call("ledger_update_item", {
         ...bad,

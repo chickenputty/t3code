@@ -29,7 +29,7 @@ export const LedgerMcpClientRequestId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
 ).annotate({
   description:
-    "Stable idempotency key. Reuse it only when retrying the same call after a lost response. A rejected key stays rejected, so use a new one for a corrected call.",
+    "Optional idempotency key, unique per ledger. Omit it and an identical retry is recognised from the call's arguments. Set it to tell two identical calls apart, and reuse it only when retrying the same call after a lost response. A rejected key stays rejected, so use a new one for a corrected call.",
 });
 
 const ItemDraft = Schema.Struct({

@@ -26,7 +26,7 @@ const ledgerTool = {
 };
 
 const retryNote =
-  "Pass clientRequestId to make a retry after a lost response safe; reuse it only for that same call.";
+  "An identical retry after a lost response is recognised from the arguments and does not repeat the change. Pass clientRequestId only to tell two identical calls apart.";
 
 const LedgerCreateTool = Tool.make("ledger_create", {
   ...ledgerTool,
