@@ -1,13 +1,11 @@
 import {
   CommandId,
-  EventId,
   type Ledger,
   MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
   type RunId,
   type ThreadId,
-  TurnItemId,
 } from "@t3tools/contracts";
 import {
   decideLedgerAutoContinue,
@@ -20,8 +18,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const NON_TERMINAL_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
   "preparing",
@@ -41,6 +42,11 @@ export interface LedgerAutoContinueDeps {
     "dispatch" | "getThreadRecords"
   >;
   readonly eventSink: Pick<EventSink.EventSinkV2["Service"], "commitCommand">;
+  readonly projections: Pick<
+    ProjectionStore.ProjectionStoreV2["Service"],
+    "getNextTurnItemOrdinal"
+  >;
+  readonly ids: Pick<IdAllocator.IdAllocatorV2["Service"], "allocate" | "derive">;
 }
 
 const isClientUserMessage = (message: OrchestrationV2ConversationMessage) =>
@@ -60,15 +66,28 @@ function continuationText(
   ].join("\n\n");
 }
 
-function stopNoticeText(stuck: Extract<LedgerAutoContinueDecision, { type: "stuck" }>): string {
+const NOTICE_TITLES_SHOWN = 3;
+const NOTICE_TITLE_MAX_CHARS = 48;
+
+function stopNoticeText(
+  stuck: Extract<LedgerAutoContinueDecision, { type: "stuck" }>,
+  ledger: Ledger,
+): string {
   const count = stuck.openIds.length;
   const why =
     stuck.reason === "cap"
       ? `reached the limit of ${LEDGER_AUTO_CONTINUE_CAP} automatic follow-ups`
       : "no progress last round";
-  return `Auto-continue stopped: ${count} ledger ${count === 1 ? "item" : "items"} still open (${why}): ${stuck.openIds.join(", ")}`;
+  const titles = stuck.openIds.map((id) => {
+    const title = ledger.items.find((item) => item.id === id)?.title ?? id;
+    return title.length > NOTICE_TITLE_MAX_CHARS
+      ? `${title.slice(0, NOTICE_TITLE_MAX_CHARS - 1)}…`
+      : title;
+  });
+  const hidden = titles.length - NOTICE_TITLES_SHOWN;
+  const listed = titles.slice(0, NOTICE_TITLES_SHOWN).join(", ");
+  return `Stopped continuing the task ledger: ${count} ${count === 1 ? "item" : "items"} still open (${why}): ${listed}${hidden > 0 ? ` and ${hidden} more` : ""}.`;
 }
-
 /**
  * Called once a run's checkpoint is durable. Every skip below leaves the ledger as it is: the
  * user, or a later run's own finalization, decides what happens next. This runs on the lane that
@@ -124,8 +143,13 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
     messages: messages.toSorted(
       (a, b) => (ordinalByRun.get(a.runId!) ?? 0) - (ordinalByRun.get(b.runId!) ?? 0),
     ),
+    // A follow-up the user cancelled or stopped means they want it off until they speak again.
     cancelledRunIds: new Set(
-      runs.filter((candidate) => candidate.status === "cancelled").map(({ id }) => id),
+      runs
+        .filter(
+          (candidate) => candidate.status === "cancelled" || candidate.status === "interrupted",
+        )
+        .map(({ id }) => id),
     ),
   });
   if (decision.type === "idle") return;
@@ -133,6 +157,7 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
     // The timeline notice says why; the unread mark is the existing "look at me" signal.
     const now = yield* DateTime.now;
     const noticeCommandId = CommandId.make(`server:ledger-stuck-notice:${run.id}`);
+    const ordinal = yield* deps.projections.getNextTurnItemOrdinal(input.threadId);
     yield* deps.eventSink.commitCommand({
       commandId: noticeCommandId,
       threadId: input.threadId,
@@ -141,7 +166,10 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
       effects: [],
       events: [
         {
-          id: EventId.make(`event:ledger-stuck-notice:${run.id}`),
+          id: yield* deps.ids.allocate.event({
+            threadId: input.threadId,
+            commandId: noticeCommandId,
+          }),
           type: "turn-item.updated",
           threadId: input.threadId,
           runId: run.id,
@@ -149,7 +177,10 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: {
-            id: TurnItemId.make(`turn-item:run:${run.id}:signal:ledger-auto-continue-stopped`),
+            id: deps.ids.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: "ledger-auto-continue-stopped",
+            }),
             threadId: input.threadId,
             runId: run.id,
             nodeId: run.rootNodeId,
@@ -157,14 +188,14 @@ export const continueLedgerAfterRun = Effect.fn("LedgerAutoContinue.continueAfte
             providerTurnId: null,
             nativeItemRef: null,
             parentItemId: null,
-            ordinal: run.ordinal * 100 + 98,
+            ordinal,
             status: "completed",
             title: "Auto-continue stopped",
             startedAt: now,
             completedAt: now,
             updatedAt: now,
             type: "system_notice",
-            message: stopNoticeText(decision),
+            message: stopNoticeText(decision, ledger),
           },
         },
       ],
@@ -243,8 +274,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const eventSink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
     return {
-      afterRun: (input) => continueLedgerAfterRunSafely({ orchestrator, eventSink }, input),
+      afterRun: (input) =>
+        continueLedgerAfterRunSafely({ orchestrator, eventSink, projections, ids }, input),
     };
   }),
 );

@@ -495,7 +495,14 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerRunFinalizationServiceProvided,
         LedgerAutoContinue.layer.pipe(
-          Layer.provide(Layer.merge(layerOrchestratorProvided, layerEventSinkProvided)),
+          Layer.provide(
+            Layer.mergeAll(
+              layerOrchestratorProvided,
+              layerEventSinkProvided,
+              layerStores,
+              IdAllocator.layer,
+            ),
+          ),
         ),
         layerCheckpointRollbackServiceProvided,
         layerProviderSessionManagerProvided,

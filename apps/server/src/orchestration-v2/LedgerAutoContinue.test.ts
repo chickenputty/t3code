@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -46,6 +47,7 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  IdAllocator.layer,
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "ledger-auto-continue" },
@@ -61,17 +63,16 @@ let counter = 0;
 const nextId = (prefix: string) => `${prefix}:${counter++}`;
 
 const afterRun = (event: OrchestrationV2DomainEvent) =>
-  Orchestrator.OrchestratorV2.use((orchestrator) =>
-    EventSink.EventSinkV2.use((eventSink) =>
-      continueLedgerAfterRun(
-        { orchestrator, eventSink },
-        {
-          threadId: event.threadId,
-          runId: event.runId!,
-        },
-      ),
-    ),
-  );
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    yield* continueLedgerAfterRun(
+      { orchestrator, eventSink, projections, ids },
+      { threadId: event.threadId, runId: event.runId! },
+    );
+  });
 
 const setup = (name: string, items: ReadonlyArray<string> = ["a", "b"]) =>
   Effect.gen(function* () {
@@ -223,7 +224,7 @@ const stopNotices = (threadId: ThreadId) =>
       turnItemTypes: ["system_notice"],
     });
     return turnItems.flatMap((item) =>
-      item.type === "system_notice" && item.message.startsWith("Auto-continue stopped")
+      item.type === "system_notice" && item.message.startsWith("Stopped continuing the task ledger")
         ? [item.message]
         : [],
     );
@@ -405,9 +406,9 @@ it.effect("stops at the cap and marks the thread stuck", () =>
     assert.isTrue(yield* isMarkedStuck(threadId));
     const [notice, ...others] = yield* stopNotices(threadId);
     assert.equal(others.length, 0);
-    assert.include(notice, "Auto-continue stopped: 7 ledger items still open");
+    assert.include(notice, "Stopped continuing the task ledger: 7 items still open");
     assert.include(notice, "limit of 5");
-    assert.include(notice, "item:a");
+    assert.include(notice, "Item a, Item b, Item extra-1 and 4 more.");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -427,9 +428,9 @@ it.effect("stops when a round made no ledger progress and marks the thread stuck
     assert.isTrue(yield* isMarkedStuck(threadId));
     const notices = yield* stopNotices(threadId);
     assert.equal(notices.length, 1);
-    assert.include(notices[0], "Auto-continue stopped: 2 ledger items still open");
+    assert.include(notices[0], "Stopped continuing the task ledger: 2 items still open");
     assert.include(notices[0], "no progress last round");
-    assert.include(notices[0], "item:a, item:b");
+    assert.include(notices[0], "Item a, Item b.");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -469,6 +470,8 @@ it.effect(
       assert.equal((yield* latestRun(threadId)).status, "cancelled");
       const active = (yield* projectionRuns(threadId)).find((run) => run.status !== "cancelled")!;
       yield* afterRun(yield* endRun(active));
+      // Still one (the hand-made follow-up) because the cancelled run is newer than this one, so
+      // the newer-run exit applies. The server-wake step below is what isolates the cancel rule.
       assert.equal((yield* autoContinues(threadId)).length, 1);
 
       const id = nextId("server-wake");
@@ -503,9 +506,9 @@ it.effect("marks the thread unread when the follow-up itself fails", () =>
           dispatched.push(command.type);
         }),
     } as unknown as Parameters<typeof continueLedgerAfterRunSafely>[0]["orchestrator"];
-    const eventSink = {} as Parameters<typeof continueLedgerAfterRunSafely>[0]["eventSink"];
+    const unused = {} as never;
     yield* continueLedgerAfterRunSafely(
-      { orchestrator, eventSink },
+      { orchestrator, eventSink: unused, projections: unused, ids: unused },
       { threadId: ThreadId.make("thread:failing"), runId: RunId.make("run:failing") },
     );
     assert.deepEqual(dispatched, ["thread.mark-unread"]);
@@ -554,6 +557,24 @@ it.effect.each(["interrupted", "cancelled"] as const)(
       const followUp = (yield* autoContinues(threadId))[0]!;
       assert.equal((yield* latestRun(threadId)).userMessageId, followUp.id);
       yield* completeLatest(threadId, status);
+      assert.equal((yield* autoContinues(threadId)).length, 1);
+
+      // A later server wake finishes a run; the stopped follow-up keeps auto-continue off.
+      const id = nextId("server-wake");
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "A background task finished",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      yield* addItem(threadId, "fresh");
+      yield* completeLatest(threadId);
       assert.equal((yield* autoContinues(threadId)).length, 1);
     }).pipe(Effect.provide(layerTest)),
 );
