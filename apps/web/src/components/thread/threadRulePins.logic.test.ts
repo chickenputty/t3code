@@ -1,11 +1,15 @@
-import { THREAD_RULE_PIN_TEXT_MAX_LENGTH, THREAD_RULE_PINS_MAX_COUNT } from "@t3tools/contracts";
+import {
+  THREAD_RULE_PIN_TEXT_MAX_LENGTH,
+  THREAD_RULE_PINS_MAX_COUNT,
+  THREAD_RULE_PINS_TOTAL_MAX_LENGTH,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { messagePinState, rulePinDraftIssue } from "./threadRulePins.logic";
 
-const pin = (id: string, sourceMessageId: string | null = null) => ({
+const pin = (id: string, sourceMessageId: string | null = null, text = `Pin ${id}`) => ({
   id,
-  text: `Pin ${id}`,
+  text,
   sourceMessageId: sourceMessageId as never,
   createdAt: "2026-10-23T00:00:00.000Z",
 });
@@ -41,6 +45,14 @@ describe("messagePinState", () => {
     ).toBe("unavailable");
   });
 
+  it("does not offer a message that would push the pins past the combined cap", () => {
+    const pins = [pin("a", null, "x".repeat(THREAD_RULE_PINS_TOTAL_MAX_LENGTH - 5))];
+    const state = messagePinState({ messageId: "m1", text: "123456", pins });
+    expect(state.kind).toBe("unavailable");
+    expect(state.kind === "unavailable" ? state.reason : "").toContain("full");
+    expect(messagePinState({ messageId: "m1", text: "12345", pins }).kind).toBe("available");
+  });
+
   it("still reports a pinned message when the list is full", () => {
     const pins = Array.from({ length: THREAD_RULE_PINS_MAX_COUNT }, (_, i) =>
       pin(`p${i}`, i === 3 ? "m1" : null),
@@ -55,14 +67,37 @@ describe("messagePinState", () => {
 describe("rulePinDraftIssue", () => {
   it("accepts new text and changed text", () => {
     expect(rulePinDraftIssue({ draft: "Be terse.", current: null })).toBeNull();
-    expect(rulePinDraftIssue({ draft: "Be brief.", current: "Be terse." })).toBeNull();
+    expect(
+      rulePinDraftIssue({ draft: "Be brief.", current: { id: "p1", text: "Be terse." } }),
+    ).toBeNull();
   });
 
   it("rejects blank, unchanged and over-long drafts", () => {
     expect(rulePinDraftIssue({ draft: "   ", current: null })).toBe("empty");
-    expect(rulePinDraftIssue({ draft: "Be terse.\n", current: "Be terse." })).toBe("unchanged");
+    expect(
+      rulePinDraftIssue({ draft: "Be terse.\n", current: { id: "p1", text: "Be terse." } }),
+    ).toBe("unchanged");
     expect(
       rulePinDraftIssue({ draft: "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH + 1), current: null }),
+    ).toBe("too-long");
+  });
+
+  it("enforces the combined cap, replacing the edited pin's own text", () => {
+    const pins = [pin("a", null, "x".repeat(8_000)), pin("b", null, "y".repeat(8_000))];
+    expect(rulePinDraftIssue({ draft: "z", current: null, pins })).toBe("total-too-long");
+    expect(
+      rulePinDraftIssue({
+        draft: "z".repeat(8_000),
+        current: { id: "b", text: pins[1]!.text },
+        pins,
+      }),
+    ).toBeNull();
+    expect(
+      rulePinDraftIssue({
+        draft: "z".repeat(8_001),
+        current: { id: "b", text: pins[1]!.text },
+        pins,
+      }),
     ).toBe("too-long");
   });
 });

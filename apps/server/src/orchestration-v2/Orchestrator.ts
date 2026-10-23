@@ -3084,7 +3084,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: plan.reason,
         });
       }
-      rulePins = plan.pins;
+      // A retry still emits its (identical) event: a command that produces no
+      // event is an error, and the thread payload does not change.
+      if (plan._tag === "changed") rulePins = plan.pins;
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {

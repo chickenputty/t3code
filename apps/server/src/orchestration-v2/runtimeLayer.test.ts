@@ -5543,6 +5543,19 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread rule pins", (
       });
       const rejects = (command: Parameters<typeof orchestrator.dispatch>[0]) =>
         orchestrator.dispatch(command).pipe(Effect.flip);
+      // A client retry after a lost reply carries a new command id, same pin:
+      // it succeeds and leaves the list as it was.
+      const beforeRetry = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      yield* orchestrator.dispatch({
+        type: "thread.rule-pin.add",
+        commandId: CommandId.make("rule-pins-reject-add-retry"),
+        threadId,
+        pinId: "pin-1",
+        text: "One",
+      });
+      const afterRetry = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepEqual(afterRetry.rulePins, beforeRetry.rulePins);
+      assert.deepEqual(afterRetry.updatedAt, beforeRetry.updatedAt);
 
       const unknownThread = yield* rejects({
         type: "thread.rule-pin.add",

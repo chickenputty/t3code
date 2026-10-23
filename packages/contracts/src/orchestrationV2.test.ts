@@ -54,14 +54,24 @@ describe("thread rule pins", () => {
     expect(decodeField({ rulePins: [pin] }).rulePins).toEqual([pin]);
   });
 
-  it("rejects pin text over the cap instead of truncating it", () => {
+  it("rejects over-cap text on the commands instead of truncating it", () => {
+    const base = { commandId: "command-1", threadId: "thread-1", pinId: "pin-1" };
+    const over = "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH + 1);
+    expect(
+      decodeCommand({
+        ...base,
+        type: "thread.rule-pin.add",
+        text: "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH),
+      }).type,
+    ).toBe("thread.rule-pin.add");
+    expect(() => decodeCommand({ ...base, type: "thread.rule-pin.add", text: over })).toThrow();
+    expect(() => decodeCommand({ ...base, type: "thread.rule-pin.edit", text: over })).toThrow();
+  });
+
+  it("still decodes a stored pin longer than today's cap, so lowering it cannot break replay", () => {
     const decodePin = Schema.decodeUnknownSync(ThreadRulePin);
-    expect(decodePin({ ...pin, text: "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH) }).id).toBe(
-      "pin-1",
-    );
-    expect(() =>
-      decodePin({ ...pin, text: "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH + 1) }),
-    ).toThrow();
+    const over = "x".repeat(THREAD_RULE_PIN_TEXT_MAX_LENGTH * 2);
+    expect(decodePin({ ...pin, text: over }).text).toBe(over);
   });
 
   it("decodes the add, edit, and remove commands", () => {

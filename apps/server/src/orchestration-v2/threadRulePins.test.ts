@@ -80,6 +80,108 @@ describe("planRulePinChange", () => {
     });
   });
 
+  it("pins a message's context references as their labels, as the copy button does", () => {
+    const sourceMessageId = MessageId.make("message-1");
+    const href = "t3-context://v1/file/ctx-1";
+    const plan = planRulePinChange({
+      pins: [],
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "p1", sourceMessageId },
+      sourceMessage: { id: sourceMessageId, text: `Follow [src/app.ts](${href}) closely.` },
+    });
+    assert.deepEqual(plan, {
+      _tag: "changed",
+      pins: [{ id: "p1", text: "Follow src/app.ts closely.", sourceMessageId, createdAt: now }],
+    });
+  });
+
+  it("rejects a legacy context envelope it cannot resolve, rather than pinning it raw", () => {
+    const sourceMessageId = MessageId.make("message-1");
+    const plan = planRulePinChange({
+      pins: [],
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "p1", sourceMessageId },
+      sourceMessage: {
+        id: sourceMessageId,
+        text: "<t3_context>\n<context id='a'/>\n</t3_context>\nHi",
+      },
+    });
+    assert.equal(plan._tag, "rejected");
+    assert.include(plan._tag === "rejected" ? plan.reason : "", "context");
+  });
+
+  it("caps the pins' combined length, counting an edit as a replacement", () => {
+    const big = (id: string, length: number) => pin(id, "x".repeat(length));
+    const full = [big("a", 8_000), big("b", 8_000)];
+    const added = planRulePinChange({
+      pins: full,
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "c", text: "y" },
+    });
+    assert.equal(added._tag, "rejected");
+    assert.include(added._tag === "rejected" ? added.reason : "", "in total");
+
+    const grown = planRulePinChange({
+      pins: [big("a", 8_000), big("b", 7_000)],
+      now,
+      command: { type: "thread.rule-pin.edit", pinId: "b", text: "z".repeat(8_001) },
+    });
+    assert.equal(grown._tag, "rejected");
+
+    const shrunk = planRulePinChange({
+      pins: full,
+      now,
+      command: { type: "thread.rule-pin.edit", pinId: "b", text: "short" },
+    });
+    assert.equal(shrunk._tag, "changed");
+    const afterRemove = planRulePinChange({
+      pins: full,
+      now,
+      command: { type: "thread.rule-pin.remove", pinId: "a" },
+    });
+    assert.equal(afterRemove._tag, "changed");
+  });
+
+  it("treats a retried add with the same id and text as a no-op, but a different text as a clash", () => {
+    const pins = [pin("p1", "One")];
+    const retry = planRulePinChange({
+      pins,
+      now,
+      command: { type: "thread.rule-pin.add", pinId: "p1", text: "One" },
+    });
+    assert.deepEqual(retry, { _tag: "unchanged" });
+    const sourceMessageId = MessageId.make("message-1");
+    const withSource = [{ ...pin("p2", "Copied"), sourceMessageId }];
+    assert.deepEqual(
+      planRulePinChange({
+        pins: withSource,
+        now,
+        command: { type: "thread.rule-pin.add", pinId: "p2", sourceMessageId },
+        sourceMessage: { id: sourceMessageId, text: "Copied" },
+      }),
+      { _tag: "unchanged" },
+    );
+    assert.equal(
+      planRulePinChange({
+        pins,
+        now,
+        command: { type: "thread.rule-pin.add", pinId: "p1", text: "Different" },
+      })._tag,
+      "rejected",
+    );
+  });
+
+  it("treats an edit to the same text as a no-op", () => {
+    assert.deepEqual(
+      planRulePinChange({
+        pins: [pin("p1", "One")],
+        now,
+        command: { type: "thread.rule-pin.edit", pinId: "p1", text: " One " },
+      }),
+      { _tag: "unchanged" },
+    );
+  });
+
   it("rejects a message pin whose message is missing or has no text", () => {
     const sourceMessageId = MessageId.make("message-1");
     const command = { type: "thread.rule-pin.add", pinId: "p1", sourceMessageId } as const;

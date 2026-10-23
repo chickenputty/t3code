@@ -1,13 +1,19 @@
 import {
   THREAD_RULE_PIN_TEXT_MAX_LENGTH,
   THREAD_RULE_PINS_MAX_COUNT,
+  THREAD_RULE_PINS_TOTAL_MAX_LENGTH,
   type ThreadRulePin,
 } from "@t3tools/contracts";
+
+type PinLike = Pick<ThreadRulePin, "id" | "text" | "sourceMessageId">;
 
 export type MessagePinState =
   | { readonly kind: "available" }
   | { readonly kind: "pinned"; readonly pinId: string }
   | { readonly kind: "unavailable"; readonly reason: string };
+
+const totalLength = (pins: ReadonlyArray<Pick<ThreadRulePin, "text">>) =>
+  pins.reduce((total, pin) => total + pin.text.length, 0);
 
 /**
  * Matches by source message id, not text: the server copies the text at pin
@@ -16,7 +22,7 @@ export type MessagePinState =
 export function messagePinState(input: {
   readonly messageId: string;
   readonly text: string;
-  readonly pins: ReadonlyArray<Pick<ThreadRulePin, "id" | "sourceMessageId">>;
+  readonly pins: ReadonlyArray<PinLike>;
 }): MessagePinState {
   const existing = input.pins.find((pin) => pin.sourceMessageId === input.messageId);
   if (existing !== undefined) return { kind: "pinned", pinId: existing.id };
@@ -31,19 +37,33 @@ export function messagePinState(input: {
       reason: `A thread holds at most ${THREAD_RULE_PINS_MAX_COUNT} pins.`,
     };
   }
+  if (totalLength(input.pins) + text.length > THREAD_RULE_PINS_TOTAL_MAX_LENGTH) {
+    return {
+      kind: "unavailable",
+      reason: "This thread's pins are full. Unpin or shorten one to pin this message.",
+    };
+  }
   return { kind: "available" };
 }
 
-export type RulePinDraftIssue = "empty" | "too-long" | "unchanged";
+export type RulePinDraftIssue = "empty" | "too-long" | "total-too-long" | "unchanged";
 
-/** `current` is the pin's saved text when editing, or null for a new pin. */
+/**
+ * `current` is the pin being edited, or null for a new pin; the combined cap
+ * counts every other pin plus the draft.
+ */
 export function rulePinDraftIssue(input: {
   readonly draft: string;
-  readonly current: string | null;
+  readonly current: Pick<ThreadRulePin, "id" | "text"> | null;
+  readonly pins?: ReadonlyArray<Pick<ThreadRulePin, "id" | "text">>;
 }): RulePinDraftIssue | null {
   const draft = input.draft.trim();
   if (draft === "") return "empty";
   if (draft.length > THREAD_RULE_PIN_TEXT_MAX_LENGTH) return "too-long";
-  if (input.current !== null && draft === input.current.trim()) return "unchanged";
+  if (input.current !== null && draft === input.current.text.trim()) return "unchanged";
+  const others = (input.pins ?? []).filter((pin) => pin.id !== input.current?.id);
+  if (totalLength(others) + draft.length > THREAD_RULE_PINS_TOTAL_MAX_LENGTH) {
+    return "total-too-long";
+  }
   return null;
 }

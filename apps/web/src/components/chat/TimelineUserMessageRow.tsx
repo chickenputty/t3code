@@ -601,7 +601,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
-              <PinMessageButton messageId={row.message.id} text={row.message.text} />
+              <PinMessageButton messageId={row.message.id} text={plainText} />
               {resolvedContext.text && (
                 <MessageCopyButton
                   text={contextClipboardFragment ? resolvedContext.text : plainText}

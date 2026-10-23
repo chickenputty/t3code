@@ -375,11 +375,14 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 /**
- * Every thread event carries the whole thread, so the pin list rides each one:
- * these caps keep a runaway list from bloating all of them.
+ * Every thread event carries the whole thread, so the pin list rides each one
+ * and is stored forever: these caps keep it from bloating all of them. They are
+ * enforced on the commands and in the planner only. The stored `ThreadRulePin`
+ * has no length check, so lowering a cap later cannot break replay.
  */
 export const THREAD_RULE_PIN_TEXT_MAX_LENGTH = 8_000;
 export const THREAD_RULE_PINS_MAX_COUNT = 20;
+export const THREAD_RULE_PINS_TOTAL_MAX_LENGTH = 16_000;
 
 const ThreadRulePinText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(THREAD_RULE_PIN_TEXT_MAX_LENGTH),
@@ -393,7 +396,7 @@ const ThreadRulePinText = TrimmedNonEmptyString.check(
 export const ThreadRulePin = Schema.Struct({
   /** Chosen by the client that adds it, so a retried add cannot create two pins. */
   id: TrimmedNonEmptyString,
-  text: ThreadRulePinText,
+  text: TrimmedNonEmptyString,
   /** Set when the pin was made from a message; informational once copied. */
   sourceMessageId: Schema.NullOr(MessageId),
   createdAt: IsoDateTime,

@@ -12,6 +12,7 @@ import { rulePinDraftIssue } from "./threadRulePins.logic";
 const ISSUE_MESSAGES = {
   empty: "Write something to pin.",
   "too-long": "That is too long to pin.",
+  "total-too-long": "This thread's pins are full. Shorten or unpin another one first.",
   unchanged: "Nothing has changed.",
 } as const;
 
@@ -38,7 +39,8 @@ export function ThreadRulePinsSection({ threadRef }: { readonly threadRef: Scope
           editing === pin.id ? (
             <PinEditor
               key={pin.id}
-              current={pin.text}
+              current={pin}
+              pins={rulePins.pins}
               onCancel={() => setEditing(null)}
               onSave={(text) => rulePins.edit(pin.id, text)?.then(() => setEditing(null))}
             />
@@ -55,6 +57,7 @@ export function ThreadRulePinsSection({ threadRef }: { readonly threadRef: Scope
         {editing === "new" ? (
           <PinEditor
             current={null}
+            pins={rulePins.pins}
             onCancel={() => setEditing(null)}
             onSave={(text) => rulePins.addText(text)?.then(() => setEditing(null))}
           />
@@ -103,16 +106,18 @@ function PinRow({
 
 function PinEditor({
   current,
+  pins,
   onSave,
   onCancel,
 }: {
-  readonly current: string | null;
+  readonly current: ThreadRulePin | null;
+  readonly pins: ReadonlyArray<ThreadRulePin>;
   readonly onSave: (text: string) => Promise<unknown> | undefined;
   readonly onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState(current ?? "");
+  const [draft, setDraft] = useState(current?.text ?? "");
   const [saving, setSaving] = useState(false);
-  const issue = rulePinDraftIssue({ draft, current });
+  const issue = rulePinDraftIssue({ draft, current, pins });
 
   return (
     <div className="flex flex-col gap-2">
@@ -137,7 +142,7 @@ function PinEditor({
         <Button size="xs" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        {issue !== null && draft !== (current ?? "") ? (
+        {issue !== null && draft !== (current?.text ?? "") ? (
           <span className="text-muted-foreground text-xs">{ISSUE_MESSAGES[issue]}</span>
         ) : null}
       </div>

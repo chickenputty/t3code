@@ -10,6 +10,8 @@ import { randomUUID } from "~/lib/utils";
  * on servers from before rule pins, which would reject the commands, so
  * callers hide pinning there but still show pins already present.
  */
+export type ThreadRulePinsApi = ReturnType<typeof useThreadRulePins>;
+
 export function useThreadRulePins(threadRef: ScopedThreadRef | null) {
   const pins = useThreadRulePinList(threadRef);
   const configs = useServerConfigs();

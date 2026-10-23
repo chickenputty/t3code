@@ -2,7 +2,6 @@ import type { MessageId } from "@t3tools/contracts";
 import { PinIcon, PinOffIcon } from "lucide-react";
 import { memo, use } from "react";
 
-import { useThreadRulePins } from "~/hooks/useThreadRulePins";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { messagePinState } from "../thread/threadRulePins.logic";
@@ -20,7 +19,7 @@ export const PinMessageButton = memo(function PinMessageButton({
   readonly text: string;
 }) {
   const ctx = use(TimelineRowCtx);
-  const rulePins = useThreadRulePins(ctx.threadRef);
+  const { rulePins } = ctx;
   if (!rulePins.supported) return null;
   const state = messagePinState({ messageId, text, pins: rulePins.pins });
   const label =

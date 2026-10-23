@@ -1,9 +1,11 @@
 import {
   THREAD_RULE_PIN_TEXT_MAX_LENGTH,
   THREAD_RULE_PINS_MAX_COUNT,
+  THREAD_RULE_PINS_TOTAL_MAX_LENGTH,
   type MessageId,
   type ThreadRulePin,
 } from "@t3tools/contracts";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 /**
  * The text delivered to providers for one turn: project rules, then the
@@ -40,9 +42,29 @@ export type RulePinChange =
 
 export type RulePinPlan =
   | { readonly _tag: "changed"; readonly pins: ReadonlyArray<ThreadRulePin> }
+  /** A retry of a change that already landed: nothing to write. */
+  | { readonly _tag: "unchanged" }
   | { readonly _tag: "rejected"; readonly reason: string };
 
 const rejected = (reason: string): RulePinPlan => ({ _tag: "rejected", reason });
+
+/** The pin and combined caps; `replacing` is the pin an edit swaps out. */
+function lengthIssue(
+  text: string,
+  pins: ReadonlyArray<Pick<ThreadRulePin, "id" | "text">>,
+  replacing: string | undefined,
+): string | null {
+  if (text.length > THREAD_RULE_PIN_TEXT_MAX_LENGTH) {
+    return `A rule pin holds at most ${THREAD_RULE_PIN_TEXT_MAX_LENGTH} characters; this text has ${text.length}.`;
+  }
+  const others = pins
+    .filter((pin) => pin.id !== replacing)
+    .reduce((total, pin) => total + pin.text.length, 0);
+  if (others + text.length > THREAD_RULE_PINS_TOTAL_MAX_LENGTH) {
+    return `A thread's pins hold at most ${THREAD_RULE_PINS_TOTAL_MAX_LENGTH} characters in total; this would make ${others + text.length}. Remove or shorten a pin first.`;
+  }
+  return null;
+}
 
 /**
  * Pure decision for a pin command, kept out of the orchestrator's dispatch so
@@ -61,27 +83,41 @@ export function planRulePinChange(input: {
       if ((command.text === undefined) === (command.sourceMessageId === undefined)) {
         return rejected("A rule pin needs either text or a source message, not both.");
       }
-      if (pins.some((pin) => pin.id === command.pinId)) {
-        return rejected(`Rule pin ${command.pinId} already exists.`);
-      }
-      if (pins.length >= THREAD_RULE_PINS_MAX_COUNT) {
-        return rejected(`A thread holds at most ${THREAD_RULE_PINS_MAX_COUNT} rule pins.`);
-      }
       // Copied at pin time so the pin stays as pinned if the message is later
-      // edited or reverted.
+      // edited or reverted. Context references are resolved to their labels,
+      // as the copy button does, so no raw link tokens reach the model.
       const text =
         command.sourceMessageId === undefined
           ? command.text!.trim()
           : input.sourceMessage?.id === command.sourceMessageId
-            ? input.sourceMessage.text.trim()
+            ? replaceComposerContextReferences(
+                input.sourceMessage.text,
+                (reference) => reference.label,
+              ).trim()
             : undefined;
       if (text === undefined) return rejected(`Message ${command.sourceMessageId} was not found.`);
-      if (text === "") return rejected("There is no text to pin.");
-      if (text.length > THREAD_RULE_PIN_TEXT_MAX_LENGTH) {
-        return rejected(
-          `A rule pin holds at most ${THREAD_RULE_PIN_TEXT_MAX_LENGTH} characters; this text has ${text.length}.`,
-        );
+      const existing = pins.find((pin) => pin.id === command.pinId);
+      if (existing !== undefined) {
+        // A client retry after a lost reply repeats the same add.
+        return existing.text === text &&
+          existing.sourceMessageId === (command.sourceMessageId ?? null)
+          ? { _tag: "unchanged" }
+          : rejected(`Rule pin ${command.pinId} already exists.`);
       }
+      if (pins.length >= THREAD_RULE_PINS_MAX_COUNT) {
+        return rejected(`A thread holds at most ${THREAD_RULE_PINS_MAX_COUNT} rule pins.`);
+      }
+      if (text === "") return rejected("There is no text to pin.");
+      // Legacy messages carry an envelope instead of records; there is no cheap
+      // faithful text for them, so they are refused rather than pinned raw.
+      if (
+        command.sourceMessageId !== undefined &&
+        (text.includes("t3-context:") || text.includes("<t3_context"))
+      ) {
+        return rejected("This message has attached context that cannot be pinned as text.");
+      }
+      const tooLong = lengthIssue(text, pins, undefined);
+      if (tooLong !== null) return rejected(tooLong);
       return {
         _tag: "changed",
         pins: [
@@ -101,11 +137,11 @@ export function planRulePinChange(input: {
         return rejected(`Rule pin ${command.pinId} was not found.`);
       }
       if (text === "") return rejected("There is no text to pin.");
-      if (text.length > THREAD_RULE_PIN_TEXT_MAX_LENGTH) {
-        return rejected(
-          `A rule pin holds at most ${THREAD_RULE_PIN_TEXT_MAX_LENGTH} characters; this text has ${text.length}.`,
-        );
+      if (pins.find((pin) => pin.id === command.pinId)?.text === text) {
+        return { _tag: "unchanged" };
       }
+      const tooLong = lengthIssue(text, pins, command.pinId);
+      if (tooLong !== null) return rejected(tooLong);
       return {
         _tag: "changed",
         pins: pins.map((pin) => (pin.id === command.pinId ? { ...pin, text } : pin)),
