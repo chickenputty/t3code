@@ -105,8 +105,9 @@ function newItem(draft: LedgerItemDraft, now: DateTime.Utc): LedgerItem {
  * the event log, not in the projection.
  *
  * `requiresJudge` is the per-ledger judge gate: an item may not close without a passing
- * verdict. The contract's `Ledger` has no such field yet, so the orchestrator passes nothing
- * and it defaults to false. The loadouts work will source it from the ledger.
+ * verdict. It defaults to the ledger's own field, so no caller can forget it. For
+ * `ledger.create` it is instead the value to stamp on the new ledger, which the orchestrator
+ * decides from the thread's loadout.
  *
  * Returns no events when the command changes nothing, so a retried or redundant command does
  * not bump `updatedAt`.
@@ -118,7 +119,7 @@ export function planLedgerCommand(input: {
   readonly requiresJudge?: boolean;
 }): Result.Result<ReadonlyArray<PlannedLedgerEvent>, LedgerRejection> {
   const { command, ledger, now } = input;
-  const requiresJudge = input.requiresJudge ?? false;
+  const requiresJudge = input.requiresJudge ?? ledger?.requiresJudge ?? false;
   const reject = (detail: string) => Result.fail(detail);
 
   if (command.type === "ledger.create") {
@@ -138,6 +139,8 @@ export function planLedgerCommand(input: {
     if (duplicateCheckpoint !== undefined) {
       return reject(`Duplicate checkpoint id ${duplicateCheckpoint}.`);
     }
+    // A closed ledger's flag must not leak into its replacement, so only the input counts here.
+    const stampedRequiresJudge = input.requiresJudge === true;
     return Result.succeed([
       {
         type: "ledger.created",
@@ -154,6 +157,7 @@ export function planLedgerCommand(input: {
           })),
           winConditions: command.winConditions,
           items: command.items.map((draft) => newItem(draft, now)),
+          ...(stampedRequiresJudge ? { requiresJudge: true } : {}),
           createdAt: now,
           updatedAt: now,
           closedAt: null,
@@ -239,6 +243,9 @@ export function planLedgerCommand(input: {
       if (item === undefined) return reject(`Unknown item ${command.itemId}.`);
       if (item.status === "closed" || item.status === "dropped") {
         return reject(`Item ${item.id} is ${item.status}. Reopen it before judging it.`);
+      }
+      if (command.judgedEvidence !== undefined && command.judgedEvidence !== item.evidence) {
+        return reject(`Item ${item.id} evidence changed while it was being judged.`);
       }
       // A passing verdict only unlocks closing; the agent still closes the item itself.
       return Result.succeed([

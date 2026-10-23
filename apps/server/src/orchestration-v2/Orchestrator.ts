@@ -61,9 +61,12 @@ import {
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  type ThreadLoadout,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { decideThreadLoadout, loadoutHasJudge, resolveLoadout } from "@t3tools/shared/loadouts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
@@ -3051,6 +3054,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
+    let loadoutPatch: { readonly loadout: ThreadLoadout | null } | undefined;
+    if (command.type === "thread.metadata.update" && command.loadout !== undefined) {
+      const requested = command.loadout;
+      if (
+        requested !== null &&
+        !resolveProjectSettings(
+          yield* serverSettings.getSettings.pipe(Effect.orDie),
+          thread.projectId,
+        ).settings.loadouts.some(({ id }) => id === requested.id)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Unknown loadout ${requested.id} for this thread's project.`,
+        });
+      }
+      const decision = decideThreadLoadout(thread.loadout, requested);
+      if (decision._tag === "user_choice_stands") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a loadout the user chose; an agent cannot replace it.`,
+        });
+      }
+      if (decision._tag === "set") loadoutPatch = { loadout: decision.loadout };
+    }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
       const projection = yield* loadProjectionForCommand(command, ["runs"]);
@@ -3253,6 +3282,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
+            ...loadoutPatch,
             updatedAt: now,
           };
         }
@@ -11254,7 +11284,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const now = yield* DateTime.now;
-    const planned = planLedgerCommand({ command, ledger, now });
+    // Decided here, from settings the thread's agent cannot edit, so a new ledger's judge gate
+    // cannot be opted out of by the command that creates it.
+    const requiresJudge =
+      command.type === "ledger.create"
+        ? loadoutHasJudge(
+            resolveLoadout(
+              resolveProjectSettings(
+                yield* serverSettings.getSettings.pipe(Effect.orDie),
+                thread.projectId,
+              ).settings.loadouts,
+              thread.loadout?.id,
+            ),
+          )
+        : undefined;
+    const planned = planLedgerCommand({
+      command,
+      ledger,
+      now,
+      ...(requiresJudge === undefined ? {} : { requiresJudge }),
+    });
     if (Result.isFailure(planned)) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

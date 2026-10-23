@@ -38,6 +38,7 @@ export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./ledger.ts";
+export * from "./loadout.ts";
 export * from "./ledgerMcp.ts";
 export * from "./orchestrationV2.ts";
 export * from "./applicationEvent.ts";

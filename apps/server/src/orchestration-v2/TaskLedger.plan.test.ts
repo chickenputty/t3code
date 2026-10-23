@@ -156,6 +156,92 @@ describe("planLedgerCommand judge gate", () => {
   });
 });
 
+describe("planLedgerCommand ledger-level judge requirement", () => {
+  it("gates a close on the ledger's own requiresJudge with no parameter passed", () => {
+    const refused = planLedgerCommand({
+      command: closeItem,
+      ledger: { ...ledgerWith(), requiresJudge: true },
+      now,
+    });
+    assert.isTrue(Result.isFailure(refused));
+    assert.include(Result.isFailure(refused) ? refused.failure : "", "passing judge verdict");
+
+    const passed = planLedgerCommand({
+      command: closeItem,
+      ledger: { ...ledgerWith({ verdict: verdict("pass") }), requiresJudge: true },
+      now,
+    });
+    assert.isTrue(Result.isSuccess(passed));
+
+    // Older records carry no field and close as before.
+    assert.isTrue(
+      Result.isSuccess(planLedgerCommand({ command: closeItem, ledger: ledgerWith(), now })),
+    );
+  });
+
+  it("stamps the new ledger from the value the server decided at creation", () => {
+    const create: LedgerCommand = {
+      type: "ledger.create",
+      commandId: CommandId.make("command:plan:create"),
+      threadId,
+      ledgerId,
+      title: "Judged",
+      startState: "",
+      checkpoints: [],
+      winConditions: [],
+      items: [],
+    };
+    const stamped = (requiresJudge?: boolean) => {
+      const planned = planLedgerCommand({
+        command: create,
+        ledger: undefined,
+        now,
+        ...(requiresJudge === undefined ? {} : { requiresJudge }),
+      });
+      return (
+        Result.isSuccess(planned) &&
+        planned.success[0]?.type === "ledger.created" &&
+        planned.success[0].payload.requiresJudge === true
+      );
+    };
+    assert.isTrue(stamped(true));
+    assert.isFalse(stamped(false));
+    assert.isFalse(stamped());
+
+    // A replacement ledger never inherits the closed one's requirement.
+    const replaced = planLedgerCommand({
+      command: { ...create, ledgerId: LedgerId.make("ledger:next") },
+      ledger: { ...ledgerWith(), requiresJudge: true, closedAt: earlier },
+      now,
+    });
+    assert.isTrue(
+      Result.isSuccess(replaced) &&
+        replaced.success[0]?.type === "ledger.created" &&
+        replaced.success[0].payload.requiresJudge !== true,
+    );
+  });
+
+  it("refuses a verdict for evidence that changed while the judge was working", () => {
+    const record = (judgedEvidence: string | null): LedgerCommand => ({
+      type: "ledger.item.verdict.record",
+      commandId: CommandId.make("command:plan:judged"),
+      threadId,
+      ledgerId,
+      itemId,
+      verdict: verdict("pass"),
+      judgedEvidence,
+    });
+    const stale = planLedgerCommand({ command: record("an older run"), ledger: ledgerWith(), now });
+    assert.isTrue(Result.isFailure(stale));
+    assert.include(Result.isFailure(stale) ? stale.failure : "", "evidence changed");
+    assert.isTrue(
+      Result.isSuccess(
+        planLedgerCommand({ command: record("ran the suite"), ledger: ledgerWith(), now }),
+      ),
+    );
+  });
+});
+
 describe("planLedgerCommand no-ops", () => {
   it("plans nothing for a checkpoint already in the requested state or an unchanged item", () => {
     const ledger: Ledger = {

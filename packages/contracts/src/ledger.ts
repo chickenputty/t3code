@@ -60,6 +60,11 @@ export const Ledger = Schema.Struct({
   checkpoints: Schema.Array(LedgerCheckpoint),
   winConditions: Schema.Array(Schema.String),
   items: Schema.Array(LedgerItem),
+  /**
+   * Items close only on a passing judge verdict. Fixed when the ledger is created under a
+   * loadout with a judge role; absent on older records, which means false.
+   */
+  requiresJudge: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   closedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -117,6 +122,8 @@ export const LedgerCommands = [
     startState: Schema.String,
     checkpoints: Schema.Array(LedgerCheckpointDraft),
     winConditions: Schema.Array(Schema.String),
+    // No requiresJudge: the orchestrator derives it from the thread's loadout, so neither a
+    // client nor the agent being judged can opt a ledger out of the gate.
     items: Schema.Array(LedgerItemDraft),
   }),
   Schema.Struct({
@@ -175,6 +182,8 @@ export const LedgerVerdictRecordCommand = Schema.Struct({
   ledgerId: LedgerId,
   itemId: LedgerItemId,
   verdict: LedgerItemVerdict,
+  /** The evidence the judge was shown; a verdict for evidence that has since changed is stale. */
+  judgedEvidence: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 /** Payload of `ledger.item.added`: only the newly added items, which readers upsert. */

@@ -88,12 +88,21 @@ export const LedgerMcpRetryInput = Schema.Struct({
 });
 export type LedgerMcpRetryInput = typeof LedgerMcpRetryInput.Type;
 
+export const LedgerMcpRequestJudgementInput = Schema.Struct({
+  itemId: LedgerMcpItemKey,
+});
+export type LedgerMcpRequestJudgementInput = typeof LedgerMcpRequestJudgementInput.Type;
+
 export const LedgerMcpSnapshot = Schema.Struct({
   ledgerId: Schema.String,
   title: Schema.String,
   startState: Schema.String,
   winConditions: Schema.Array(Schema.String),
   closed: Schema.Boolean,
+  requiresJudge: Schema.Boolean.annotate({
+    description:
+      "True when an item can close only after ledger_request_judgement returns a passing verdict for its current evidence.",
+  }),
   counts: Schema.Struct({
     open: NonNegativeInt,
     in_progress: NonNegativeInt,
@@ -130,3 +139,11 @@ export const LedgerMcpWriteResult = Schema.Struct({
   ledger: Schema.NullOr(LedgerMcpSnapshot),
 });
 export type LedgerMcpWriteResult = typeof LedgerMcpWriteResult.Type;
+
+export const LedgerMcpJudgementResult = Schema.Struct({
+  ...LedgerMcpWriteResult.fields,
+  outcome: Schema.Literals(["pass", "fail"]),
+  notes: Schema.String,
+  judge: Schema.Struct({ instanceId: Schema.String, model: Schema.String }),
+});
+export type LedgerMcpJudgementResult = typeof LedgerMcpJudgementResult.Type;

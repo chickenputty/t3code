@@ -37,6 +37,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
+import { Loadout, LoadoutId, LoadoutSetBy } from "./loadout.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
@@ -127,6 +128,10 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
+/**
+ * The last four are loadout roles: without an explicit target, the child runs on the model the
+ * thread's loadout assigns that role, or inherits the thread's own when the loadout has none.
+ */
 export const OrchestratorMcpTaskRole = Schema.Literals([
   "implementation",
   "research",
@@ -134,6 +139,10 @@ export const OrchestratorMcpTaskRole = Schema.Literals([
   "design",
   "test",
   "general",
+  "subPlanner",
+  "explorer",
+  "worker",
+  "judge",
 ]);
 export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
@@ -561,8 +570,39 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
+export const OrchestratorMcpLoadoutState = Schema.Struct({
+  active: Schema.Struct({
+    ...Loadout.fields,
+    setBy: Schema.NullOr(LoadoutSetBy).annotate({
+      description: "Who chose it; null while the thread is on the default, solo.",
+    }),
+    reason: Schema.NullOr(Schema.String),
+  }),
+  available: Schema.Array(Loadout),
+});
+export type OrchestratorMcpLoadoutState = typeof OrchestratorMcpLoadoutState.Type;
+
+export const OrchestratorMcpLoadoutProposeInput = Schema.Struct({
+  loadoutId: LoadoutId.annotate({
+    description: "Id of a loadout listed in orchestrator_capabilities.loadout.available.",
+  }),
+  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(1_000)).annotate({
+    description:
+      "Why this task needs this structure, recorded for later review. Say what you sized: modules, risk, parallelism.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpLoadoutProposeInput = typeof OrchestratorMcpLoadoutProposeInput.Type;
+
+export const OrchestratorMcpLoadoutProposeResult = Schema.Struct({
+  sequence: NonNegativeInt,
+  loadout: OrchestratorMcpLoadoutState,
+});
+export type OrchestratorMcpLoadoutProposeResult = typeof OrchestratorMcpLoadoutProposeResult.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
+  loadout: Schema.optional(OrchestratorMcpLoadoutState),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),

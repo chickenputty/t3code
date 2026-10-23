@@ -1,5 +1,7 @@
 import {
   CommandId,
+  type LedgerMcpJudgementResult,
+  type LedgerMcpRequestJudgementInput,
   type RunId,
   isProviderAvailable,
   MessageId,
@@ -36,6 +38,9 @@ import {
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpUpdateScheduledTaskInput,
   type OrchestratorMcpListScheduledTasksInput,
+  type OrchestratorMcpLoadoutProposeInput,
+  type OrchestratorMcpLoadoutProposeResult,
+  type OrchestratorMcpLoadoutState,
   type ProjectId,
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadPullRequest,
@@ -65,8 +70,10 @@ import {
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
+import { loadoutDelegationTarget, resolveLoadout } from "@t3tools/shared/loadouts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -110,6 +117,8 @@ import {
   requireThreadScope,
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
+import { requestJudgement } from "./LedgerJudgement.ts";
+import { snapshotLedger } from "./ledgerSnapshot.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -146,6 +155,18 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  /**
+   * Lives here, not in the ledger service, because a judgement is a delegated task: it must go
+   * through the same target resolution and wait machinery as `delegateTask`.
+   */
+  readonly requestJudgement: (
+    scope: McpInvocationScope,
+    input: LedgerMcpRequestJudgementInput,
+  ) => Effect.Effect<LedgerMcpJudgementResult, OrchestratorMcpFailure>;
+  readonly proposeLoadout: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpLoadoutProposeInput,
+  ) => Effect.Effect<OrchestratorMcpLoadoutProposeResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
     scope: McpInvocationScope,
     taskId: NodeId,
@@ -1184,6 +1205,54 @@ const make = Effect.gen(function* () {
     return { scope: threadScope, parent } as const;
   });
 
+  const loadLoadouts = Effect.fn("OrchestratorMcpService.loadLoadouts")(function* (
+    thread: Pick<OrchestrationV2ThreadProjection["thread"], "projectId" | "loadout">,
+  ) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+    );
+    const available = resolveProjectSettings(settings, thread.projectId).settings.loadouts;
+    const active = resolveLoadout(available, thread.loadout?.id);
+    const state: OrchestratorMcpLoadoutState = {
+      active: {
+        ...active,
+        setBy: thread.loadout?.setBy ?? null,
+        reason: thread.loadout?.reason ?? null,
+      },
+      available,
+    };
+    return { available, active, state };
+  });
+
+  /** The thread's loadout target for a role name; undefined means inherit the thread's own. */
+  const loadoutRoleTarget = Effect.fn("OrchestratorMcpService.loadoutRoleTarget")(function* (
+    thread: Pick<OrchestrationV2ThreadProjection["thread"], "projectId" | "loadout">,
+    role: OrchestratorMcpDelegateTaskInput["role"],
+    providers: ReadonlyArray<ServerProvider>,
+  ) {
+    if (role === undefined) return undefined;
+    const { active } = yield* loadLoadouts(thread);
+    const target = loadoutDelegationTarget(active, role, providers);
+    // A judge that quietly ran on the thread's own model would be marking its own work.
+    if (role === "judge" && target === undefined) {
+      return yield* failure(
+        "provider_unavailable",
+        Object.hasOwn(active.roles, "judge")
+          ? `The judge model of loadout "${active.name}" is not available. Tell the user, who can fix the loadout in settings or switch this thread to Solo.`
+          : `Loadout "${active.name}" has no judge role.`,
+      );
+    }
+    if (target === undefined && Object.hasOwn(active.roles, role)) {
+      // Any other role keeps working on the thread's own model rather than failing a
+      // delegation over settings drift.
+      yield* Effect.logWarning("orchestrator-mcp.loadout-role-unavailable", {
+        loadoutId: active.id,
+        role,
+      });
+    }
+    return target;
+  });
+
   const resolveProjectTarget = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
     projectId: ProjectId | undefined,
@@ -1805,7 +1874,7 @@ const make = Effect.gen(function* () {
     return task;
   });
 
-  return OrchestratorMcpService.of({
+  const service: OrchestratorMcpServiceShape = OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
@@ -2082,8 +2151,10 @@ const make = Effect.gen(function* () {
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/) ?? [];
+      const loadout = parent === undefined ? undefined : (yield* loadLoadouts(parent.thread)).state;
       return {
         parentThreadId: parent?.thread.id ?? null,
+        ...(loadout === undefined ? {} : { loadout }),
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions: inherited?.options ?? [],
@@ -2165,9 +2236,10 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      // An explicit target always wins; the role only picks a default.
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target: input.target ?? (yield* loadoutRoleTarget(parent.thread, input.role, providers)),
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
@@ -2316,6 +2388,43 @@ const make = Effect.gen(function* () {
         );
       return yield* readTask(scope, taskId, Option.isNone(waited), true);
     }),
+    proposeLoadout: Effect.fn("OrchestratorMcpService.proposeLoadout")(
+      function* (callerScope, input) {
+        const { scope, parent } = yield* loadThreadCaller(callerScope, "t3_loadout_propose");
+        const { available } = yield* loadLoadouts(parent.thread);
+        if (!available.some(({ id }) => id === input.loadoutId)) {
+          return yield* failure(
+            "invalid_request",
+            `Unknown loadout ${input.loadoutId}. Available: ${available.map(({ id }) => id).join(", ")}.`,
+          );
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        // The orchestrator owns the precedence rule: it rejects this while the user's own choice
+        // stands, so the agent cannot out-vote a person by calling the tool again.
+        const dispatched = yield* threadManagement
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: stableCommandId({ scope, requestKey: key, operation: "loadout-propose" }),
+            threadId: scope.thread.threadId,
+            loadout: { id: input.loadoutId, reason: input.reason, setBy: "agent" },
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "invalid_request",
+                error._tag === "OrchestratorDispatchError" && typeof error.cause === "string"
+                  ? Array.from(error.cause).slice(0, 500).join("")
+                  : `Unable to propose the loadout: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const updated = yield* loadProjection(scope.thread.threadId);
+        return {
+          sequence: dispatched.sequence,
+          loadout: (yield* loadLoadouts(updated.thread)).state,
+        };
+      },
+    ),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
       return yield* readTask(scope, taskId, false, true);
@@ -2931,7 +3040,93 @@ const make = Effect.gen(function* () {
         status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
       } satisfies OrchestratorMcpThreadInterruptResult;
     }),
+    requestJudgement: Effect.fn("OrchestratorMcpService.requestJudgement")(
+      function* (callerScope, input) {
+        const { scope, parent } = yield* loadThreadCaller(callerScope, "ledger_request_judgement");
+        const { ledger } = yield* threadManagement
+          .getProjectThreadRecords(
+            { projectId: parent.thread.projectId, threadId: scope.thread.threadId },
+            ["ledger"],
+          )
+          .pipe(Effect.mapError(threadManagementFailure));
+        const dispatchFailureMessage = (error: unknown) =>
+          failure("orchestration_error", `Unable to record the verdict: ${errorMessage(error)}`);
+        const judged = yield* requestJudgement({
+          ledger,
+          itemId: input.itemId,
+          ports: {
+            delegate: Effect.fn("OrchestratorMcpService.judgeDelegate")(function* ({
+              prompt,
+              title,
+              keySource,
+            }) {
+              const digest = yield* crypto
+                .digest("SHA-256", new TextEncoder().encode(keySource))
+                .pipe(Effect.orDie);
+              // The same ledger, item and evidence is the same delegation, so a retry after a
+              // timeout rejoins the running judge instead of starting a second one.
+              const clientRequestId = `judge-${Array.from(digest.slice(0, 16), (byte) =>
+                byte.toString(16).padStart(2, "0"),
+              ).join("")}`;
+              const result = yield* service.delegateTask(scope, {
+                task: prompt,
+                title,
+                role: "judge",
+                mode: "wait",
+                clientRequestId,
+              });
+              return {
+                taskId: result.taskId,
+                childThreadId: result.childThreadId,
+                status: result.status,
+                summary: result.summary,
+                waitTimedOut: result.waitTimedOut,
+                judge: { instanceId: result.providerInstanceId, model: result.model ?? "unknown" },
+              };
+            }),
+            userMessageCount: (threadId) =>
+              threadManagement
+                .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
+                .pipe(
+                  Effect.map(({ messages }) => messages.length),
+                  Effect.mapError(threadManagementFailure),
+                ),
+            recordVerdict: ({ itemId, judgedEvidence, verdict, taskId }) =>
+              threadManagement
+                .dispatch({
+                  type: "ledger.item.verdict.record",
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: `${taskId}`,
+                    operation: "ledger-verdict",
+                  }),
+                  threadId: scope.thread.threadId,
+                  // The ledger was just read above; `requestJudgement` refused it if it was absent.
+                  ledgerId: ledger!.id,
+                  itemId,
+                  verdict,
+                  judgedEvidence,
+                })
+                .pipe(
+                  Effect.map(({ sequence }) => sequence),
+                  Effect.mapError(dispatchFailureMessage),
+                ),
+          },
+        });
+        const after = yield* threadManagement
+          .getProjectThreadRecords(
+            { projectId: parent.thread.projectId, threadId: scope.thread.threadId },
+            ["ledger"],
+          )
+          .pipe(Effect.mapError(threadManagementFailure));
+        return {
+          ...judged,
+          ledger: after.ledger === undefined ? null : snapshotLedger(after.ledger),
+        };
+      },
+    ),
   });
+  return service;
 });
 
 export const layer: Layer.Layer<
