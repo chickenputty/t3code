@@ -70,7 +70,7 @@ import {
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
-import { loadoutDelegationTarget, resolveLoadout } from "@t3tools/shared/loadouts";
+import { loadoutDelegationTarget, resolveLoadout, withSolo } from "@t3tools/shared/loadouts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -131,6 +131,8 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
+/** Idempotency key space of judge delegations; no tool call can name it. */
+export const JUDGE_DELEGATION_OPERATION = "ledger-judge";
 const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -151,9 +153,15 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
+  /**
+   * `operation` names the idempotency key space. Tool handlers never pass it, so a public
+   * `clientRequestId` can only ever land in "delegate-task"; the judge delegates under its own
+   * space, which no tool call can pre-seed or replay.
+   */
   readonly delegateTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
+    operation?: string,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
   /**
    * Lives here, not in the ledger service, because a judgement is a delegated task: it must go
@@ -759,7 +767,7 @@ function stablePart(value: string): string {
   return encodeURIComponent(value);
 }
 
-function stableCommandId(input: {
+export function stableCommandId(input: {
   readonly scope: McpInvocationScope;
   readonly requestKey: string;
   readonly operation: string;
@@ -1211,7 +1219,9 @@ const make = Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
     );
-    const available = resolveProjectSettings(settings, thread.projectId).settings.loadouts;
+    const available = withSolo(
+      resolveProjectSettings(settings, thread.projectId).settings.loadouts,
+    );
     const active = resolveLoadout(available, thread.loadout?.id);
     const state: OrchestratorMcpLoadoutState = {
       active: {
@@ -2213,7 +2223,11 @@ const make = Effect.gen(function* () {
         },
       };
     }),
-    delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+    delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (
+      callerScope,
+      input,
+      operation = "delegate-task",
+    ) {
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
       const parentRun = parent.runs
         .filter(ThreadManagementService.isActiveRun)
@@ -2233,7 +2247,7 @@ const make = Effect.gen(function* () {
       const commandId = stableCommandId({
         scope,
         requestKey: key,
-        operation: "delegate-task",
+        operation,
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       // An explicit target always wins; the role only picks a default.
@@ -2361,7 +2375,7 @@ const make = Effect.gen(function* () {
           commandId: stableCommandId({
             scope,
             requestKey: key,
-            operation: "delegate-task-wake-policy",
+            operation: `${operation}-wake-policy`,
           }),
           parentThreadId: scope.thread.threadId,
           taskId,
@@ -3068,13 +3082,27 @@ const make = Effect.gen(function* () {
               const clientRequestId = `judge-${Array.from(digest.slice(0, 16), (byte) =>
                 byte.toString(16).padStart(2, "0"),
               ).join("")}`;
-              const result = yield* service.delegateTask(scope, {
+              const expected = yield* loadoutRoleTarget(
+                parent.thread,
+                "judge",
+                yield* loadProviders,
+              );
+              if (expected?.providerInstanceId === undefined || expected.model === undefined) {
+                return yield* failure("provider_unavailable", "The judge role cannot be resolved.");
+              }
+              const delegation = {
                 task: prompt,
                 title,
-                role: "judge",
+                // Explicit, so the child's prompt is the server-built text with no role preamble.
+                target: expected,
                 mode: "wait",
                 clientRequestId,
-              });
+              } as const;
+              const result = yield* service.delegateTask(
+                scope,
+                delegation,
+                JUDGE_DELEGATION_OPERATION,
+              );
               return {
                 taskId: result.taskId,
                 childThreadId: result.childThreadId,
@@ -3082,13 +3110,14 @@ const make = Effect.gen(function* () {
                 summary: result.summary,
                 waitTimedOut: result.waitTimedOut,
                 judge: { instanceId: result.providerInstanceId, model: result.model ?? "unknown" },
+                expectedJudge: { instanceId: expected.providerInstanceId, model: expected.model },
               };
             }),
-            userMessageCount: (threadId) =>
+            userMessages: (threadId) =>
               threadManagement
                 .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
                 .pipe(
-                  Effect.map(({ messages }) => messages.length),
+                  Effect.map(({ messages }) => messages.map(({ text }) => text)),
                   Effect.mapError(threadManagementFailure),
                 ),
             recordVerdict: ({ itemId, judgedEvidence, verdict, taskId }) =>

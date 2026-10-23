@@ -41,26 +41,35 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Ledger commands never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudeAdapter = {
+  ...adapter,
+  instanceId: claudeInstanceId,
+  driver: ProviderDriverKind.make("claudeAgent"),
+} as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = Layer.mergeAll(
-  layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-  EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-  ProjectionMaintenance.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerDatabase,
-        EventStore.layer.pipe(Layer.provide(layerDatabase)),
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+const layerWith = (adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>) =>
+  Layer.mergeAll(
+    layerDatabase,
+    ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+    EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+    ProjectionMaintenance.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerDatabase,
+          EventStore.layer.pipe(Layer.provide(layerDatabase)),
+          ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ),
       ),
     ),
-  ),
-  ProviderReplayHarness.layerWithRegistry(
-    { name: "task-ledger" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
-  ),
-);
+    ProviderReplayHarness.layerWithRegistry(
+      { name: "task-ledger" },
+      ProviderAdapterRegistry.layerFromAdapters(adapters),
+      { databaseLayer: layerDatabase, runEffectWorker: false },
+    ),
+  );
+const layerTest = layerWith([adapter, claudeAdapter]);
+const layerWithoutJudgeInstance = layerWith([adapter]);
 
 const ledgerId = LedgerId.make("ledger:main");
 const itemId = (name: string) => LedgerItemId.make(`item:${name}`);
@@ -785,6 +794,31 @@ it.effect("rejects a loadout the project's settings do not list", () =>
       "Unknown loadout",
     );
     assert.isNull(yield* loadoutOf(threadId));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("does not stamp a gate no judge can satisfy", () =>
+  Effect.gen(function* () {
+    // The loadout names a judge on claudeAgent, but this environment has no such instance.
+    const threadId = yield* createThread("judge-unresolvable");
+    yield* setLoadout(threadId, judged);
+    yield* createLedger(threadId, { items: ["a"] });
+    assert.notOk((yield* ledgerOf(threadId))?.requiresJudge);
+    yield* updateItem(threadId, "a", { status: "closed", evidence: "tests pass" });
+    assert.equal(itemOf(yield* ledgerOf(threadId), "a")?.status, "closed");
+  }).pipe(Effect.provide(layerWithoutJudgeInstance)),
+);
+
+it.effect("round trips the precedence rule: user sets, user clears, agent proposes", () =>
+  Effect.gen(function* () {
+    const threadId = yield* createThread("loadout-round-trip");
+    const user: ThreadLoadout = { id: "solo", reason: null, setBy: "user" };
+    yield* setLoadout(threadId, user);
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(setLoadout(threadId, judged))));
+    yield* setLoadout(threadId, null);
+    assert.isNull(yield* loadoutOf(threadId));
+    yield* setLoadout(threadId, judged);
+    assert.deepEqual(yield* loadoutOf(threadId), judged);
   }).pipe(Effect.provide(layerTest)),
 );
 

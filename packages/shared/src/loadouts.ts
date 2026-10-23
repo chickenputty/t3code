@@ -18,6 +18,14 @@ const SOLO: Loadout = {
 };
 
 /**
+ * The list a person can pick from. Solo is the way back to "no delegated roles", so it stays
+ * available even if the saved list dropped it.
+ */
+export function withSolo(loadouts: ReadonlyArray<Loadout>): ReadonlyArray<Loadout> {
+  return loadouts.some(({ id }) => id === SOLO_LOADOUT_ID) ? loadouts : [SOLO, ...loadouts];
+}
+
+/**
  * Finds a thread's loadout in the list its project resolves to. An unknown id means the loadout
  * was deleted after the thread chose it; the thread keeps working solo rather than failing.
  */

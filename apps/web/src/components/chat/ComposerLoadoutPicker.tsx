@@ -8,6 +8,8 @@ import { useComposerMenuProps } from "./composerEventScope";
 import type { ComposerLoadout } from "./useComposerLoadout";
 import { useComposerMenuState } from "./useComposerMenuState";
 
+const CLEAR_VALUE = "__clear__";
+
 function loadoutTooltip(loadout: ComposerLoadout): string {
   if (loadout.choice?.setBy === "agent") {
     return `Proposed by the agent: ${loadout.choice.reason ?? "no reason given"}`;
@@ -32,7 +34,8 @@ export const ComposerLoadoutPicker = memo(function ComposerLoadoutPicker(props: 
         onOpenChange={setOpen}
         value={loadout.active.id}
         onValueChange={(value) => {
-          if (value) loadout.onSelect(value);
+          if (value === CLEAR_VALUE) loadout.onClear();
+          else if (value) loadout.onSelect(value);
         }}
       >
         <TooltipTrigger render={<ComposerSelectControl size={size} aria-label="Loadout" />}>
@@ -50,6 +53,16 @@ export const ComposerLoadoutPicker = memo(function ComposerLoadoutPicker(props: 
               </div>
             </SelectItem>
           ))}
+          {loadout.choice?.setBy === "user" ? (
+            <SelectItem value={CLEAR_VALUE} hideIndicator className="min-w-64">
+              <div className="grid min-w-0 gap-0.5">
+                <span className="font-medium text-foreground">Clear (let the agent propose)</span>
+                <span className="text-muted-foreground text-xs leading-4">
+                  Back to solo until the agent proposes one.
+                </span>
+              </div>
+            </SelectItem>
+          ) : null}
         </SelectPopup>
       </Select>
       <TooltipPopup side="top">{loadoutTooltip(loadout)}</TooltipPopup>

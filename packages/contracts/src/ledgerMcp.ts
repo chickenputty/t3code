@@ -124,6 +124,9 @@ export const LedgerMcpSnapshot = Schema.Struct({
       evidence: Schema.NullOr(Schema.String),
       dropReason: Schema.NullOr(Schema.String),
       verdict: Schema.NullOr(Schema.Literals(["pass", "fail"])),
+      judgements: NonNegativeInt.annotate({
+        description: "How many times this item has been judged, across reopening and new evidence.",
+      }),
     }),
   ),
 });

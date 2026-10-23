@@ -22,6 +22,7 @@ export function snapshotLedger(ledger: Ledger): LedgerMcpSnapshot {
       evidence: item.evidence,
       dropReason: item.dropReason,
       verdict: item.verdict?.outcome ?? null,
+      judgements: item.judgements ?? 0,
     })),
   };
 }

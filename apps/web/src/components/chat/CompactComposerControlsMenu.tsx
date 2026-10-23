@@ -99,7 +99,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuRadioGroup
               value={props.loadout.active.id}
               onValueChange={(value) => {
-                if (value) props.loadout?.onSelect(value);
+                if (value === "__clear__") props.loadout?.onClear();
+                else if (value) props.loadout?.onSelect(value);
               }}
             >
               {props.loadout.loadouts.map((option) => (
@@ -107,6 +108,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                   {option.name}
                 </MenuRadioItem>
               ))}
+              {props.loadout.choice?.setBy === "user" ? (
+                <MenuRadioItem value="__clear__">Clear (let the agent propose)</MenuRadioItem>
+              ) : null}
             </MenuRadioGroup>
           </>
         ) : null}

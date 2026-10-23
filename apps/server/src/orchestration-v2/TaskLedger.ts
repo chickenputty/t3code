@@ -253,7 +253,12 @@ export function planLedgerCommand(input: {
           type: "ledger.item.updated",
           payload: {
             ledgerId: ledger.id,
-            item: { ...item, verdict: command.verdict, updatedAt: now },
+            item: {
+              ...item,
+              verdict: command.verdict,
+              judgements: (item.judgements ?? 0) + 1,
+              updatedAt: now,
+            },
             updatedAt: now,
           },
         },

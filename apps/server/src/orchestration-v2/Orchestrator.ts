@@ -62,9 +62,15 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   type ThreadLoadout,
+  resolveProjectProviderInstanceEnabled,
   type TurnItemId,
 } from "@t3tools/contracts";
-import { decideThreadLoadout, loadoutHasJudge, resolveLoadout } from "@t3tools/shared/loadouts";
+import {
+  decideThreadLoadout,
+  loadoutHasJudge,
+  resolveLoadout,
+  withSolo,
+} from "@t3tools/shared/loadouts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -3059,10 +3065,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const requested = command.loadout;
       if (
         requested !== null &&
-        !resolveProjectSettings(
-          yield* serverSettings.getSettings.pipe(Effect.orDie),
-          thread.projectId,
-        ).settings.loadouts.some(({ id }) => id === requested.id)
+        !withSolo(
+          resolveProjectSettings(
+            yield* serverSettings.getSettings.pipe(Effect.orDie),
+            thread.projectId,
+          ).settings.loadouts,
+        ).some(({ id }) => id === requested.id)
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -11286,17 +11294,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     // Decided here, from settings the thread's agent cannot edit, so a new ledger's judge gate
     // cannot be opted out of by the command that creates it.
+    // Stamped only when the judge can actually run (its instance has a V2 adapter and is enabled
+    // for the project): a gate nothing can satisfy would leave items closable only by dropping
+    // them, and the agent could not tell why. Without a judge the ledger is simply ungated.
     const requiresJudge =
       command.type === "ledger.create"
-        ? loadoutHasJudge(
-            resolveLoadout(
-              resolveProjectSettings(
-                yield* serverSettings.getSettings.pipe(Effect.orDie),
-                thread.projectId,
-              ).settings.loadouts,
+        ? yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+            const loadout = resolveLoadout(
+              resolveProjectSettings(settings, thread.projectId).settings.loadouts,
               thread.loadout?.id,
-            ),
-          )
+            );
+            const judge = loadout.roles.judge;
+            if (!loadoutHasJudge(loadout) || judge === undefined) return false;
+            const adapterIds = yield* providerAdapters.list();
+            return (
+              adapterIds.includes(judge.instanceId) &&
+              resolveProjectProviderInstanceEnabled(settings, thread.projectId, judge.instanceId)
+            );
+          })
         : undefined;
     const planned = planLedgerCommand({
       command,

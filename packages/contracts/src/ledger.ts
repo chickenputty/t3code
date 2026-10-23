@@ -5,6 +5,7 @@ import {
   LedgerCheckpointId,
   LedgerId,
   LedgerItemId,
+  NonNegativeInt,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -37,6 +38,11 @@ export const LedgerItem = Schema.Struct({
   evidence: Schema.NullOr(Schema.String),
   dropReason: Schema.NullOr(Schema.String),
   verdict: Schema.NullOr(LedgerItemVerdict),
+  /**
+   * Verdicts recorded for this item over its whole life, kept across reopening and new evidence
+   * so repeated asking is visible. Absent means none.
+   */
+  judgements: Schema.optionalKey(NonNegativeInt),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   closedAt: Schema.NullOr(Schema.DateTimeUtc),

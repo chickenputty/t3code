@@ -5,6 +5,7 @@ import {
   type LoadoutRole,
   type LoadoutRoleName,
   ProviderInstanceId,
+  SOLO_LOADOUT_ID,
 } from "@t3tools/contracts";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 
@@ -74,14 +75,17 @@ function LoadoutEditor(props: {
         {isBuiltIn(loadout) ? (
           <span className="shrink-0 text-muted-foreground text-xs">Built-in</span>
         ) : null}
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={`Remove ${loadout.name}`}
-          onClick={props.onRemove}
-        >
-          <Trash2Icon className="size-4" />
-        </Button>
+        {/* Solo is the way back to no roles, so it stays. */}
+        {loadout.id === SOLO_LOADOUT_ID ? null : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Remove ${loadout.name}`}
+            onClick={props.onRemove}
+          >
+            <Trash2Icon className="size-4" />
+          </Button>
+        )}
       </div>
       <Input
         aria-label="Loadout description"

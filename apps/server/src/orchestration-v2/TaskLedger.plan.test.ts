@@ -221,6 +221,33 @@ describe("planLedgerCommand ledger-level judge requirement", () => {
     );
   });
 
+  it("counts every recorded verdict, across new evidence and reopening", () => {
+    const record = (ledger: Ledger, outcome: "pass" | "fail") => {
+      const planned = planLedgerCommand({
+        command: {
+          type: "ledger.item.verdict.record",
+          commandId: CommandId.make(`command:plan:count:${outcome}`),
+          threadId,
+          ledgerId,
+          itemId,
+          verdict: verdict(outcome),
+        },
+        ledger,
+        now,
+      });
+      return Result.isSuccess(planned) && planned.success[0]?.type === "ledger.item.updated"
+        ? planned.success[0].payload.item
+        : undefined;
+    };
+    const first = record(ledgerWith(), "fail");
+    assert.equal(first?.judgements, 1);
+    const second = record(
+      { ...ledgerWith(), items: [item({ ...first, evidence: "second run", verdict: null })] },
+      "fail",
+    );
+    assert.equal(second?.judgements, 2);
+  });
+
   it("refuses a verdict for evidence that changed while the judge was working", () => {
     const record = (judgedEvidence: string | null): LedgerCommand => ({
       type: "ledger.item.verdict.record",

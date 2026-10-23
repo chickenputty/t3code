@@ -6,7 +6,7 @@ import {
   type ScopedThreadRef,
   type ThreadLoadout,
 } from "@t3tools/contracts";
-import { resolveLoadout } from "@t3tools/shared/loadouts";
+import { resolveLoadout, withSolo } from "@t3tools/shared/loadouts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -20,6 +20,7 @@ export interface ComposerLoadout {
   readonly active: Loadout;
   readonly choice: ThreadLoadout | null;
   readonly onSelect: (loadoutId: string) => void;
+  readonly onClear: () => void;
 }
 
 /**
@@ -39,15 +40,21 @@ export function useComposerLoadout(
     reportFailure: true,
   });
   if (shell === null) return null;
-  const loadouts = resolveProjectSettings(settings, shell.projectId, project ?? undefined).settings
-    .loadouts;
+  const loadouts = withSolo(
+    resolveProjectSettings(settings, shell.projectId, project ?? undefined).settings.loadouts,
+  );
   const choice = shell.loadout ?? null;
   return {
     loadouts,
     active: resolveLoadout(loadouts, choice?.id),
     choice,
+    // Hands the slot back so the agent may propose again; a user pick otherwise stands for good.
+    onClear: () => {
+      if (choice === null) return;
+      void updateMetadata({ environmentId, input: { threadId: shell.id, loadout: null } });
+    },
     onSelect: (loadoutId) => {
-      if (loadoutId === (choice?.id ?? SOLO_LOADOUT_ID)) return;
+      if (loadoutId === (choice?.id ?? SOLO_LOADOUT_ID) && choice?.setBy !== "agent") return;
       void updateMetadata({
         environmentId,
         input: { threadId: shell.id, loadout: { id: loadoutId, reason: null, setBy: "user" } },

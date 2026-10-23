@@ -16,6 +16,7 @@ import {
   loadoutRoleTarget,
   parseJudgeVerdict,
   resolveLoadout,
+  withSolo,
 } from "./loadouts.ts";
 import { resolveProjectSettings } from "./projectSettings.ts";
 
@@ -80,6 +81,19 @@ describe("resolveLoadout", () => {
     expect(forB).toEqual(DEFAULT_LOADOUTS);
     expect(resolveLoadout(forA, "planner-workers-judge").id).toBe("solo");
     expect(resolveLoadout(forB, "planner-workers-judge").roles.judge).toBeDefined();
+  });
+});
+
+describe("withSolo", () => {
+  it("keeps Solo pickable when the saved list dropped it, and leaves a full list alone", () => {
+    const custom: Loadout = {
+      id: "mine",
+      name: "Mine",
+      description: "",
+      roles: { worker: sonnet },
+    };
+    expect(withSolo([custom]).map(({ id }) => id)).toEqual(["solo", "mine"]);
+    expect(withSolo(DEFAULT_LOADOUTS)).toBe(DEFAULT_LOADOUTS);
   });
 });
 
