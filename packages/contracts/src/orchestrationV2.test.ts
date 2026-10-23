@@ -281,6 +281,7 @@ describe("orchestration V2 contracts", () => {
         supportsDeltaHandoff: true,
         supportsFullThreadHandoff: true,
         maxRecommendedHandoffChars: null,
+        deliversPinnedRules: false,
       },
       checkpointing: {
         appCanCheckpointFilesystem: true,

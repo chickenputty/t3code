@@ -27,6 +27,29 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("pinned rules setting", () => {
+  it("decodes settings and project overrides that predate pinned rules", () => {
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { project: { threadTitleInstructions: "Short" } },
+    });
+    expect(settings.pinnedRules).toBe("");
+    expect(settings.projectSettingsOverrides[ProjectId.make("project")]).toEqual({
+      threadTitleInstructions: "Short",
+    });
+  });
+
+  it("keeps a project's pinned rules text and patches it per project", () => {
+    const rules = "Never touch generated/ files.\nAlways run `vp test` first.";
+    expect(
+      decodeServerSettings({ projectSettingsOverrides: { project: { pinnedRules: rules } } })
+        .projectSettingsOverrides[ProjectId.make("project")]?.pinnedRules,
+    ).toBe(rules);
+    expect(
+      decodeServerSettingsPatch({ projectSettingsOverrides: { project: { pinnedRules: rules } } }),
+    ).toEqual({ projectSettingsOverrides: { project: { pinnedRules: rules } } });
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

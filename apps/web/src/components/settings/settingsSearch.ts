@@ -574,6 +574,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
   },
   {
+    id: "pinned-rules",
+    title: "Pinned rules",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["survive context compaction instructions always remember rules claude codex"],
+  },
+  {
     id: "app-version",
     title: "Version",
     to: "/settings/general",

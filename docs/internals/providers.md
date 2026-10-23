@@ -125,6 +125,16 @@ start no Codex turn settle on a provider turn without a native ref, which native
 not count. Claude's SDK mode emits no goal events; its adapter reads goal state from the
 synthetic command output and Stop hook feedback in the transcript.
 
+Pinned rules are a project setting that must survive compaction verbatim, so they travel outside the
+summarized transcript, and only adapters with `context.deliversPinnedRules` act on them. Claude
+appends them to the system prompt, which is fixed when its CLI process opens, and a `SessionStart`
+hook for source `compact` re-reads the current rules and returns them as `additionalContext`, so an
+edit applies after the next compaction or session start (Codex: the next turn). Clearing the rules
+makes the hook withdraw the ones in the system prompt. Replacing a live process instead would fail
+while background work runs. Codex sends them as trusted `additionalContext` on every turn and
+re-injects them after a `contextCompaction` item. Long rules span numbered keys, cut at newlines
+where possible, because Codex silently truncates any single value over its cap.
+
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
 therefore rejects revert before touching files. Native permission and question option IDs must

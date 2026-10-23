@@ -569,6 +569,179 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
+
+  it("re-sends the current pinned rules on compaction, following edits mid-session", async () => {
+    let current: string | undefined = "Rule A";
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pin-hook",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+      pinnedRules: "Rule A",
+      readCurrentPinnedRules: async () => current,
+    });
+    const matcher = options.hooks?.SessionStart?.[0];
+    assert.isDefined(matcher);
+    assert.isAbove(matcher?.timeout ?? 0, 0);
+    const fire = async (source: "startup" | "compact") =>
+      (await matcher!.hooks[0]!(
+        {
+          hook_event_name: "SessionStart",
+          source,
+          session_id: "s",
+          transcript_path: "t",
+          cwd: "/workspace",
+        },
+        undefined,
+        { signal: new AbortController().signal },
+      )) as { readonly hookSpecificOutput?: { readonly additionalContext?: string } };
+    const contextOf = async (source: "startup" | "compact") =>
+      (await fire(source)).hookSpecificOutput?.additionalContext;
+
+    assert.include((await contextOf("compact")) ?? "", "supersede");
+    assert.include((await contextOf("compact")) ?? "", "Rule A");
+    current = "Rule B\nsecond `line`";
+    const afterEdit = (await contextOf("compact")) ?? "";
+    assert.include(afterEdit, "Rule B\nsecond `line`");
+    assert.notInclude(afterEdit, "Rule A");
+    assert.isUndefined(await contextOf("startup"));
+    current = undefined;
+    assert.isUndefined(await contextOf("compact"));
+  });
+
+  const fireCompactHook = async (
+    options: ReturnType<typeof ClaudeAdapterV2.makeClaudeQueryOptions>,
+    signal: AbortSignal = new AbortController().signal,
+  ) =>
+    (await options.hooks!.SessionStart![0]!.hooks[0]!(
+      {
+        hook_event_name: "SessionStart",
+        source: "compact",
+        session_id: "s",
+        transcript_path: "t",
+        cwd: "/workspace",
+      },
+      undefined,
+      { signal },
+    )) as { readonly hookSpecificOutput?: { readonly additionalContext?: string } };
+  const hookOptions = (input: {
+    readonly pinnedRules?: string;
+    readonly read: (signal: AbortSignal) => Promise<string | undefined>;
+    readonly onRejected?: (cause: unknown) => void;
+  }) =>
+    ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pin-clear",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+      ...(input.pinnedRules === undefined ? {} : { pinnedRules: input.pinnedRules }),
+      readCurrentPinnedRules: input.read,
+      ...(input.onRejected === undefined ? {} : { onPinnedRulesReadRejected: input.onRejected }),
+    });
+
+  it("withdraws earlier pinned rules when they were cleared after the session opened with some", async () => {
+    const output = await fireCompactHook(
+      hookOptions({ pinnedRules: "Rule A", read: async () => "" }),
+    );
+    const context = output.hookSpecificOutput?.additionalContext ?? "";
+    assert.include(context, "no pinned rules");
+    assert.include(context, "withdrawn");
+  });
+
+  it("adds nothing when the session opened with no rules and there are still none", async () => {
+    assert.deepEqual(await fireCompactHook(hookOptions({ read: async () => "" })), {});
+    assert.deepEqual(
+      await fireCompactHook(hookOptions({ pinnedRules: "", read: async () => "" })),
+      {},
+    );
+  });
+
+  it("keeps the earlier rules in force when the read failed", async () => {
+    assert.deepEqual(
+      await fireCompactHook(hookOptions({ pinnedRules: "Rule A", read: async () => undefined })),
+      {},
+    );
+  });
+
+  it("reports a rejected read and passes the hook signal to the reader", async () => {
+    const rejected: Array<unknown> = [];
+    const failure = new Error("interrupted");
+    assert.deepEqual(
+      await fireCompactHook(
+        hookOptions({
+          pinnedRules: "Rule A",
+          read: async () => {
+            throw failure;
+          },
+          onRejected: (cause) => rejected.push(cause),
+        }),
+      ),
+      {},
+    );
+    assert.deepEqual(rejected, [failure]);
+
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    await fireCompactHook(
+      hookOptions({
+        pinnedRules: "Rule A",
+        read: async (signal) => {
+          seen = signal;
+          return "Rule A";
+        },
+      }),
+      controller.signal,
+    );
+    assert.strictEqual(seen, controller.signal);
+  });
+
+  it("registers no pinned rules hook without a reader", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-no-hook",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+    });
+    assert.isUndefined(options.hooks);
+  });
+
+  it("appends pinned rules verbatim to the system prompt, outside the summarized transcript", () => {
+    const pinnedRules = "Never touch generated/ files.\nAlways run `vp test` first.";
+    const base = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-pins",
+      resume: false,
+      cwd: "/workspace",
+      environment: {},
+    };
+    const append = (options: ReturnType<typeof ClaudeAdapterV2.makeClaudeQueryOptions>) =>
+      (options.systemPrompt as { readonly append?: string }).append ?? "";
+
+    assert.include(
+      append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules })),
+      pinnedRules,
+    );
+    assert.notInclude(append(ClaudeAdapterV2.makeClaudeQueryOptions(base)), "Never touch");
+    assert.equal(
+      append(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, pinnedRules: "" })),
+      append(ClaudeAdapterV2.makeClaudeQueryOptions(base)),
+    );
+  });
 });
 
 describe("ClaudeAdapterV2 context usage", () => {

@@ -18,6 +18,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProjectId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -893,6 +894,89 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
               ingestNormalized: () => Effect.succeed([]),
             }),
             ServerSettings.layerTest(),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("passes the project's pinned rules to the provider turn", () =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const started = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2TurnInput>();
+    const threadId = ThreadId.make("thread:run-execution-pinned-rules");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const attemptId = RunAttemptId.make("attempt:run-execution-pinned-rules");
+    const session = {
+      events: Stream.never,
+      startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        Deferred.succeed(started, input),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+
+    yield* runExecution.startRootRun({
+      commandId: CommandId.make("command:run-execution-pinned-rules"),
+      appThread: {
+        id: threadId,
+        projectId: ProjectId.make("project:pinned"),
+      } as OrchestrationV2AppThread,
+      providerSessionId: ProviderSessionId.make("session:run-execution-pinned-rules"),
+      session,
+      run: {
+        id: RunId.make("run:run-execution-pinned-rules"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+      } as OrchestrationV2Run,
+      rootNode: {
+        id: NodeId.make("node:run-execution-pinned-rules"),
+      } as OrchestrationV2ExecutionNode,
+      checkpointScope: {
+        id: CheckpointScopeId.make("checkpoint-scope:run-execution-pinned-rules"),
+      } as OrchestrationV2CheckpointScope,
+      providerThread: {
+        id: ProviderThreadId.make("provider-thread:run-execution-pinned-rules"),
+        driver,
+      } as OrchestrationV2ProviderThread,
+      attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+      attemptId,
+      providerTurnOrdinal: 1,
+      message: {
+        messageId: MessageId.make("message:run-execution-pinned-rules"),
+        text: "go",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: process.cwd() },
+    });
+
+    const input = yield* Deferred.await(started);
+    assert.equal(input.pinnedRules, "Never touch generated/ files.");
+    assert.equal(yield* input.readPinnedRules!, "Never touch generated/ files.");
+  }).pipe(
+    Effect.provide(
+      RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            McpAppModelContext.layerEmpty,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            layerTurnItemPositionsTest,
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest({
+              projectSettingsOverrides: {
+                [ProjectId.make("project:pinned")]: {
+                  pinnedRules: "Never touch generated/ files.",
+                },
+              },
+            }),
           ),
         ),
       ),

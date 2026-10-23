@@ -45,6 +45,7 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { PinnedRulesSettings } from "./PinnedRulesSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
@@ -548,6 +549,9 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
+        <SettingsSection title="Pinned rules">
+          <PinnedRulesSettings />
+        </SettingsSection>
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
