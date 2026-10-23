@@ -146,6 +146,7 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   isSidebarNestedLinkClick,
+  nestLaunchedSidebarThreads,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -1813,13 +1814,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
+    // A thread an agent launched sits under its launcher within one section's
+    // list. Grouped active rows render under project headers, which stay flat.
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
       section: SidebarSection,
     ): SidebarListItem[] =>
-      list.map((thread) => {
+      (section === "active" && activeArrangement.groups !== null
+        ? list.map((thread) => ({ thread, nested: false }))
+        : nestLaunchedSidebarThreads(list, threads)
+      ).map(({ thread, nested }) => {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        return { kind: "thread", key, section };
+        return nested
+          ? { kind: "thread", key, section, nested: true }
+          : { kind: "thread", key, section };
       });
     if (
       pinnedThreads.length +
@@ -1860,7 +1868,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // list's identity until its order changes, so the sorting strategy, the
   // sortable context and every sortable row stay memoized meanwhile.
   const sidebarListItemsKey = sidebarListItemsFresh
-    .map((item) => (item.kind === "thread" ? item.section + ":" + item.key : item.marker))
+    .map((item) =>
+      item.kind === "thread"
+        ? item.section + ":" + item.key + (item.nested === true ? ":nested" : "")
+        : item.marker,
+    )
     .join("\n");
   const [sidebarListItemsState, setSidebarListItems] = useState(sidebarListItemsFresh);
   const [sidebarListItemsKeyState, setSidebarListItemsKeyState] = useState(sidebarListItemsKey);
@@ -1873,6 +1885,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // into the collapsed Settled shelf.
     sidebarListItems = sidebarListItemsFresh;
   }
+  // Nested rows move with their launcher, so they are not draggable themselves.
+  const nestedThreadKeys = new Set(
+    sidebarListItems.flatMap((item) => (item.kind === "thread" && item.nested ? [item.key] : [])),
+  );
   useEffect(() => {
     if (
       dragState !== null &&
@@ -3098,6 +3114,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         indented = false,
+                        nested = false,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3114,6 +3131,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
+                              nestedThreadKeys.has(threadKey) ||
                               optimisticDrop !== null ||
                               // Fork: a sorted or grouped list has no manual order to write.
                               threadListArranged
@@ -3127,7 +3145,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             hideProjectIcon={!showProjectIcons}
                             grouped={indented}
-                            indent={indented ? threadIndent : "none"}
+                            // A nested row must look nested even when the user's Indent is none.
+                            indent={
+                              nested && threadIndent === "none"
+                                ? "small"
+                                : indented || nested
+                                  ? threadIndent
+                                  : "none"
+                            }
                             propertiesText={threadsView.propertiesTextOf(threadKey)}
                             variantAction={
                               section === "snoozed"
@@ -3234,7 +3259,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           if (item.section === "active" && activeArrangement.groups !== null) {
                             continue;
                           }
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          items.push(
+                            renderThreadRow(
+                              threadByKey.get(item.key)!,
+                              item.section,
+                              false,
+                              item.nested === true,
+                            ),
+                          );
                           continue;
                         }
                         switch (item.marker) {

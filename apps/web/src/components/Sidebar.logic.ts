@@ -146,7 +146,13 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      /** Shown under the thread that launched it; it moves with that thread. */
+      readonly nested?: boolean;
+    }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
 
 export function sidebarListItemId(item: SidebarListItem): string {
@@ -540,20 +546,34 @@ export function resolveSidebarRowThreadId(
  * Places each thread an agent launched directly under the thread that launched
  * it, as a visible row (unlike subagents). A launcher missing from `threads`
  * (another environment, another section, hidden) leaves its launched threads at
- * root, as before. Nesting is one level: a launched thread that itself launches
- * stays beside its siblings under the first launcher, so a long chain cannot
- * drift off screen.
+ * root, as before. A launcher that is a subagent has no row of its own, so
+ * `allThreads` (every thread, hidden ones included) lets it stand for its
+ * nearest visible ancestor. Nesting is one level: a launched thread that itself
+ * launches stays beside its siblings under the first launcher, so a long chain
+ * cannot drift off screen.
  */
 export function nestLaunchedSidebarThreads<
-  T extends Pick<SidebarThreadSummary, "id" | "environmentId" | "launchedByThreadId">,
->(threads: readonly T[]): { readonly thread: T; readonly nested: boolean }[] {
+  T extends Pick<SidebarThreadSummary, "id" | "environmentId" | "launchedByThreadId" | "lineage">,
+>(
+  threads: readonly T[],
+  allThreads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[] = threads,
+): { readonly thread: T; readonly nested: boolean }[] {
   const keyOf = (environmentId: EnvironmentId, id: ThreadId) => `${environmentId}:${id}`;
   const byKey = new Map(threads.map((thread) => [keyOf(thread.environmentId, thread.id), thread]));
+  const launcherOf = (thread: T): T | undefined =>
+    thread.launchedByThreadId == null
+      ? undefined
+      : byKey.get(
+          keyOf(
+            thread.environmentId,
+            resolveSidebarRowThreadId(thread.launchedByThreadId, thread.environmentId, allThreads),
+          ),
+        );
   const anchorOf = (thread: T): T => {
     const visited = new Set<T>([thread]);
     let current = thread;
     while (current.launchedByThreadId != null) {
-      const launcher = byKey.get(keyOf(current.environmentId, current.launchedByThreadId));
+      const launcher = launcherOf(current);
       if (launcher === undefined) return current;
       // A launch cycle has no root, so the thread keeps its own row.
       if (visited.has(launcher)) return thread;
@@ -567,16 +587,17 @@ export function nestLaunchedSidebarThreads<
   for (const thread of threads) {
     const anchor = anchors.get(thread)!;
     if (anchor === thread) continue;
-    nestedUnder.set(anchor, [...(nestedUnder.get(anchor) ?? []), thread]);
+    const siblings = nestedUnder.get(anchor);
+    if (siblings === undefined) nestedUnder.set(anchor, [thread]);
+    else siblings.push(thread);
   }
-  return threads.flatMap((thread) =>
-    anchors.get(thread) === thread
-      ? [
-          { thread, nested: false },
-          ...(nestedUnder.get(thread) ?? []).map((child) => ({ thread: child, nested: true })),
-        ]
-      : [],
-  );
+  const rows: { readonly thread: T; readonly nested: boolean }[] = [];
+  for (const thread of threads) {
+    if (anchors.get(thread) !== thread) continue;
+    rows.push({ thread, nested: false });
+    for (const child of nestedUnder.get(thread) ?? []) rows.push({ thread: child, nested: true });
+  }
+  return rows;
 }
 
 export function filterSidebarV2VisibleThreads<

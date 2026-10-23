@@ -2276,6 +2276,69 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("replays the launching thread from a stored thread.created into every read", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const launcherId = ThreadId.make("thread:launcher");
+      const create = (threadId: ThreadId, launchedByThreadId?: ThreadId) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "agent",
+            creationSource: "mcp",
+            id: threadId,
+            projectId: ProjectId.make("project:launched"),
+            title: "Launched",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            ...(launchedByThreadId === undefined ? {} : { launchedByThreadId }),
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const launched = ThreadId.make("thread:launched");
+      const plain = ThreadId.make("thread:not-launched");
+      yield* create(launched, launcherId);
+      yield* create(plain);
+
+      const snapshot = yield* projectionStore.getShellSnapshot();
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(launched)).thread.launchedByThreadId,
+        launcherId,
+      );
+      assert.equal(
+        (yield* projectionStore.getThreadShell(launched))?.launchedByThreadId,
+        launcherId,
+      );
+      assert.equal(
+        snapshot.threads.find((thread) => thread.id === launched)?.launchedByThreadId,
+        launcherId,
+      );
+      // Launching is not parenthood: the thread is still top level for old readers.
+      assert.equal(
+        snapshot.threads.find((thread) => thread.id === launched)?.lineage.parentThreadId,
+        null,
+      );
+      assert.isUndefined((yield* projectionStore.getThreadShell(plain))?.launchedByThreadId);
+    }),
+  );
+
   // regression: #17141 shell snapshot decoding blocked other database reads
   it.effect("reads the shell snapshot first and decodes it in a separate step", () =>
     Effect.gen(function* () {

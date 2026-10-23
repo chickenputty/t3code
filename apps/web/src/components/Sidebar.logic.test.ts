@@ -203,6 +203,43 @@ describe("sidebar thread lineage helpers", () => {
     expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
   });
 
+  it("nests a thread launched by a hidden subagent under that subagent's visible row", () => {
+    const environmentId = EnvironmentId.make("environment-subagent-launch");
+    const root = makeThreadFixture({ id: ThreadId.make("root"), environmentId });
+    const subagent = makeThreadFixture({
+      id: ThreadId.make("subagent"),
+      environmentId,
+      lineage: { rootThreadId: root.id, parentThreadId: root.id, relationshipToParent: "subagent" },
+    });
+    const launched = makeThreadFixture({
+      id: ThreadId.make("launched"),
+      environmentId,
+      launchedByThreadId: subagent.id,
+    });
+    const orphanedSubagent = makeThreadFixture({
+      id: ThreadId.make("orphaned-subagent"),
+      environmentId,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: ThreadId.make("gone"),
+        relationshipToParent: "subagent",
+      },
+    });
+    const strayed = makeThreadFixture({
+      id: ThreadId.make("strayed"),
+      environmentId,
+      launchedByThreadId: orphanedSubagent.id,
+    });
+    const visible = [launched, root, strayed];
+    const everything = [...visible, subagent, orphanedSubagent];
+
+    expect(
+      nestLaunchedSidebarThreads(visible, everything).map(
+        ({ thread, nested }) => `${nested ? "  " : ""}${thread.id}`,
+      ),
+    ).toEqual(["root", "  launched", "strayed"]);
+  });
+
   it("nests launched threads under their launcher and keeps them at root when it is absent", () => {
     const environmentId = EnvironmentId.make("environment-launch");
     const otherEnvironmentId = EnvironmentId.make("environment-launch-other");
