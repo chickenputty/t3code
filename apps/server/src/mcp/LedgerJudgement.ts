@@ -53,17 +53,16 @@ const FENCE_BEGIN = "<<<UNTRUSTED_DATA_BEGIN>>>";
 const FENCE_END = "<<<UNTRUSTED_DATA_END>>>";
 
 /**
- * Everything the judged agent wrote goes inside a fence the agent cannot close: three or more
- * angle brackets in a row are broken up, so its text can never contain the fence markers. The
+ * Everything the judged agent wrote goes inside a fence the agent cannot close. Every run of
+ * three or more `<` or `>` is spaced out character by character in one pass, so no run of any
+ * length leaves three adjacent brackets and the text can never contain a fence marker. The
  * escaping is deterministic because a retried judgement must rebuild the identical prompt.
  */
+const escapeUntrusted = (text: string) =>
+  text.replace(/<{3,}|>{3,}/g, (run) => run.split("").join(" "));
+
 const fenced = (label: string, agentText: string) =>
-  [
-    `${label}:`,
-    FENCE_BEGIN,
-    agentText.replaceAll("<<<", "< < <").replaceAll(">>>", "> > >"),
-    FENCE_END,
-  ].join("\n");
+  [`${label}:`, FENCE_BEGIN, escapeUntrusted(agentText), FENCE_END].join("\n");
 
 function judgementPrompt(ledger: Ledger, item: LedgerItem): string {
   return [
@@ -125,9 +124,11 @@ export const requestJudgement = Effect.fn("LedgerJudgement.request")(function* (
   const run = yield* ports.delegate({
     prompt,
     title: `Judge ${item.id}: ${item.title}`,
-    // The attempt count makes a re-ask after a recorded verdict a new delegation, while a retry
-    // after a timeout (no verdict yet) still rejoins the running judge.
-    keySource: [ledger.id, item.id, evidence, String(item.judgements ?? 0)].join("\u0000"),
+    // The attempt count makes a re-ask after a recorded verdict a new delegation, and the prompt
+    // stands in for every field it quotes (titles, acceptance, evidence), so editing any of them
+    // starts a fresh judge instead of rejoining one that holds a stale prompt. A retry after a
+    // timeout with nothing changed still rejoins the running judge.
+    keySource: [ledger.id, item.id, String(item.judgements ?? 0), prompt].join("\u0000"),
   });
   if (run.status !== "completed") {
     const detail = run.waitTimedOut
@@ -168,4 +169,3 @@ export const requestJudgement = Effect.fn("LedgerJudgement.request")(function* (
   });
   return { outcome, notes, judge: run.judge, sequence };
 });
-
