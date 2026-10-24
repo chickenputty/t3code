@@ -18,12 +18,15 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  TaskRetro,
+  TaskRetroRollup,
   TaskTimingSummary,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as TaskRetroService from "../../../orchestration-v2/TaskRetroService.ts";
 import * as TaskTimingService from "../../../orchestration-v2/TaskTimingService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -268,6 +271,30 @@ const TaskTimingTool = Tool.make("t3_task_timing", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const TaskRetroTool = Tool.make("t3_task_retro", {
+  ...commandTool,
+  description:
+    "Run a retro on a thread: a strong model (the loadout's judge or planner, else the thread's own model) reads the thread's timing, ledger and loadout and answers why it was slow, whether each role's model was right, and whether the agent structure should be less, the same or more, with loadout recommendations the user can apply from the Activity tab. Omit threadId for this thread; any thread in this environment can be read. Starts a model run and waits for it, so it can take minutes. A retry of an unchanged retro rejoins the one already running. Nothing is applied automatically.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: TaskRetro,
+  dependencies: [...commandTool.dependencies, TaskRetroService.TaskRetroService],
+}).annotate(Tool.Destructive, false);
+
+const RetroSummaryTool = Tool.make("t3_retro_summary", {
+  ...commandTool,
+  description:
+    "Count the stored retros across threads: structure verdicts (less, same, more), the most common slow causes and the model verdicts per role. Narrow it with projectId (default: the calling thread's project, else every project) and since (an ISO time). Reads what retros already stored and asks no model anything. Read-only.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    since: Schema.optional(IsoDateTime),
+  }),
+  success: TaskRetroRollup,
+  dependencies: [...commandTool.dependencies, TaskRetroService.TaskRetroService],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -289,6 +316,8 @@ export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
   TaskTimingTool,
+  TaskRetroTool,
+  RetroSummaryTool,
   ThreadForkTool,
   ThreadMergeBackTool,
   ThreadTransfersTool,

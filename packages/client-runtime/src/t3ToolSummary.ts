@@ -228,6 +228,12 @@ export function summarizeT3ToolCalls(
     case "task-timing":
       label = phrase("Read", "read", `task timing ${times}`);
       break;
+    case "task-retro":
+      label = phrase("Ran", "run", `a task retro ${times}`);
+      break;
+    case "retro-summary":
+      label = phrase("Read", "read", `the retro summary ${times}`);
+      break;
     case "thread-transfers":
       label = phrase("Checked", "check", `thread transfers ${times}`);
       break;

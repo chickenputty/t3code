@@ -28,6 +28,8 @@ export type T3McpToolSummaryAction =
   | "thread-merge"
   | "thread-search"
   | "task-timing"
+  | "task-retro"
+  | "retro-summary"
   | "thread-transfers"
   | "thread-organize"
   | "thread-update"
@@ -303,6 +305,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
   t3_task_timing: tool(["Read", "Reading", "Read", "task timing"], "task-timing"),
+  t3_task_retro: tool(["Run", "Running", "Ran", "a task retro"], "task-retro"),
+  t3_retro_summary: tool(["Read", "Reading", "Read", "the retro summary"], "retro-summary"),
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),

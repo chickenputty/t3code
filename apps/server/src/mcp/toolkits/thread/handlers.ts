@@ -18,6 +18,8 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as TaskRetroService from "../../../orchestration-v2/TaskRetroService.ts";
+import type { TaskRetroError } from "../../../orchestration-v2/TaskRetro.ts";
 import * as TaskTimingService from "../../../orchestration-v2/TaskTimingService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -76,6 +78,13 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
+// The service's messages are fixed text, so they can go to the agent as they are.
+const retroFailure = (error: TaskRetroError) =>
+  new OrchestratorMcpFailure({
+    code: error.reason === "thread_not_found" ? "thread_not_found" : "orchestration_error",
+    message: error.message,
+  });
+
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -123,6 +132,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { projection } = yield* readThread(input.threadId);
       const timing = yield* TaskTimingService.TaskTimingService;
       return yield* timing.summary(projection.thread.id).pipe(Effect.mapError(unavailable));
+    }),
+  ),
+  t3_task_retro: McpToolAccess.writesWithCapability((input) =>
+    Effect.gen(function* () {
+      // Same reach as t3_task_timing: readThread defaults to this thread and refuses a missing one.
+      const { projection } = yield* readThread(input.threadId);
+      const retro = yield* TaskRetroService.TaskRetroService;
+      return yield* retro.run(projection.thread.id).pipe(Effect.mapError(retroFailure));
+    }),
+  ),
+  t3_retro_summary: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { caller } = yield* readCaller();
+      const retro = yield* TaskRetroService.TaskRetroService;
+      return yield* retro
+        .rollup({ projectId: input.projectId ?? caller?.projectId, since: input.since })
+        .pipe(Effect.mapError(retroFailure));
     }),
   ),
   t3_thread_fork: writesThread((input) =>

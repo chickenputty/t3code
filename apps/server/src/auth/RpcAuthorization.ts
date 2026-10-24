@@ -48,6 +48,7 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadPreviews]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTaskTiming]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTaskRetro]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,

@@ -446,6 +446,14 @@ tasks, the longest stalls, and each ledger item's open, in-progress and closed d
 attempts. It is computed on read from the projection and the thread's ledger events; nothing is
 stored.
 
+### `t3_task_retro`
+
+Runs a retro on a thread (default: the calling thread; any thread in the environment can be read). A strong model (the loadout's judge or planner, else the thread's model) reads the timing summary, the ledger and the loadout, which it receives with every agent-written string fenced as untrusted data, and answers why the task was slow, whether each role's model was right, and whether the structure should be `less`, `same` or `more`. The answer ends in a JSON block that is read defensively: an unreadable block keeps the prose and records no recommendation. The result is stored on the thread (one retro per thread, in `thread_task_retros`, outside the event log) and recommendations wait for a person to apply or dismiss them in the Activity tab. The run happens in a thread of its own under a private idempotency key, so a retry of an unchanged retro rejoins it.
+
+### `t3_retro_summary`
+
+Read-only. Aggregates stored retros (`projectId`, default the caller's project; `since`) into counts of structure verdicts, the most common slow causes and model verdicts per role. It asks no model anything.
+
 ### `t3_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.

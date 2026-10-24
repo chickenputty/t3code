@@ -49,8 +49,8 @@ export interface JudgementPorts {
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
-const FENCE_BEGIN = "<<<UNTRUSTED_DATA_BEGIN>>>";
-const FENCE_END = "<<<UNTRUSTED_DATA_END>>>";
+export const FENCE_BEGIN = "<<<UNTRUSTED_DATA_BEGIN>>>";
+export const FENCE_END = "<<<UNTRUSTED_DATA_END>>>";
 
 /**
  * Everything the judged agent wrote goes inside a fence the agent cannot close. Every run of
@@ -61,7 +61,8 @@ const FENCE_END = "<<<UNTRUSTED_DATA_END>>>";
 const escapeUntrusted = (text: string) =>
   text.replace(/<{3,}|>{3,}/g, (run) => run.split("").join(" "));
 
-const fenced = (label: string, agentText: string) =>
+/** Shared with the task retro, which also shows a model text an agent wrote. */
+export const fenced = (label: string, agentText: string) =>
   [`${label}:`, FENCE_BEGIN, escapeUntrusted(agentText), FENCE_END].join("\n");
 
 function judgementPrompt(ledger: Ledger, item: LedgerItem): string {

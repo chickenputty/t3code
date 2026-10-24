@@ -53,6 +53,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTaskTimingError,
+  OrchestrationTaskRetroError,
   OrchestrationGetThreadPreviewsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
@@ -166,6 +167,8 @@ import {
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as TaskTimingService from "./orchestration-v2/TaskTimingService.ts";
+import type * as TaskRetro from "./orchestration-v2/TaskRetro.ts";
+import * as TaskRetroService from "./orchestration-v2/TaskRetroService.ts";
 import * as ThreadPreviews from "./orchestration-v2/ThreadPreviews.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
@@ -3217,6 +3220,10 @@ const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
   Effect.gen(function* () {
     const threadPreviews = yield* ThreadPreviews.ThreadPreviews;
     const taskTiming = yield* TaskTimingService.TaskTimingService;
+    const taskRetro = yield* TaskRetroService.TaskRetroService;
+    // The service's messages are fixed text, so they are safe to show.
+    const taskRetroError = (error: TaskRetro.TaskRetroError) =>
+      new OrchestrationTaskRetroError({ message: error.message, cause: error });
     const workspaceFileReferences = yield* WorkspaceFileReferences.WorkspaceFileReferences;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3247,6 +3254,15 @@ const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
               }),
           ),
         ),
+      [ORCHESTRATION_V2_WS_METHODS.getTaskRetro]: (input) =>
+        Effect.annotateCurrentSpan({ threadId: input.threadId }).pipe(
+          Effect.andThen(taskRetro.get(input.threadId)),
+          Effect.mapError(taskRetroError),
+        ),
+      [ORCHESTRATION_V2_WS_METHODS.runTaskRetro]: (input) =>
+        taskRetro.run(input.threadId).pipe(Effect.mapError(taskRetroError)),
+      [ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro]: (input) =>
+        taskRetro.resolve(input).pipe(Effect.mapError(taskRetroError)),
       [WS_METHODS.projectsResolveFileReference]: (input) =>
         workspaceFileReferences.resolve(input).pipe(
           Effect.mapError(

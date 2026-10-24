@@ -156,6 +156,12 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  OrchestrationGetTaskRetroInput,
+  OrchestrationResolveTaskRetroInput,
+  OrchestrationTaskRetroError,
+  TaskRetro,
+} from "./taskRetro.ts";
+import {
   OrchestrationGetTaskTimingError,
   OrchestrationGetTaskTimingInput,
   TaskTimingSummary,
@@ -1728,6 +1734,32 @@ const WsOrchestrationV2GetTaskTimingRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.g
   error: Schema.Union([OrchestrationGetTaskTimingError, EnvironmentAuthorizationError]),
 });
 
+const TaskRetroRpcError = Schema.Union([
+  OrchestrationTaskRetroError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsOrchestrationV2GetTaskRetroRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTaskRetro, {
+  payload: OrchestrationGetTaskRetroInput,
+  success: Schema.NullOr(TaskRetro),
+  error: TaskRetroRpcError,
+});
+
+const WsOrchestrationV2RunTaskRetroRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.runTaskRetro, {
+  payload: OrchestrationGetTaskRetroInput,
+  success: TaskRetro,
+  error: TaskRetroRpcError,
+});
+
+const WsOrchestrationV2ResolveTaskRetroRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro,
+  {
+    payload: OrchestrationResolveTaskRetroInput,
+    success: TaskRetro,
+    error: TaskRetroRpcError,
+  },
+);
+
 const WsOrchestrationV2GetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -2156,6 +2188,9 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsVcsCommitStagedRpc,
   WsOrchestrationV2GetThreadPreviewsRpc,
   WsOrchestrationV2GetTaskTimingRpc,
+  WsOrchestrationV2GetTaskRetroRpc,
+  WsOrchestrationV2RunTaskRetroRpc,
+  WsOrchestrationV2ResolveTaskRetroRpc,
 ).middleware(RpcScopeAuthorization);
 
 export const WsRpcGroup = UpstreamWsRpcGroup.merge(ForkWsRpcGroup);

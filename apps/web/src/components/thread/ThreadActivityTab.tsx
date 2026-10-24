@@ -8,6 +8,7 @@ import {
 } from "~/components/views/inspectorModel";
 import { formatRelativeMs } from "~/components/views/viewEngine";
 
+import { ThreadRetroSection } from "./ThreadRetroSection";
 import { ThreadTimingSection } from "./ThreadTimingSection";
 
 const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
@@ -38,6 +39,7 @@ export function ThreadActivityTab({
         activityKey={lastFinished?.id ?? ""}
         nowMs={nowMs}
       />
+      <ThreadRetroSection threadRef={threadRef} nowMs={nowMs} />
       <ActivityTurns model={model} nowMs={nowMs} />
     </>
   );

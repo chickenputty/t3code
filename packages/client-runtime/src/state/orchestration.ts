@@ -139,6 +139,21 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 60_000,
     }),
+    // Fork: the Retro part of a thread's Activity tab. Gate on the `taskRetro` capability.
+    taskRetro: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:task-retro",
+      tag: ORCHESTRATION_V2_WS_METHODS.getTaskRetro,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+    }),
+    runTaskRetro: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:run-task-retro",
+      tag: ORCHESTRATION_V2_WS_METHODS.runTaskRetro,
+    }),
+    resolveTaskRetro: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:resolve-task-retro",
+      tag: ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro,
+    }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,

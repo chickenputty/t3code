@@ -1,0 +1,307 @@
+import {
+  CommandId,
+  type Loadout,
+  type ModelSelection,
+  MessageId,
+  type ProjectId,
+  type ServerSettings as ServerSettingsValue,
+  type TaskRetro,
+  type TaskRetroRollup,
+  ThreadId,
+} from "@t3tools/contracts";
+import { loadoutDelegationTarget, resolveLoadout, withSolo } from "@t3tools/shared/loadouts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import * as TaskRetros from "../persistence/TaskRetros.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import {
+  type ResolvePorts,
+  type RetroPorts,
+  type RetroRun,
+  type RetroSource,
+  TaskRetroError,
+  resolveRecommendation,
+  retroCommandKey,
+  rollupRetros,
+  runRetro,
+} from "./TaskRetro.ts";
+import * as TaskTimingService from "./TaskTimingService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+
+/** A retro is a single strong-model answer, so a long wait means it is stuck, not thinking. */
+const RETRO_TIMEOUT_MS = 10 * 60 * 1_000;
+
+/**
+ * Reads a thread's timing, ledger and loadout, asks a strong model the three retro questions and
+ * stores the answer. Both the MCP tools and the Activity tab go through here; neither needs the
+ * thread to be running, so the retro runs in a thread of its own rather than as a delegated task.
+ */
+export class TaskRetroService extends Context.Service<
+  TaskRetroService,
+  {
+    readonly run: (threadId: ThreadId) => Effect.Effect<TaskRetro, TaskRetroError>;
+    readonly get: (threadId: ThreadId) => Effect.Effect<TaskRetro | null, TaskRetroError>;
+    /** Applying edits settings or the thread's loadout; dismissing changes only the retro. */
+    readonly resolve: (input: {
+      readonly threadId: ThreadId;
+      readonly recommendationId: string;
+      readonly action: "apply" | "dismiss";
+    }) => Effect.Effect<TaskRetro, TaskRetroError>;
+    readonly rollup: (filter: {
+      readonly projectId?: ProjectId | undefined;
+      readonly since?: string | undefined;
+    }) => Effect.Effect<TaskRetroRollup, TaskRetroError>;
+  }
+>()("t3/orchestration-v2/TaskRetroService") {}
+
+const hex = (bytes: Uint8Array) =>
+  Array.from(bytes.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const timing = yield* TaskTimingService.TaskTimingService;
+  const store = yield* TaskRetros.TaskRetroRepository;
+  const settingsService = yield* ServerSettings.ServerSettingsService;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const crypto = yield* Crypto.Crypto;
+
+  const storeFailed = (cause: unknown) => new TaskRetroError({ reason: "store_failed", cause });
+  const readFailed = (cause: unknown) => new TaskRetroError({ reason: "read_failed", cause });
+
+  const readSettings = settingsService.getSettings.pipe(
+    Effect.mapError((cause) => new TaskRetroError({ reason: "settings_failed", cause })),
+  );
+
+  const projectLoadouts = (settings: ServerSettingsValue, projectId: ProjectId) =>
+    withSolo(resolveProjectSettings(settings, projectId).settings.loadouts);
+
+  const requireThread = Effect.fn("TaskRetroService.requireThread")(function* (threadId: ThreadId) {
+    const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(readFailed));
+    if (shell === null || shell.deletedAt !== null) {
+      return yield* new TaskRetroError({ reason: "thread_not_found" });
+    }
+    return shell;
+  });
+
+  const delegate = Effect.fn("TaskRetroService.delegate")(function* (input: {
+    readonly projectId: ProjectId;
+    readonly model: ModelSelection;
+    readonly prompt: string;
+    readonly title: string;
+    readonly keySource: string;
+  }) {
+    const digest = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(input.keySource))
+      .pipe(Effect.orDie);
+    const digestHex = hex(digest);
+    const key = retroCommandKey(digestHex);
+    const threadId = ThreadId.make(`thread:retro:${digestHex}`);
+    const failed = (cause: unknown) => new TaskRetroError({ reason: "run_failed", cause });
+
+    // Every id below derives from the private key, so a retry of the same retro rejoins the
+    // thread already running and no client or agent can name one of these ids first.
+    yield* threads
+      .dispatch({
+        type: "thread.create",
+        createdBy: "system",
+        creationSource: "server",
+        commandId: CommandId.make(`${key}-create`),
+        threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.model,
+        // The prompt carries everything the model needs, so it gets no tools it could be asked to use.
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      })
+      .pipe(Effect.mapError(failed));
+    const sent = yield* threads
+      .sendToThread({
+        projectId: input.projectId,
+        commandId: CommandId.make(`${key}-send`),
+        threadId,
+        messageId: MessageId.make(`message:retro:${digestHex}`),
+        text: input.prompt,
+        attachments: [],
+        modelSelection: input.model,
+        mode: "auto",
+        createdBy: "system",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(failed));
+    const waited = yield* threads
+      .waitForThread({
+        projectId: input.projectId,
+        threadId,
+        runId: sent.run.id,
+        timeoutMs: RETRO_TIMEOUT_MS,
+      })
+      .pipe(Effect.mapError(failed));
+
+    const finished = waited.run;
+    const userMessages = yield* threads
+      .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(
+        Effect.map(({ messages }) => messages.map(({ text }) => text)),
+        Effect.mapError(failed),
+      );
+    const answer =
+      finished === null || finished.status !== "completed"
+        ? null
+        : yield* threads
+            .getThreadRecords(threadId, ["messages"], {
+              messageRoles: ["assistant"],
+              messageRunIds: [finished.id],
+            })
+            .pipe(
+              Effect.map(({ messages }) => messages.at(-1)?.text ?? null),
+              Effect.mapError(failed),
+            );
+    const ran = finished?.modelSelection ?? input.model;
+    if (finished?.status === "completed") {
+      // The answer is stored on the subject thread, so this one only clutters the project's list.
+      // A failure to tidy it does not change the answer.
+      yield* threads
+        .dispatch({ type: "thread.archive", commandId: CommandId.make(`${key}-archive`), threadId })
+        .pipe(Effect.ignore);
+    }
+    return {
+      status:
+        finished?.status === "completed" ? "completed" : waited.timedOut ? "running" : "failed",
+      summary: answer,
+      waitTimedOut: waited.timedOut,
+      ran: { instanceId: ran.instanceId, model: ran.model },
+      expected: { instanceId: input.model.instanceId, model: input.model.model },
+      userMessages,
+    } satisfies RetroRun;
+  });
+
+  const run: TaskRetroService["Service"]["run"] = Effect.fn("TaskRetroService.run")(
+    function* (threadId) {
+      yield* Effect.annotateCurrentSpan({ threadId });
+      const shell = yield* requireThread(threadId);
+      const { ledger } = yield* threads
+        .getProjectThreadRecords({ projectId: shell.projectId, threadId }, ["ledger"])
+        .pipe(Effect.mapError(readFailed));
+      const summary = yield* timing.summary(threadId).pipe(Effect.mapError(readFailed));
+      const settings = yield* readSettings;
+      const available = projectLoadouts(settings, shell.projectId);
+      const active = resolveLoadout(available, shell.loadout?.id);
+      const providers = yield* providerRegistry.getProviders.pipe(Effect.mapError(readFailed));
+      // The judge or planner is the loadout's strongest seat; with neither, the thread's own model.
+      const target =
+        loadoutDelegationTarget(active, "judge", providers) ??
+        loadoutDelegationTarget(active, "planner", providers);
+      const model: ModelSelection =
+        target?.providerInstanceId === undefined || target.model === undefined
+          ? shell.modelSelection
+          : {
+              instanceId: target.providerInstanceId,
+              model: target.model,
+              ...(target.options === undefined ? {} : { options: target.options }),
+            };
+      const source: RetroSource = {
+        threadTitle: shell.title,
+        timing: summary,
+        ledger,
+        loadout: {
+          ...active,
+          reason: shell.loadout?.reason ?? null,
+          setBy: shell.loadout?.setBy ?? null,
+        },
+        available,
+      };
+      const previous = Option.getOrUndefined(
+        yield* store.get(threadId).pipe(Effect.mapError(storeFailed)),
+      );
+      const ports: RetroPorts = {
+        delegate: ({ prompt, title, keySource }) =>
+          delegate({ projectId: shell.projectId, model, prompt, title, keySource }),
+        save: (retro) => store.put(retro).pipe(Effect.mapError(storeFailed)),
+      };
+      return yield* runRetro({ threadId, projectId: shell.projectId, source, previous, ports });
+    },
+  );
+
+  const get: TaskRetroService["Service"]["get"] = Effect.fn("TaskRetroService.get")(
+    function* (threadId) {
+      const found = yield* store.get(threadId).pipe(Effect.mapError(storeFailed));
+      return Option.getOrNull(found);
+    },
+  );
+
+  const resolve: TaskRetroService["Service"]["resolve"] = Effect.fn("TaskRetroService.resolve")(
+    function* (input) {
+      yield* Effect.annotateCurrentSpan({ threadId: input.threadId, action: input.action });
+      const retro = Option.getOrUndefined(
+        yield* store.get(input.threadId).pipe(Effect.mapError(storeFailed)),
+      );
+      if (retro === undefined)
+        return yield* new TaskRetroError({ reason: "unknown_recommendation" });
+      const settingsFailed = (cause: unknown) =>
+        new TaskRetroError({ reason: "settings_failed", cause });
+      const ports: ResolvePorts = {
+        loadouts: readSettings.pipe(
+          Effect.map((settings) => projectLoadouts(settings, retro.projectId)),
+        ),
+        providers: providerRegistry.getProviders.pipe(Effect.mapError(readFailed)),
+        saveProjectLoadouts: Effect.fn("TaskRetroService.saveProjectLoadouts")(function* (
+          loadouts: ReadonlyArray<Loadout>,
+        ) {
+          const settings = yield* readSettings;
+          // A project entry replaces that project's whole override set, so the rest is carried over.
+          const { overrides } = resolveProjectSettings(settings, retro.projectId);
+          yield* settingsService
+            .updateSettings({
+              projectSettingsOverrides: { [retro.projectId]: { ...overrides, loadouts } },
+            })
+            .pipe(Effect.mapError(settingsFailed));
+        }),
+        setThreadLoadout: Effect.fn("TaskRetroService.setThreadLoadout")(function* (
+          loadoutId: string,
+          reason: string,
+        ) {
+          const commandId = CommandId.make(
+            `retro:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+          );
+          yield* threads
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId,
+              threadId: input.threadId,
+              // The person pressed Apply, so this is their explicit choice and outranks an agent's.
+              loadout: { id: loadoutId, reason, setBy: "user" },
+            })
+            .pipe(Effect.mapError(settingsFailed));
+        }),
+        save: (next) => store.put(next).pipe(Effect.mapError(storeFailed)),
+      };
+      return yield* resolveRecommendation({
+        retro,
+        recommendationId: input.recommendationId,
+        action: input.action,
+        ports,
+      });
+    },
+  );
+
+  const rollup: TaskRetroService["Service"]["rollup"] = Effect.fn("TaskRetroService.rollup")(
+    function* (filter) {
+      const retros = yield* store.list(filter).pipe(Effect.mapError(storeFailed));
+      return rollupRetros(retros, { projectId: filter.projectId, since: filter.since });
+    },
+  );
+
+  return TaskRetroService.of({ run, get, resolve, rollup });
+});
+
+export const layer = Layer.effect(TaskRetroService, make);
