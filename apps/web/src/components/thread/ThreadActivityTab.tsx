@@ -1,5 +1,5 @@
 /** Fork (chickenputty/t3code): a thread's turns, newest first, with what each one did. */
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { OrchestrationV2RunStatus, ScopedThreadRef } from "@t3tools/contracts";
 
 import {
   formatDuration,
@@ -10,13 +10,14 @@ import { formatRelativeMs } from "~/components/views/viewEngine";
 
 import { ThreadTimingSection } from "./ThreadTimingSection";
 
+// `satisfies` makes a renamed or removed run status a type error here; mirrors the server's runIsLive.
 const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
   "preparing",
   "queued",
   "starting",
   "running",
   "waiting",
-]);
+] satisfies ReadonlyArray<OrchestrationV2RunStatus>);
 
 export function ThreadActivityTab({
   model,

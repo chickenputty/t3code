@@ -401,6 +401,24 @@ describe("deriveTaskTiming", () => {
     assert.equal(timing.totals.waitingOnUserMs, seconds(180));
   });
 
+  it("keeps a gap idle when a delegated task only grazes it", () => {
+    // Ends 5 s into the 365 to 500 gap, far short of half of it.
+    const grazing = task("task:graze", {
+      role: "worker",
+      model: "sonnet",
+      status: "completed",
+      created: 300,
+      childStarted: 305,
+      completed: 370,
+    });
+    const timing = deriveTaskTiming({ ...fixture, delegated: [...fixture.delegated, grazing] });
+    const gaps = timing.stalls.filter((stall) => stall.runId === RunId.make("run:3"));
+    assert.deepEqual(
+      gaps.map((stall) => stall.kind),
+      ["idle_between_runs", "no_ledger_progress"],
+    );
+  });
+
   it("keeps a gap that a person ended as waiting on the user even with a task running", () => {
     const covering = task("task:cover", {
       model: "sonnet",
