@@ -1,6 +1,7 @@
 /** Fork (chickenputty/t3code): the thread's retro and its recommendations, under the Timing section. */
 import { useAtomValue } from "@effect/atom-react";
 import type { RetroRecommendation, ScopedThreadRef, TaskRetro } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -8,7 +9,7 @@ import { toastManager } from "~/components/ui/toast";
 import { formatRelativeMs } from "~/components/views/viewEngine";
 import { useServerConfigs } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
-import { useEnvironmentQuery } from "~/state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 const STRUCTURE_LABEL = {
@@ -31,11 +32,15 @@ function RetroBody({
   retro,
   nowMs,
   resolving,
+  canApply,
+  canDismiss,
   onResolve,
 }: {
   retro: TaskRetro;
   nowMs: number;
   resolving: string | null;
+  canApply: boolean;
+  canDismiss: boolean;
   onResolve: (recommendationId: string, action: "apply" | "dismiss") => void;
 }) {
   return (
@@ -84,7 +89,7 @@ function RetroBody({
                 <div className="flex gap-2">
                   <Button
                     size="compact"
-                    disabled={resolving !== null}
+                    disabled={resolving !== null || !canApply}
                     onClick={() => onResolve(recommendation.id, "apply")}
                   >
                     Apply
@@ -92,7 +97,7 @@ function RetroBody({
                   <Button
                     size="compact"
                     variant="outline"
-                    disabled={resolving !== null}
+                    disabled={resolving !== null || !canDismiss}
                     onClick={() => onResolve(recommendation.id, "dismiss")}
                   >
                     Dismiss
@@ -134,16 +139,34 @@ export function ThreadRetroSection({
       })
     : null;
   const { data, error, refresh } = useEnvironmentQuery(atom);
-  const runRetro = useAtomCommand(orchestrationEnvironment.runTaskRetro);
-  const resolveRetro = useAtomCommand(orchestrationEnvironment.resolveTaskRetro);
+  // Failures are shown below with the server's message, so the generic report is off.
+  const runRetro = useAtomCommand(orchestrationEnvironment.runTaskRetro, { reportFailure: false });
+  const resolveRetro = useAtomCommand(orchestrationEnvironment.resolveTaskRetro, {
+    reportFailure: false,
+  });
   const canRun = useAtomValue(
     orchestrationEnvironment.runTaskRetro.permissionAtom(threadRef.environmentId),
+  );
+  // Applying can edit the project's loadouts, so it needs the settings-write scope as well; the
+  // input says which, as the server's own check does.
+  const applyInput = { threadId: threadRef.threadId, recommendationId: "", action: "apply" };
+  const canApply = useAtomValue(
+    orchestrationEnvironment.resolveTaskRetro.permissionAtom(threadRef.environmentId, applyInput),
+  );
+  const canDismiss = useAtomValue(
+    orchestrationEnvironment.resolveTaskRetro.permissionAtom(threadRef.environmentId, {
+      ...applyInput,
+      action: "dismiss",
+    }),
   );
   const [running, setRunning] = useState(false);
   const [resolving, setResolving] = useState<string | null>(null);
 
   if (!supported) return null;
 
+  // The server's messages are fixed text that says what to do next, so they are shown as they are.
+  const fail = (title: string, cause: Cause.Cause<unknown>) =>
+    toastManager.add({ type: "error", title, description: formatEnvironmentQueryError(cause) });
   const run = async () => {
     setRunning(true);
     const result = await runRetro({
@@ -152,7 +175,7 @@ export function ThreadRetroSection({
     });
     setRunning(false);
     if (result._tag === "Success") refresh();
-    else toastManager.add({ type: "error", title: "The retro did not finish" });
+    else fail("The retro did not finish", result.cause);
   };
   const resolve = async (recommendationId: string, action: "apply" | "dismiss") => {
     setResolving(recommendationId);
@@ -162,7 +185,7 @@ export function ThreadRetroSection({
     });
     setResolving(null);
     if (result._tag === "Success") refresh();
-    else toastManager.add({ type: "error", title: `Could not ${action} the recommendation` });
+    else fail(`Could not ${action} the recommendation`, result.cause);
   };
 
   return (
@@ -174,7 +197,14 @@ export function ThreadRetroSection({
         </Button>
       </div>
       {data !== null ? (
-        <RetroBody retro={data} nowMs={nowMs} resolving={resolving} onResolve={resolve} />
+        <RetroBody
+          retro={data}
+          nowMs={nowMs}
+          resolving={resolving}
+          canApply={canApply}
+          canDismiss={canDismiss}
+          onResolve={resolve}
+        />
       ) : error !== null ? (
         <p className="text-muted-foreground text-xs">The retro is unavailable: {error}</p>
       ) : (

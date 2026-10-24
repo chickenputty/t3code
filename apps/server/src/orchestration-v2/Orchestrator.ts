@@ -2466,6 +2466,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    let parentLineage: {
+      readonly parentThreadId: ThreadId;
+      readonly rootThreadId: ThreadId;
+    } | null = null;
+    if (command.lineage !== undefined) {
+      // The server rewrites a client's provenance to `user`, so this gate keeps clients from
+      // hiding threads as subagents of arbitrary parents.
+      if (command.createdBy !== "system" || command.creationSource !== "server") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Only the server can create a thread with a parent.",
+        });
+      }
+      const parent = yield* projectionStore.getThread(command.lineage.parentThreadId).pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+      if (parent === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The parent thread was not found.",
+        });
+      }
+      parentLineage = {
+        parentThreadId: command.lineage.parentThreadId,
+        rootThreadId: parent.lineage.rootThreadId,
+      };
+    }
+
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2482,11 +2515,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
       pullRequests: [],
-      lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: command.threadId,
-      },
+      lineage:
+        parentLineage === null
+          ? { parentThreadId: null, relationshipToParent: null, rootThreadId: command.threadId }
+          : { ...parentLineage, relationshipToParent: "subagent" },
       forkedFrom: null,
       createdAt: now,
       updatedAt: now,

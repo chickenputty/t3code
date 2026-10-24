@@ -282,6 +282,7 @@ function makeMutableServerSettingsService(
           return next;
         }),
       withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
+      updateSettingsFrom: () => Effect.die("Unexpected settings update"),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

@@ -2673,6 +2673,17 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /**
+     * Makes the new thread a hidden subagent child of an existing one. Only a server-created
+     * thread (`createdBy: "system"`, `creationSource: "server"`) may set it; the orchestrator
+     * rejects it from any client, whose provenance the server rewrites to `user`.
+     */
+    lineage: Schema.optional(
+      Schema.Struct({
+        parentThreadId: ThreadId,
+        relationshipToParent: Schema.Literal("subagent"),
+      }),
+    ),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({

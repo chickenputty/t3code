@@ -1,6 +1,7 @@
 import {
   CommandId,
-  type Loadout,
+  type LoadoutRole,
+  type LoadoutRoleName,
   type ModelSelection,
   MessageId,
   type ProjectId,
@@ -13,6 +14,7 @@ import { loadoutDelegationTarget, resolveLoadout, withSolo } from "@t3tools/shar
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,14 +30,20 @@ import {
   TaskRetroError,
   resolveRecommendation,
   retroCommandKey,
+  retroRefusal,
   rollupRetros,
   runRetro,
+  setLoadoutRole,
 } from "./TaskRetro.ts";
 import * as TaskTimingService from "./TaskTimingService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
-/** A retro is a single strong-model answer, so a long wait means it is stuck, not thinking. */
-const RETRO_TIMEOUT_MS = 10 * 60 * 1_000;
+/**
+ * A retro is one answer to a prompt that holds everything, so a long wait means the model is
+ * stuck, most likely on an approval nobody will give. Kept short so that costs minutes, not ten.
+ */
+const RETRO_TIMEOUT_MS = 5 * 60 * 1_000;
+const RETRO_THREAD_PREFIX = "thread:retro:";
 
 /**
  * Reads a thread's timing, ledger and loadout, asks a strong model the three retro questions and
@@ -45,7 +53,16 @@ const RETRO_TIMEOUT_MS = 10 * 60 * 1_000;
 export class TaskRetroService extends Context.Service<
   TaskRetroService,
   {
-    readonly run: (threadId: ThreadId) => Effect.Effect<TaskRetro, TaskRetroError>;
+    /**
+     * `agent` is refused while the thread is working or was retro'd in the last ten minutes;
+     * `user` is a person pressing Run retro, who is not rate-limited.
+     */
+    readonly run: (
+      threadId: ThreadId,
+      trigger: "agent" | "user",
+    ) => Effect.Effect<TaskRetro, TaskRetroError>;
+    /** Archives retro threads a restart or a crash left behind. Returns how many it found. */
+    readonly sweep: () => Effect.Effect<number, TaskRetroError>;
     readonly get: (threadId: ThreadId) => Effect.Effect<TaskRetro | null, TaskRetroError>;
     /** Applying edits settings or the thread's loadout; dismissing changes only the retro. */
     readonly resolve: (input: {
@@ -91,6 +108,7 @@ export const make = Effect.gen(function* () {
   });
 
   const delegate = Effect.fn("TaskRetroService.delegate")(function* (input: {
+    readonly subjectThreadId: ThreadId;
     readonly projectId: ProjectId;
     readonly model: ModelSelection;
     readonly prompt: string;
@@ -101,12 +119,12 @@ export const make = Effect.gen(function* () {
       .digest("SHA-256", new TextEncoder().encode(input.keySource))
       .pipe(Effect.orDie);
     const digestHex = hex(digest);
-    const key = retroCommandKey(digestHex);
-    const threadId = ThreadId.make(`thread:retro:${digestHex}`);
     const failed = (cause: unknown) => new TaskRetroError({ reason: "run_failed", cause });
 
-    // Every id below derives from the private key, so a retry of the same retro rejoins the
-    // thread already running and no client or agent can name one of these ids first.
+    const key = retroCommandKey(digestHex);
+    const threadId = ThreadId.make(`${RETRO_THREAD_PREFIX}${digestHex}`);
+
+    // Every id below derives from the private key, so no client or agent can name one first.
     yield* threads
       .dispatch({
         type: "thread.create",
@@ -117,78 +135,109 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         title: input.title,
         modelSelection: input.model,
-        // The prompt carries everything the model needs, so it gets no tools it could be asked to use.
+        // The adapters give a server-created thread no way to run with tools off or to auto-deny
+        // an approval, and the prompt tells the model not to use tools. Approval is required so
+        // a model that ignores that cannot touch anything; the short timeout and the interrupt
+        // below end the run if it then waits on an approval nobody will answer.
         runtimeMode: "approval-required",
         interactionMode: "default",
         branch: null,
         worktreePath: null,
-      })
-      .pipe(Effect.mapError(failed));
-    const sent = yield* threads
-      .sendToThread({
-        projectId: input.projectId,
-        commandId: CommandId.make(`${key}-send`),
-        threadId,
-        messageId: MessageId.make(`message:retro:${digestHex}`),
-        text: input.prompt,
-        attachments: [],
-        modelSelection: input.model,
-        mode: "auto",
-        createdBy: "system",
-        creationSource: "server",
-      })
-      .pipe(Effect.mapError(failed));
-    const waited = yield* threads
-      .waitForThread({
-        projectId: input.projectId,
-        threadId,
-        runId: sent.run.id,
-        timeoutMs: RETRO_TIMEOUT_MS,
+        // A hidden subagent child of the thread it reviews, so it stays out of the thread lists.
+        lineage: { parentThreadId: input.subjectThreadId, relationshipToParent: "subagent" },
       })
       .pipe(Effect.mapError(failed));
 
-    const finished = waited.run;
-    const userMessages = yield* threads
-      .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
-      .pipe(
-        Effect.map(({ messages }) => messages.map(({ text }) => text)),
-        Effect.mapError(failed),
-      );
-    const answer =
-      finished === null || finished.status !== "completed"
-        ? null
-        : yield* threads
-            .getThreadRecords(threadId, ["messages"], {
-              messageRoles: ["assistant"],
-              messageRunIds: [finished.id],
-            })
-            .pipe(
-              Effect.map(({ messages }) => messages.at(-1)?.text ?? null),
-              Effect.mapError(failed),
-            );
-    const ran = finished?.modelSelection ?? input.model;
-    if (finished?.status === "completed") {
-      // The answer is stored on the subject thread, so this one only clutters the project's list.
-      // A failure to tidy it does not change the answer.
+    // Whatever the run's outcome, the retro thread ends stopped and archived.
+    const finish = Effect.fn("TaskRetroService.finish")(function* () {
       yield* threads
-        .dispatch({ type: "thread.archive", commandId: CommandId.make(`${key}-archive`), threadId })
+        .interruptThread({
+          projectId: input.projectId,
+          commandId: CommandId.make(`${key}-interrupt`),
+          threadId,
+          reason: "The retro ended.",
+        })
         .pipe(Effect.ignore);
-    }
-    return {
-      status:
-        finished?.status === "completed" ? "completed" : waited.timedOut ? "running" : "failed",
-      summary: answer,
-      waitTimedOut: waited.timedOut,
-      ran: { instanceId: ran.instanceId, model: ran.model },
-      expected: { instanceId: input.model.instanceId, model: input.model.model },
-      userMessages,
-    } satisfies RetroRun;
+      yield* threads
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`${key}-archive`),
+          threadId,
+        })
+        .pipe(Effect.ignore);
+    });
+
+    return yield* Effect.gen(function* () {
+      const sent = yield* threads
+        .sendToThread({
+          projectId: input.projectId,
+          commandId: CommandId.make(`${key}-send`),
+          threadId,
+          messageId: MessageId.make(`message:retro:${digestHex}`),
+          text: input.prompt,
+          attachments: [],
+          modelSelection: input.model,
+          mode: "auto",
+          createdBy: "system",
+          creationSource: "server",
+        })
+        .pipe(Effect.mapError(failed));
+      const waited = yield* threads
+        .waitForThread({
+          projectId: input.projectId,
+          threadId,
+          runId: sent.run.id,
+          timeoutMs: RETRO_TIMEOUT_MS,
+        })
+        .pipe(Effect.mapError(failed));
+
+      const finished = waited.run;
+      const userMessages = yield* threads
+        .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
+        .pipe(
+          Effect.map(({ messages }) => messages.map(({ text }) => text)),
+          Effect.mapError(failed),
+        );
+      const answer =
+        finished === null || finished.status !== "completed"
+          ? null
+          : yield* threads
+              .getThreadRecords(threadId, ["messages"], {
+                messageRoles: ["assistant"],
+                messageRunIds: [finished.id],
+              })
+              .pipe(
+                Effect.map(({ messages }) => messages.at(-1)?.text ?? null),
+                Effect.mapError(failed),
+              );
+      const ran = finished?.modelSelection ?? input.model;
+      return {
+        status:
+          finished?.status === "completed" ? "completed" : waited.timedOut ? "running" : "failed",
+        summary: answer,
+        waitTimedOut: waited.timedOut,
+        ran: { instanceId: ran.instanceId, model: ran.model },
+        expected: { instanceId: input.model.instanceId, model: input.model.model },
+        userMessages,
+      } satisfies RetroRun;
+    }).pipe(Effect.onExit(() => finish()));
   });
 
   const run: TaskRetroService["Service"]["run"] = Effect.fn("TaskRetroService.run")(
-    function* (threadId) {
-      yield* Effect.annotateCurrentSpan({ threadId });
+    function* (threadId, trigger) {
+      yield* Effect.annotateCurrentSpan({ threadId, trigger });
       const shell = yield* requireThread(threadId);
+      const previous = Option.getOrUndefined(
+        yield* store.get(threadId).pipe(Effect.mapError(storeFailed)),
+      );
+      if (trigger === "agent") {
+        const refusal = retroRefusal({
+          threadActive: shell.activeRunId !== null,
+          previous,
+          nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+        });
+        if (refusal !== undefined) return yield* new TaskRetroError({ reason: refusal });
+      }
       const { ledger } = yield* threads
         .getProjectThreadRecords({ projectId: shell.projectId, threadId }, ["ledger"])
         .pipe(Effect.mapError(readFailed));
@@ -220,15 +269,42 @@ export const make = Effect.gen(function* () {
         },
         available,
       };
-      const previous = Option.getOrUndefined(
-        yield* store.get(threadId).pipe(Effect.mapError(storeFailed)),
-      );
       const ports: RetroPorts = {
         delegate: ({ prompt, title, keySource }) =>
-          delegate({ projectId: shell.projectId, model, prompt, title, keySource }),
+          delegate({
+            subjectThreadId: threadId,
+            projectId: shell.projectId,
+            model,
+            prompt,
+            title,
+            keySource,
+          }),
         save: (retro) => store.put(retro).pipe(Effect.mapError(storeFailed)),
       };
       return yield* runRetro({ threadId, projectId: shell.projectId, source, previous, ports });
+    },
+  );
+
+  const sweep: TaskRetroService["Service"]["sweep"] = Effect.fn("TaskRetroService.sweep")(
+    function* () {
+      // A restart mid-retro leaves its thread behind with nothing left to finish it.
+      const snapshot = yield* threads.getShellSnapshot().pipe(Effect.mapError(readFailed));
+      const stale = snapshot.threads.filter(
+        (thread) => thread.id.startsWith(RETRO_THREAD_PREFIX) && thread.activeRunId === null,
+      );
+      yield* Effect.forEach(
+        stale,
+        (thread) =>
+          threads
+            .dispatch({
+              type: "thread.archive",
+              commandId: CommandId.make(`command:mcp:retro:sweep-${encodeURIComponent(thread.id)}`),
+              threadId: thread.id,
+            })
+            .pipe(Effect.ignore),
+        { discard: true },
+      );
+      return stale.length;
     },
   );
 
@@ -254,17 +330,31 @@ export const make = Effect.gen(function* () {
           Effect.map((settings) => projectLoadouts(settings, retro.projectId)),
         ),
         providers: providerRegistry.getProviders.pipe(Effect.mapError(readFailed)),
-        saveProjectLoadouts: Effect.fn("TaskRetroService.saveProjectLoadouts")(function* (
-          loadouts: ReadonlyArray<Loadout>,
+        setProjectRole: Effect.fn("TaskRetroService.setProjectRole")(function* (
+          loadoutId: string,
+          role: LoadoutRoleName,
+          value: LoadoutRole,
         ) {
-          const settings = yield* readSettings;
-          // A project entry replaces that project's whole override set, so the rest is carried over.
-          const { overrides } = resolveProjectSettings(settings, retro.projectId);
           yield* settingsService
-            .updateSettings({
-              projectSettingsOverrides: { [retro.projectId]: { ...overrides, loadouts } },
+            .updateSettingsFrom((current) => {
+              // The list as saved, without the synthetic solo, so the project copy never stores it.
+              const { overrides, settings } = resolveProjectSettings(current, retro.projectId);
+              const next = setLoadoutRole(settings.loadouts, loadoutId, role, value);
+              return next === undefined
+                ? Effect.fail(new TaskRetroError({ reason: "loadout_gone" }))
+                : // A project entry replaces that project's whole override set, so the rest is
+                  // carried over; a project with none gets one holding just the edited list.
+                  Effect.succeed({
+                    projectSettingsOverrides: {
+                      [retro.projectId]: { ...overrides, loadouts: next },
+                    },
+                  });
             })
-            .pipe(Effect.mapError(settingsFailed));
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "TaskRetroError" ? error : settingsFailed(error),
+              ),
+            );
         }),
         setThreadLoadout: Effect.fn("TaskRetroService.setThreadLoadout")(function* (
           loadoutId: string,
@@ -301,7 +391,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return TaskRetroService.of({ run, get, resolve, rollup });
+  return TaskRetroService.of({ run, sweep, get, resolve, rollup });
 });
 
 export const layer = Layer.effect(TaskRetroService, make);

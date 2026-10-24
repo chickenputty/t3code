@@ -3260,7 +3260,7 @@ const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
           Effect.mapError(taskRetroError),
         ),
       [ORCHESTRATION_V2_WS_METHODS.runTaskRetro]: (input) =>
-        taskRetro.run(input.threadId).pipe(Effect.mapError(taskRetroError)),
+        taskRetro.run(input.threadId, "user").pipe(Effect.mapError(taskRetroError)),
       [ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro]: (input) =>
         taskRetro.resolve(input).pipe(Effect.mapError(taskRetroError)),
       [WS_METHODS.projectsResolveFileReference]: (input) =>

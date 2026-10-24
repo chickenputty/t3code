@@ -27,7 +27,9 @@ import {
   resolveRecommendation,
   retroCommandKey,
   retroKeySource,
+  retroRefusal,
   rollupRetros,
+  setLoadoutRole,
   runRetro,
   TaskRetroError,
 } from "./TaskRetro.ts";
@@ -240,10 +242,22 @@ it("the private retro key is reserved and cannot equal any public delegation id"
 });
 
 it("a new run or a changed prompt is a new key, an unchanged retry is the same one", () => {
-  const base = { threadId, run: 1, prompt: "p" };
+  const base = { threadId, run: 1, window: 7, prompt: "p" };
   expect(retroKeySource(base)).toBe(retroKeySource({ ...base }));
   expect(retroKeySource(base)).not.toBe(retroKeySource({ ...base, run: 2 }));
+  expect(retroKeySource(base)).not.toBe(retroKeySource({ ...base, window: 8 }));
   expect(retroKeySource(base)).not.toBe(retroKeySource({ ...base, prompt: "q" }));
+});
+
+it("an agent is refused while the thread works and within ten minutes of the last retro", () => {
+  const previous = baseRetro({ createdAt: "2026-01-02T00:00:00.000Z" });
+  const at = (minutes: number) => Date.parse("2026-01-02T00:00:00.000Z") + minutes * 60_000;
+  expect(retroRefusal({ threadActive: true, previous: undefined, nowMs: at(0) })).toBe(
+    "thread_busy",
+  );
+  expect(retroRefusal({ threadActive: false, previous, nowMs: at(9) })).toBe("cooldown");
+  expect(retroRefusal({ threadActive: false, previous, nowMs: at(11) })).toBeUndefined();
+  expect(retroRefusal({ threadActive: false, previous: undefined, nowMs: at(0) })).toBeUndefined();
 });
 
 const answerJson = JSON.stringify({
@@ -420,7 +434,11 @@ const resolveHarness = (options: { providers?: typeof providers } = {}) => {
   const ports: ResolvePorts = {
     loadouts: Effect.succeed(loadouts),
     providers: Effect.succeed(options.providers ?? providers),
-    saveProjectLoadouts: (next) => Effect.sync(() => void savedLoadouts.push(next)),
+    setProjectRole: (loadoutId, role, value) =>
+      Effect.sync(() => {
+        const next = setLoadoutRole(loadouts, loadoutId, role, value);
+        if (next !== undefined) savedLoadouts.push(next);
+      }),
     setThreadLoadout: (id, reason) => Effect.sync(() => void threadLoadouts.push({ id, reason })),
     save: (retro) => Effect.sync(() => void saved.push(retro)),
   };
@@ -451,6 +469,15 @@ it.effect("applying a role recommendation edits that role in the project's loado
     expect(saved).toEqual([next]);
   }),
 );
+
+it("a role edit works on the saved list, so a project copy never gains a synthetic solo", () => {
+  const saved = loadouts.filter(({ id }) => id !== "solo");
+  const value = { instanceId: claude, model: "claude-haiku-5-5" };
+  const next = setLoadoutRole(saved, "org", "worker", value);
+  expect(next?.map(({ id }) => id)).toEqual(["org"]);
+  expect(next?.[0]?.roles.worker).toEqual(value);
+  expect(setLoadoutRole(saved, "gone", "worker", value)).toBeUndefined();
+});
 
 it.effect("applying a loadout recommendation sets the thread's loadout as the user's choice", () =>
   Effect.gen(function* () {

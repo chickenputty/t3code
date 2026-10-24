@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -36,6 +37,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
+import * as TaskRetroService from "./orchestration-v2/TaskRetroService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -587,6 +589,18 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ),
       forkParked,
     );
+
+    // A restart mid-retro leaves its helper thread behind. Optional because the retro is a fork
+    // feature: a runtime built without it simply has nothing to sweep.
+    const taskRetro = yield* Effect.serviceOption(TaskRetroService.TaskRetroService);
+    if (Option.isSome(taskRetro)) {
+      yield* runStartupPhase("task-retro.sweep", taskRetro.value.sweep()).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to sweep stale retro threads", { cause }),
+        ),
+        forkParked,
+      );
+    }
 
     const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
       Effect.tap((summary) =>

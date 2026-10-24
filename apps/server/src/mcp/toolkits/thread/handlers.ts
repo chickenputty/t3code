@@ -81,7 +81,12 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
 // The service's messages are fixed text, so they can go to the agent as they are.
 const retroFailure = (error: TaskRetroError) =>
   new OrchestratorMcpFailure({
-    code: error.reason === "thread_not_found" ? "thread_not_found" : "orchestration_error",
+    code:
+      error.reason === "thread_not_found"
+        ? "thread_not_found"
+        : error.reason === "thread_busy" || error.reason === "cooldown"
+          ? "invalid_request"
+          : "orchestration_error",
     message: error.message,
   });
 
@@ -139,7 +144,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       // Same reach as t3_task_timing: readThread defaults to this thread and refuses a missing one.
       const { projection } = yield* readThread(input.threadId);
       const retro = yield* TaskRetroService.TaskRetroService;
-      return yield* retro.run(projection.thread.id).pipe(Effect.mapError(retroFailure));
+      return yield* retro.run(projection.thread.id, "agent").pipe(Effect.mapError(retroFailure));
     }),
   ),
   t3_retro_summary: McpToolAccess.reads((input) =>

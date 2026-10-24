@@ -66,6 +66,8 @@ const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
   { databaseLayer: SqlitePersistence.layerMemory, runEffectWorker: false },
 );
 const layerSettings = ServerSettings.layerTest({
+  // No solo in the saved list: the service adds one for display, and it must not be written back.
+  loadouts: [org],
   // Another override on the same project, which applying a recommendation must not drop.
   projectSettingsOverrides: { [projectId]: { branchNamePrefix: "keep" } },
 });
@@ -112,6 +114,16 @@ const retro = (overrides: Partial<TaskRetro> = {}): TaskRetro => ({
       instanceId: codex,
       model: "gpt-5.4-mini",
       note: "cheaper",
+      status: "pending",
+    },
+    {
+      id: "rec-3",
+      kind: "role_model",
+      loadoutId: org.id,
+      role: "planner",
+      instanceId: codex,
+      model: "gpt-5.4-mini",
+      note: "cheaper planner",
       status: "pending",
     },
   ],
@@ -172,7 +184,27 @@ it.effect(
       expect(saved?.roles.worker).toEqual({ instanceId: codex, model: "gpt-5.4-mini" });
       expect(saved?.roles.planner).toEqual(org.roles.planner);
       expect(entry?.branchNamePrefix).toBe("keep");
+      // The synthetic solo the service adds for display is not written into the project's copy.
+      expect(entry?.loadouts?.map(({ id }) => id)).toEqual([org.id]);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("two role recommendations applied together both land: the edit is atomic", () =>
+  Effect.gen(function* () {
+    const { service, settings } = yield* setup;
+    yield* Effect.all(
+      [
+        service.resolve({ threadId, recommendationId: "rec-2", action: "apply" }),
+        service.resolve({ threadId, recommendationId: "rec-3", action: "apply" }),
+      ],
+      { concurrency: 2 },
+    );
+    const saved = (yield* settings.getSettings).projectSettingsOverrides[projectId]?.loadouts?.find(
+      ({ id }) => id === org.id,
+    );
+    expect(saved?.roles.worker?.model).toBe("gpt-5.4-mini");
+    expect(saved?.roles.planner?.model).toBe("gpt-5.4-mini");
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("undoing an applied role is editing the loadout again; the retro stays applied", () =>
@@ -200,6 +232,7 @@ it.effect("dismissing changes no setting and leaves the thread's loadout alone",
     expect((yield* service.get(threadId))?.recommendations.map(({ status }) => status)).toEqual([
       "pending",
       "dismissed",
+      "pending",
     ]);
   }).pipe(Effect.provide(layerTest)),
 );

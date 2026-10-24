@@ -16,6 +16,8 @@ import {
 
 const RetroRow = Schema.Struct({ retro: Schema.fromJsonString(TaskRetro) });
 
+const LIST_LIMIT = 500;
+
 const ListRequest = Schema.Struct({
   projectId: Schema.NullOr(Schema.String),
   since: Schema.NullOr(Schema.String),
@@ -54,11 +56,16 @@ const make = Effect.gen(function* () {
     Request: ListRequest,
     Result: RetroRow,
     execute: ({ projectId, since }) =>
+      // A deleted thread's retro is gone with it. The newest ones are the useful ones, so a
+      // large store is cut to those rather than decoded whole.
       sql`
-        SELECT retro_json AS "retro" FROM thread_task_retros
-        WHERE (${projectId} IS NULL OR project_id = ${projectId})
-          AND (${since} IS NULL OR created_at >= ${since})
-        ORDER BY created_at DESC
+        SELECT retro.retro_json AS "retro" FROM thread_task_retros AS retro
+        JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = retro.thread_id
+        WHERE thread.deleted_at IS NULL
+          AND (${projectId} IS NULL OR retro.project_id = ${projectId})
+          AND (${since} IS NULL OR retro.created_at >= ${since})
+        ORDER BY retro.created_at DESC
+        LIMIT ${LIST_LIMIT}
       `,
   });
   const encodeRetro = Schema.encodeEffect(Schema.fromJsonString(TaskRetro));
