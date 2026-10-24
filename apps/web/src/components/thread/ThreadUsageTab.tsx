@@ -1,7 +1,7 @@
 /** Fork (chickenputty/t3code): the tokens and models a thread has used. */
 import { formatTokens, type InspectorModel } from "~/components/views/inspectorModel";
 
-function Stat({ label, value }: { label: string; value: string }) {
+export function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col rounded-lg border border-border/60 px-3 py-2">
       <span className="text-muted-foreground text-xs">{label}</span>

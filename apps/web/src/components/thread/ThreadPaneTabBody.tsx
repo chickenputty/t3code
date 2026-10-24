@@ -59,7 +59,9 @@ function PaneTabContent({
   if (tab === "overview") return <PaneOverview threadRef={threadRef} model={model} />;
   if (model === null) return <PaneLoading />;
   if (tab === "files") return <ThreadFilesTab model={model} />;
-  if (tab === "activity") return <ThreadActivityTab model={model} nowMs={nowMs} />;
+  if (tab === "activity") {
+    return <ThreadActivityTab model={model} nowMs={nowMs} threadRef={threadRef} />;
+  }
   return <ThreadUsageTab model={model} />;
 }
 

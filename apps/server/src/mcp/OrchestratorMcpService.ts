@@ -2318,6 +2318,12 @@ const make = Effect.gen(function* () {
           // delegations deliver through the blocking tool call, so a wake is
           // only needed if the parent settled first (timeout, disconnect).
           completionWake: input.mode === "wait" ? "settled_only" : "always",
+          // The judge delegation passes no role of its own, so the operation names it.
+          ...(operation === JUDGE_DELEGATION_OPERATION
+            ? { role: "judge" }
+            : input.role === undefined
+              ? {}
+              : { role: input.role }),
         })
         .pipe(
           Effect.mapError((error) =>

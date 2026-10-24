@@ -225,6 +225,9 @@ export function summarizeT3ToolCalls(
     case "thread-search":
       label = phrase("Searched", "search", `threads ${times}`);
       break;
+    case "task-timing":
+      label = phrase("Read", "read", `task timing ${times}`);
+      break;
     case "thread-transfers":
       label = phrase("Checked", "check", `thread transfers ${times}`);
       break;

@@ -131,6 +131,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 60_000,
     }),
+    // Fork: the Timing section of a thread's Activity tab. Gate on the `taskTiming` capability.
+    taskTiming: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:task-timing",
+      tag: ORCHESTRATION_V2_WS_METHODS.getTaskTiming,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,

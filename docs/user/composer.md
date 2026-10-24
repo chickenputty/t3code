@@ -121,6 +121,8 @@ Under a loadout, the agent delegates to a role instead of naming a model. A load
 
 Edit the list in **Settings → General → Loadouts**. A project can override the environment's list. A role left empty runs on the thread's own model, and a thread whose loadout was deleted runs solo.
 
+The **Timing** section at the top of a thread's Activity tab shows where its time went: wall, agent, queued, delegated and stalled time, delegated time by role and model, the slowest steps, and the longest stalls (waiting on you, a pending request, idle between turns, or a turn that moved no ledger item). Agents can read the same summary with the `t3_task_timing` tool.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

@@ -7066,6 +7066,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.role === undefined ? {} : { role: command.role }),
         status: "running",
         result: null,
         startedAt: now,

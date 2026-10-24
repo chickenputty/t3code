@@ -732,6 +732,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+  /**
+   * The delegate_task role the task was started under. The prompt only carries it as prose and
+   * the judge's carries none, so timing reads it from here. Absent when the delegation named none.
+   */
+  role: Schema.optional(TrimmedNonEmptyString),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: Schema.Literals([
     "idle",
@@ -3061,6 +3066,7 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    role: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3179,6 +3185,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
   getThreadPreviews: "orchestration.getThreadPreviews",
+  getTaskTiming: "orchestration.getTaskTiming",
   searchThread: "orchestration.searchThread",
   searchThreadStream: "orchestration.searchThreadStream",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",

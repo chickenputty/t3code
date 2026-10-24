@@ -1475,6 +1475,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const result = yield* service.delegateTask(scope, {
           task: "Summarize the diff.",
           target: { driverKind: ProviderDriverKind.make("codex") },
+          role: "review",
           mode: "async",
           clientRequestId: "delegate-driver-skip-disabled-1",
         });
@@ -1483,8 +1484,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(commands.length, 1);
         const request = commands[0] as {
           modelSelection: { instanceId: string; model: string };
+          role?: string;
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+        // Timing groups delegated work by this role, which the prompt only carries as prose.
+        assert.equal(request.role, "review");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

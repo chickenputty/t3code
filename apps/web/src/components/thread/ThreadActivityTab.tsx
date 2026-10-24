@@ -1,4 +1,6 @@
 /** Fork (chickenputty/t3code): a thread's turns, newest first, with what each one did. */
+import type { ScopedThreadRef } from "@t3tools/contracts";
+
 import {
   formatDuration,
   formatTokens,
@@ -6,9 +8,33 @@ import {
 } from "~/components/views/inspectorModel";
 import { formatRelativeMs } from "~/components/views/viewEngine";
 
-export function ThreadActivityTab({ model, nowMs }: { model: InspectorModel; nowMs: number }) {
+import { ThreadTimingSection } from "./ThreadTimingSection";
+
+export function ThreadActivityTab({
+  model,
+  nowMs,
+  threadRef,
+}: {
+  model: InspectorModel;
+  nowMs: number;
+  threadRef: ScopedThreadRef;
+}) {
   if (model.runs.length === 0)
     return <p className="text-muted-foreground text-sm">No turns yet.</p>;
+  const latest = model.runs.at(-1);
+  return (
+    <>
+      <ThreadTimingSection
+        threadRef={threadRef}
+        activityKey={`${model.runs.length}:${latest?.status}`}
+        nowMs={nowMs}
+      />
+      <ActivityTurns model={model} nowMs={nowMs} />
+    </>
+  );
+}
+
+function ActivityTurns({ model, nowMs }: { model: InspectorModel; nowMs: number }) {
   return (
     <ol className="flex flex-col gap-3">
       {model.runs.toReversed().map((run) => {
