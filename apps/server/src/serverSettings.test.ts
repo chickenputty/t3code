@@ -126,6 +126,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect(
+    "derives a patch from the settings under the write lock, so concurrent edits all land",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const prefix = (value: string) => ({ branchNamePrefix: value });
+        // Each derive reads the prefix as it stands and appends to it. Were the read outside the
+        // lock, two of them would start from the same value and one append would be lost.
+        yield* Effect.all(
+          ["a", "b", "c", "d"].map((letter) =>
+            service.updateSettingsFrom((current) =>
+              Effect.succeed(prefix(`${current.branchNamePrefix}${letter}`)),
+            ),
+          ),
+          { concurrency: "unbounded" },
+        );
+        const settings = yield* service.getSettings;
+        assert.deepEqual(settings.branchNamePrefix.slice(-4).split("").toSorted(), [
+          "a",
+          "b",
+          "c",
+          "d",
+        ]);
+        assert.equal(settings.branchNamePrefix.length, "t3".length + 4);
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+  it.effect("a failing derive changes nothing", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const before = yield* service.getSettings;
+      const exit = yield* Effect.exit(
+        service.updateSettingsFrom(() => Effect.fail("refused" as const)),
+      );
+      assert.equal(exit._tag, "Failure");
+      assert.deepEqual(yield* service.getSettings, before);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("persists and broadcasts model preferences to other connected clients", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -5,8 +5,6 @@
  * Nothing mounts while the Chat tab is shown.
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
-
 import { Spinner } from "~/components/ui/spinner";
 import { buildInspectorModel, type InspectorModel } from "~/components/views/inspectorModel";
 import { useMinuteClock, useViewRow } from "~/components/views/useViewRows";
@@ -54,12 +52,14 @@ function PaneTabContent({
   threadRef: ScopedThreadRef;
 }) {
   const thread = useThreadProjection(threadRef);
-  const model = useMemo(() => (thread ? buildInspectorModel(thread.projection) : null), [thread]);
+  const model = thread ? buildInspectorModel(thread.projection) : null;
   const nowMs = useMinuteClock();
   if (tab === "overview") return <PaneOverview threadRef={threadRef} model={model} />;
   if (model === null) return <PaneLoading />;
   if (tab === "files") return <ThreadFilesTab model={model} />;
-  if (tab === "activity") return <ThreadActivityTab model={model} nowMs={nowMs} />;
+  if (tab === "activity") {
+    return <ThreadActivityTab model={model} nowMs={nowMs} threadRef={threadRef} />;
+  }
   return <ThreadUsageTab model={model} />;
 }
 
@@ -79,10 +79,7 @@ function PaneOverview({
   const categories = useThreadCategories();
   const { row, nowMs, archivedLoading } = useViewRow(threadRef, categories);
   const ops = useViewThreadOps();
-  const onAction = useCallback(
-    (target: ViewRow, action: ViewBulkAction) => void ops.runBulk([target], action),
-    [ops],
-  );
+  const onAction = (target: ViewRow, action: ViewBulkAction) => void ops.runBulk([target], action);
   if (row === null) {
     return archivedLoading ? (
       <PaneLoading />

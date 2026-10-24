@@ -43,6 +43,23 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
+import {
+  Ledger,
+  LedgerCheckpointUpdatedPayload,
+  LedgerCheckpointUpdatedPayloadJson,
+  LedgerClosedPayload,
+  LedgerClosedPayloadJson,
+  LedgerCommands,
+  LedgerItemsAddedPayload,
+  LedgerItemsAddedPayloadJson,
+  LedgerItemUpdatedPayload,
+  LedgerItemUpdatedPayloadJson,
+  LedgerReopenedPayload,
+  LedgerReopenedPayloadJson,
+  LedgerVerdictRecordCommand,
+  LedgerJson,
+} from "./ledger.ts";
+import { ThreadLoadout } from "./loadout.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   ThreadLinkedPullRequest,
@@ -414,6 +431,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Absent means solo: every thread starts without delegated roles. */
+  loadout: Schema.optional(Schema.NullOr(ThreadLoadout)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
@@ -713,6 +732,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+  /**
+   * The delegate_task role the task was started under. The prompt only carries it as prose and
+   * the judge's carries none, so timing reads it from here. Absent when the delegation named none.
+   */
+  role: Schema.optional(TrimmedNonEmptyString),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: Schema.Literals([
     "idle",
@@ -1714,6 +1738,36 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.created"),
+    payload: Ledger,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("checkpoint-scope.created"),
     payload: OrchestrationV2CheckpointScope,
   }),
@@ -1757,6 +1811,8 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   plans: Schema.Array(OrchestrationV2PlanArtifact),
+  /** Absent on threads without a ledger and on snapshots from older servers. */
+  ledger: Schema.optional(Ledger),
   turnItems: turnItemArray(OrchestrationV2TurnItem),
   checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
@@ -1869,6 +1925,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  loadout: Schema.optional(Schema.NullOr(ThreadLoadout)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2327,6 +2384,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
     messages: Schema.Array(OrchestrationV2ConversationMessageJson),
     plans: Schema.Array(OrchestrationV2PlanArtifact),
+    ledger: Schema.optional(LedgerJson),
     turnItems: turnItemArray(OrchestrationV2TurnItemJson),
     checkpointScopes: Schema.Array(OrchestrationV2CheckpointScopeJson),
     checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
@@ -2528,6 +2586,36 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.created"),
+    payload: LedgerJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.item.added"),
+    payload: LedgerItemsAddedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.item.updated"),
+    payload: LedgerItemUpdatedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.checkpoint.updated"),
+    payload: LedgerCheckpointUpdatedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.closed"),
+    payload: LedgerClosedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("ledger.reopened"),
+    payload: LedgerReopenedPayloadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("checkpoint-scope.created"),
     payload: OrchestrationV2CheckpointScopeJson,
   }),
@@ -2585,6 +2673,17 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /**
+     * Makes the new thread a hidden subagent child of an existing one. Only a server-created
+     * thread (`createdBy: "system"`, `creationSource: "server"`) may set it; the orchestrator
+     * rejects it from any client, whose provenance the server rewrites to `user`.
+     */
+    lineage: Schema.optional(
+      Schema.Struct({
+        parentThreadId: ThreadId,
+        relationshipToParent: Schema.Literal("subagent"),
+      }),
+    ),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -2702,6 +2801,11 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /**
+     * Set (object) or clear (null) the thread's loadout. A clear is always the user's; an agent
+     * proposal (`setBy: "agent"`) is rejected while the user's explicit choice stands.
+     */
+    loadout: Schema.optional(Schema.NullOr(ThreadLoadout)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),
@@ -2973,6 +3077,7 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    role: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3011,6 +3116,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
+  ...LedgerCommands,
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
@@ -3062,6 +3168,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  LedgerVerdictRecordCommand,
   /**
    * Internal so no client can mark a request saved without the value being
    * stored.
@@ -3089,6 +3196,10 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
   getThreadPreviews: "orchestration.getThreadPreviews",
+  getTaskTiming: "orchestration.getTaskTiming",
+  getTaskRetro: "orchestration.getTaskRetro",
+  runTaskRetro: "orchestration.runTaskRetro",
+  resolveTaskRetro: "orchestration.resolveTaskRetro",
   searchThread: "orchestration.searchThread",
   searchThreadStream: "orchestration.searchThreadStream",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",

@@ -52,6 +52,8 @@ import {
   type AcpRegistrySetProviderInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationSearchThreadsError,
+  OrchestrationGetTaskTimingError,
+  OrchestrationTaskRetroError,
   OrchestrationGetThreadPreviewsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
@@ -120,6 +122,7 @@ import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import { isReservedCommandId } from "./orchestration-v2/reservedCommandIds.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -163,6 +166,9 @@ import {
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as TaskTimingService from "./orchestration-v2/TaskTimingService.ts";
+import type * as TaskRetro from "./orchestration-v2/TaskRetro.ts";
+import * as TaskRetroService from "./orchestration-v2/TaskRetroService.ts";
 import * as ThreadPreviews from "./orchestration-v2/ThreadPreviews.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
@@ -1889,33 +1895,42 @@ const layerUpstreamWsRpc = (
               : {}),
           }).pipe(
             Effect.andThen(
-              startup
-                .enqueueCommand(
-                  (command.type === "prepared-run.retry"
-                    ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                      )
-                  ).pipe(Effect.provide(intakeContext)),
-                )
-                .pipe(
-                  Effect.tap(() => recordClientCommandAnalytics(command)),
-                  Effect.map((result) => ({ sequence: result.sequence })),
-                  Effect.mapError((cause) => {
-                    const detail = userFacingDispatchErrorMessage(cause);
-                    return new OrchestrationV2DispatchCommandError({
+              isReservedCommandId(command.commandId)
+                ? Effect.fail(
+                    new OrchestrationV2DispatchCommandError({
                       commandId: command.commandId,
                       commandType: command.type,
-                      message: detail ?? "Failed to dispatch orchestration V2 command",
-                      ...(detail === undefined ? {} : { detail }),
-                      cause,
-                    });
-                  }),
-                ),
+                      message: "That command id is reserved for the server.",
+                      cause: "reserved_command_id",
+                    }),
+                  )
+                : startup
+                    .enqueueCommand(
+                      (command.type === "prepared-run.retry"
+                        ? threadLaunch.retryPreparation(command)
+                        : ThreadMessageIntake.dispatchCommand(
+                            ThreadManagementService.withCreationProvenance(command, {
+                              createdBy: "user",
+                              creationSource:
+                                "creationSource" in command ? command.creationSource : "web",
+                            }),
+                          )
+                      ).pipe(Effect.provide(intakeContext)),
+                    )
+                    .pipe(
+                      Effect.tap(() => recordClientCommandAnalytics(command)),
+                      Effect.map((result) => ({ sequence: result.sequence })),
+                      Effect.mapError((cause) => {
+                        const detail = userFacingDispatchErrorMessage(cause);
+                        return new OrchestrationV2DispatchCommandError({
+                          commandId: command.commandId,
+                          commandType: command.type,
+                          message: detail ?? "Failed to dispatch orchestration V2 command",
+                          ...(detail === undefined ? {} : { detail }),
+                          cause,
+                        });
+                      }),
+                    ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
@@ -3204,6 +3219,11 @@ const layerUpstreamWsRpc = (
 const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
   Effect.gen(function* () {
     const threadPreviews = yield* ThreadPreviews.ThreadPreviews;
+    const taskTiming = yield* TaskTimingService.TaskTimingService;
+    const taskRetro = yield* TaskRetroService.TaskRetroService;
+    // The service's messages are fixed text, so they are safe to show.
+    const taskRetroError = (error: TaskRetro.TaskRetroError) =>
+      new OrchestrationTaskRetroError({ message: error.message, cause: error });
     const workspaceFileReferences = yield* WorkspaceFileReferences.WorkspaceFileReferences;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3223,6 +3243,26 @@ const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
               }),
           ),
         ),
+      [ORCHESTRATION_V2_WS_METHODS.getTaskTiming]: (input) =>
+        Effect.annotateCurrentSpan({ threadId: input.threadId }).pipe(
+          Effect.andThen(taskTiming.summary(input.threadId)),
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetTaskTimingError({
+                message: "Failed to read task timing",
+                cause,
+              }),
+          ),
+        ),
+      [ORCHESTRATION_V2_WS_METHODS.getTaskRetro]: (input) =>
+        Effect.annotateCurrentSpan({ threadId: input.threadId }).pipe(
+          Effect.andThen(taskRetro.get(input.threadId)),
+          Effect.mapError(taskRetroError),
+        ),
+      [ORCHESTRATION_V2_WS_METHODS.runTaskRetro]: (input) =>
+        taskRetro.run(input.threadId, "user").pipe(Effect.mapError(taskRetroError)),
+      [ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro]: (input) =>
+        taskRetro.resolve(input).pipe(Effect.mapError(taskRetroError)),
       [WS_METHODS.projectsResolveFileReference]: (input) =>
         workspaceFileReferences.resolve(input).pipe(
           Effect.mapError(

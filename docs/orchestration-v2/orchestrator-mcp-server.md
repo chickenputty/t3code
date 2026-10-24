@@ -438,6 +438,22 @@ Waits for a selected run to become `completed`, `failed`, `cancelled`,
 time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work.
 
+### `t3_task_timing`
+
+Read-only. Returns where a thread's time went (default: the calling thread; any thread in the
+environment can be read): totals, delegated time by role and model, the slowest runs and delegated
+tasks, the longest stalls, and each ledger item's open, in-progress and closed durations with judge
+attempts. It is computed on read from the projection and the thread's ledger events; nothing is
+stored.
+
+### `t3_task_retro`
+
+Runs a retro on another, finished thread (any thread in the environment can be read). It is refused for a thread with an active run, which always includes the caller's own, and for ten minutes after the thread's last retro; the user runs one on the current thread from the Activity tab. A strong model (the loadout's judge or planner, else the thread's model) reads the timing summary, the ledger and the loadout, which it receives with every agent-written string fenced as untrusted data, and answers why the task was slow, whether each role's model was right, and whether the structure should be `less`, `same` or `more`. The answer ends in a JSON block that is read defensively: an unreadable block keeps the prose and records no recommendation. The result is stored on the thread (one retro per thread, in `thread_task_retros`, outside the event log) and recommendations wait for a person to apply or dismiss them in the Activity tab. The run happens in a thread of its own under a private idempotency key, so a retry of an unchanged retro rejoins it.
+
+### `t3_retro_summary`
+
+Read-only. Aggregates stored retros (`projectId`, default the caller's project; `since`) into counts of structure verdicts, the most common slow causes and model verdicts per role. It asks no model anything.
+
 ### `t3_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.

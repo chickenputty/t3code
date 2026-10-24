@@ -113,6 +113,24 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Loadouts
+
+A loadout is a named agent structure: which provider instance, model, and effort each role runs on (planner, sub-planner, explorer, worker, judge). Every thread starts **Solo**, one agent on the thread's own model, because a strong solo agent is usually cheaper and as good. Pick a different loadout from the **Loadout** control next to the access mode once a thread exists. The agent can also propose one, with a reason, when it sizes a larger task. Your own pick always wins: the agent cannot replace a loadout you chose.
+
+Under a loadout, the agent delegates to a role instead of naming a model. A loadout with a judge role also gates the task ledger: each item closes only after a separate judge model passes it, and the agent cannot record that verdict itself. The gate is fixed when the ledger is created, so switching to Solo later does not lift it for a ledger already in progress. If the judge's provider instance is not available when the ledger is created, the ledger is not gated. If it disappears later, items can still be dropped, or you can fix the loadout and start a new ledger. Clear your own pick from the same control ("Clear (let the agent propose)") to let the agent propose again.
+
+Edit the list in **Settings → General → Loadouts**. A project can override the environment's list. A role left empty runs on the thread's own model, and a thread whose loadout was deleted runs solo.
+
+The **Timing** section at the top of a thread's Activity tab shows where its time went: wall, agent, queued, delegated and stalled time, delegated time by role and model, the slowest steps, and the longest stalls (waiting on you, a pending request, idle between turns, or a turn that moved no ledger item). Agents can read the same summary with the `t3_task_timing` tool.
+
+### Retro: was the structure right?
+
+**Run retro**, next to the Timing section, asks a strong model three questions about the task: why it was slow, whether each role's model was right, and whether the agent structure should have been less, the same or more. It runs on the loadout's judge (else its planner, else the thread's own model) in a hidden helper thread (a subagent child of the thread it reviews, archived when the run ends, however it ends) and costs one model run; one that gets no answer in five minutes is stopped. Agents can start the same retro with `t3_task_retro`, but not while the thread is working or within ten minutes of its last retro; the button has no such limit. Running it again replaces the stored retro. Mobile has no retro UI in this version.
+
+The retro lists recommendations such as "run this thread under Solo" or "in the Planner + workers + judge loadout, run the worker on a cheaper model". Nothing is applied for you. **Apply** sets the thread's loadout, or edits that role in the project's loadouts (if the project had no loadouts of its own, this creates a project override holding a copy of the environment's list with that role changed, shown under **Settings → General → Loadouts** for that project). **Dismiss** hides it. There is no separate undo: change the loadout in settings, or pick another one in the composer. A recommendation whose loadout or model has since gone fails to apply and can be dismissed.
+
+`t3_retro_summary` counts what retros have stored, without asking a model anything: how often they said less, same or more, the most common slow causes and the model verdicts per role. Filter it by project or by date. To retro your tasks on a schedule, create a scheduled task that asks an agent to run `t3_task_retro` on recent threads, then read the summary.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

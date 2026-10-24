@@ -123,6 +123,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadCategories: Schema.optionalKey(Schema.Boolean),
   /** Fork: server answers orchestration.getThreadPreviews. */
   threadPreviews: Schema.optionalKey(Schema.Boolean),
+  /** Fork: server answers orchestration.getTaskTiming. */
+  taskTiming: Schema.optionalKey(Schema.Boolean),
+  /** Fork: server answers orchestration.getTaskRetro and orchestration.resolveTaskRetro. */
+  taskRetro: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
@@ -134,6 +138,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadStop: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
+  /** Server persists a thread task ledger; clients hide ledger UI when absent. */
+  threadLedger: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Manual commands must update this install, not the host's default global prefix. */

@@ -9,6 +9,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import { OrchestrationResolveTaskRetroInput } from "./taskRetro.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -49,11 +50,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  // A retro runs a strong model on this environment's providers.
+  [ORCHESTRATION_V2_WS_METHODS.runTaskRetro]: AuthOrchestrationOperateScope,
+  // Dismissing only needs this; applying also writes settings, see clientRpcRequiredScopes.
+  [ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeResolveRetro = Schema.decodeUnknownSync(OrchestrationResolveTaskRetroInput);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -71,6 +77,11 @@ export function clientRpcRequiredScopes(
       (payload.action === "create_pr" || payload.action === "commit_push_pr")
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
+  }
+  if (method === ORCHESTRATION_V2_WS_METHODS.resolveTaskRetro && input !== undefined) {
+    // An applied recommendation can edit the project's loadout settings.
+    if (decodeResolveRetro(input).action === "apply")
+      return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
   }
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
