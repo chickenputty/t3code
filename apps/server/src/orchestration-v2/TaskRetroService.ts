@@ -3,6 +3,7 @@ import {
   type LoadoutRole,
   type LoadoutRoleName,
   type ModelSelection,
+  RETRO_THREAD_ID_PREFIX,
   MessageId,
   type ProjectId,
   type ServerSettings as ServerSettingsValue,
@@ -18,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 
 import * as TaskRetros from "../persistence/TaskRetros.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -43,7 +45,12 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
  * stuck, most likely on an approval nobody will give. Kept short so that costs minutes, not ten.
  */
 const RETRO_TIMEOUT_MS = 5 * 60 * 1_000;
-const RETRO_THREAD_PREFIX = "thread:retro:";
+const RETRO_THREAD_PREFIX = RETRO_THREAD_ID_PREFIX;
+const MAX_ATTEMPTS = 20;
+/** A thread this young may be between its create and its send, so the sweep leaves it alone. */
+const SWEEP_MIN_AGE_MS = 60_000;
+const attemptDigest = (digestHex: string, attempt: number) =>
+  attempt === 0 ? digestHex : `${digestHex}-${attempt}`;
 
 /**
  * Reads a thread's timing, ledger and loadout, asks a strong model the three retro questions and
@@ -121,8 +128,19 @@ export const make = Effect.gen(function* () {
     const digestHex = hex(digest);
     const failed = (cause: unknown) => new TaskRetroError({ reason: "run_failed", cause });
 
-    const key = retroCommandKey(digestHex);
-    const threadId = ThreadId.make(`${RETRO_THREAD_PREFIX}${digestHex}`);
+    // Only a retro thread that is still running is rejoined. One that already ended (archived by
+    // its own finish) holds a stopped run that every replayed command would hand back, so the
+    // next attempt takes a new id. Attempt 0 keeps the plain digest.
+    let attempt = 0;
+    for (; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const existing = yield* threads
+        .getThreadShell(ThreadId.make(`${RETRO_THREAD_PREFIX}${attemptDigest(digestHex, attempt)}`))
+        .pipe(Effect.mapError(failed));
+      if (existing === null || existing.activeRunId !== null) break;
+    }
+    if (attempt === MAX_ATTEMPTS) return yield* failed(undefined);
+    const key = retroCommandKey(attemptDigest(digestHex, attempt));
+    const threadId = ThreadId.make(`${RETRO_THREAD_PREFIX}${attemptDigest(digestHex, attempt)}`);
 
     // Every id below derives from the private key, so no client or agent can name one first.
     yield* threads
@@ -289,8 +307,13 @@ export const make = Effect.gen(function* () {
     function* () {
       // A restart mid-retro leaves its thread behind with nothing left to finish it.
       const snapshot = yield* threads.getShellSnapshot().pipe(Effect.mapError(readFailed));
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      // A retro in flight is between its create and its send for a moment and has no run yet.
       const stale = snapshot.threads.filter(
-        (thread) => thread.id.startsWith(RETRO_THREAD_PREFIX) && thread.activeRunId === null,
+        (thread) =>
+          thread.id.startsWith(RETRO_THREAD_PREFIX) &&
+          thread.activeRunId === null &&
+          nowMs - DateTime.toEpochMillis(thread.createdAt) >= SWEEP_MIN_AGE_MS,
       );
       yield* Effect.forEach(
         stale,
@@ -315,72 +338,81 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Resolving reads the retro, changes a setting and writes the retro back, so two at once would
+  // each write over the other's status. They are rare and quick, so one lock serves them all.
+  const resolveLock = yield* Semaphore.make(1);
+
+  const resolveOne: TaskRetroService["Service"]["resolve"] = Effect.fn(
+    "TaskRetroService.resolveOne",
+  )(function* (input) {
+    const retro = Option.getOrUndefined(
+      yield* store.get(input.threadId).pipe(Effect.mapError(storeFailed)),
+    );
+    if (retro === undefined) return yield* new TaskRetroError({ reason: "unknown_recommendation" });
+    const settingsFailed = (cause: unknown) =>
+      new TaskRetroError({ reason: "settings_failed", cause });
+    const ports: ResolvePorts = {
+      loadouts: readSettings.pipe(
+        Effect.map((settings) => projectLoadouts(settings, retro.projectId)),
+      ),
+      providers: providerRegistry.getProviders.pipe(Effect.mapError(readFailed)),
+      setProjectRole: Effect.fn("TaskRetroService.setProjectRole")(function* (
+        loadoutId: string,
+        role: LoadoutRoleName,
+        value: LoadoutRole,
+      ) {
+        yield* settingsService
+          .updateSettingsFrom((current) => {
+            // The list as saved, without the synthetic solo, so the project copy never stores it.
+            const { overrides, settings } = resolveProjectSettings(current, retro.projectId);
+            const next = setLoadoutRole(settings.loadouts, loadoutId, role, value);
+            return next === undefined
+              ? Effect.fail(new TaskRetroError({ reason: "loadout_gone" }))
+              : // A project entry replaces that project's whole override set, so the rest is
+                // carried over; a project with none gets one holding just the edited list.
+                Effect.succeed({
+                  projectSettingsOverrides: {
+                    [retro.projectId]: { ...overrides, loadouts: next },
+                  },
+                });
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "TaskRetroError" ? error : settingsFailed(error),
+            ),
+          );
+      }),
+      setThreadLoadout: Effect.fn("TaskRetroService.setThreadLoadout")(function* (
+        loadoutId: string,
+        reason: string,
+      ) {
+        const commandId = CommandId.make(
+          `retro:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+        );
+        yield* threads
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId,
+            threadId: input.threadId,
+            // The person pressed Apply, so this is their explicit choice and outranks an agent's.
+            loadout: { id: loadoutId, reason, setBy: "user" },
+          })
+          .pipe(Effect.mapError(settingsFailed));
+      }),
+      save: (next) => store.put(next).pipe(Effect.mapError(storeFailed)),
+    };
+    return yield* resolveRecommendation({
+      retro,
+      recommendationId: input.recommendationId,
+      action: input.action,
+      ports,
+    });
+  });
+
   const resolve: TaskRetroService["Service"]["resolve"] = Effect.fn("TaskRetroService.resolve")(
     function* (input) {
       yield* Effect.annotateCurrentSpan({ threadId: input.threadId, action: input.action });
-      const retro = Option.getOrUndefined(
-        yield* store.get(input.threadId).pipe(Effect.mapError(storeFailed)),
-      );
-      if (retro === undefined)
-        return yield* new TaskRetroError({ reason: "unknown_recommendation" });
-      const settingsFailed = (cause: unknown) =>
-        new TaskRetroError({ reason: "settings_failed", cause });
-      const ports: ResolvePorts = {
-        loadouts: readSettings.pipe(
-          Effect.map((settings) => projectLoadouts(settings, retro.projectId)),
-        ),
-        providers: providerRegistry.getProviders.pipe(Effect.mapError(readFailed)),
-        setProjectRole: Effect.fn("TaskRetroService.setProjectRole")(function* (
-          loadoutId: string,
-          role: LoadoutRoleName,
-          value: LoadoutRole,
-        ) {
-          yield* settingsService
-            .updateSettingsFrom((current) => {
-              // The list as saved, without the synthetic solo, so the project copy never stores it.
-              const { overrides, settings } = resolveProjectSettings(current, retro.projectId);
-              const next = setLoadoutRole(settings.loadouts, loadoutId, role, value);
-              return next === undefined
-                ? Effect.fail(new TaskRetroError({ reason: "loadout_gone" }))
-                : // A project entry replaces that project's whole override set, so the rest is
-                  // carried over; a project with none gets one holding just the edited list.
-                  Effect.succeed({
-                    projectSettingsOverrides: {
-                      [retro.projectId]: { ...overrides, loadouts: next },
-                    },
-                  });
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                error._tag === "TaskRetroError" ? error : settingsFailed(error),
-              ),
-            );
-        }),
-        setThreadLoadout: Effect.fn("TaskRetroService.setThreadLoadout")(function* (
-          loadoutId: string,
-          reason: string,
-        ) {
-          const commandId = CommandId.make(
-            `retro:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-          );
-          yield* threads
-            .dispatch({
-              type: "thread.metadata.update",
-              commandId,
-              threadId: input.threadId,
-              // The person pressed Apply, so this is their explicit choice and outranks an agent's.
-              loadout: { id: loadoutId, reason, setBy: "user" },
-            })
-            .pipe(Effect.mapError(settingsFailed));
-        }),
-        save: (next) => store.put(next).pipe(Effect.mapError(storeFailed)),
-      };
-      return yield* resolveRecommendation({
-        retro,
-        recommendationId: input.recommendationId,
-        action: input.action,
-        ports,
-      });
+      return yield* resolveLock.withPermits(1)(resolveOne(input));
     },
   );
 

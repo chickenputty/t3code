@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TaskRetros from "../persistence/TaskRetros.ts";
@@ -111,7 +112,10 @@ const layerTest = TaskRetroService.layer.pipe(
 
 const create = (
   threadId: ThreadId,
-  who: { createdBy: "user" | "system"; creationSource: "web" | "server" },
+  who: {
+    createdBy: "user" | "agent" | "system";
+    creationSource: "web" | "mobile" | "mcp" | "server";
+  },
   lineage?: { parentThreadId: ThreadId; relationshipToParent: "subagent" },
 ) =>
   Effect.gen(function* () {
@@ -153,23 +157,22 @@ it.effect("a client cannot give a new thread a parent, but the server can", () =
   Effect.gen(function* () {
     yield* setup;
     const lineage = { parentThreadId: subjectId, relationshipToParent: "subagent" } as const;
-    const refused = yield* Effect.exit(
-      create(
-        ThreadId.make("thread:hide-me"),
-        { createdBy: "user", creationSource: "web" },
-        lineage,
-      ),
-    );
-    expect(Exit.isFailure(refused)).toBe(true);
-    // Even claiming to be the server fails once the server has rewritten a client's provenance.
-    const spoofed = yield* Effect.exit(
-      create(
-        ThreadId.make("thread:hide-me-2"),
-        { createdBy: "user", creationSource: "server" },
-        lineage,
-      ),
-    );
-    expect(Exit.isFailure(spoofed)).toBe(true);
+    // Only system/server may set it: every other actor and source pair is refused, including a
+    // client claiming to be the server (the server rewrites a client's provenance to user).
+    const others = [
+      { createdBy: "user", creationSource: "web" },
+      { createdBy: "user", creationSource: "mobile" },
+      { createdBy: "user", creationSource: "server" },
+      { createdBy: "agent", creationSource: "mcp" },
+      { createdBy: "agent", creationSource: "server" },
+      { createdBy: "system", creationSource: "web" },
+    ] as const;
+    for (const [index, who] of others.entries()) {
+      const refused = yield* Effect.exit(
+        create(ThreadId.make(`thread:hide-me-${index}`), who, lineage),
+      );
+      expect(Exit.isFailure(refused)).toBe(true);
+    }
 
     const childId = ThreadId.make("thread:retro:child");
     yield* create(childId, { createdBy: "system", creationSource: "server" }, lineage);
@@ -208,6 +211,18 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a user's retry right after a failed retro starts a fresh retro thread", () =>
+  Effect.gen(function* () {
+    const { service, threads } = yield* setup;
+    expect(Exit.isFailure(yield* Effect.exit(service.run(subjectId, "user")))).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(service.run(subjectId, "user")))).toBe(true);
+    // Each press made its own thread. Rejoining the first would have replayed its stopped run.
+    const { active, archived } = yield* retroThreads(threads);
+    expect(active).toEqual([]);
+    expect(new Set(archived.map(({ id }) => id)).size).toBe(2);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("the startup sweep archives a retro thread that nothing is running", () =>
   Effect.gen(function* () {
     const { service, threads } = yield* setup;
@@ -216,6 +231,9 @@ it.effect("the startup sweep archives a retro thread that nothing is running", (
       { createdBy: "system", creationSource: "server" },
       { parentThreadId: subjectId, relationshipToParent: "subagent" },
     );
+    // A retro thread this young may be between its create and its send.
+    expect(yield* service.sweep()).toBe(0);
+    yield* TestClock.adjust("2 minutes");
     expect(yield* service.sweep()).toBe(1);
     expect((yield* retroThreads(threads)).archived).toHaveLength(1);
     expect(yield* service.sweep()).toBe(0);

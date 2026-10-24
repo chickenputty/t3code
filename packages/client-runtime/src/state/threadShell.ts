@@ -6,7 +6,11 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  OrchestrationV2ThreadShell,
+  RETRO_THREAD_ID_PREFIX,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
@@ -56,6 +60,8 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
     kind === "auth_refresh" ||
     thread.lineage.relationshipToParent !== "subagent" ||
     isProviderNativeSubagentThread(thread) ||
+    // The server denies nothing on a retro's behalf, so its approvals are simply never offered.
+    thread.id.startsWith(RETRO_THREAD_ID_PREFIX) ||
     !isChildRunLive(thread)
   ) {
     return null;

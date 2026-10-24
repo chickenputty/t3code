@@ -204,6 +204,12 @@ it.effect("two role recommendations applied together both land: the edit is atom
     );
     expect(saved?.roles.worker?.model).toBe("gpt-5.4-mini");
     expect(saved?.roles.planner?.model).toBe("gpt-5.4-mini");
+    // And both statuses are recorded: one resolve does not write over the other's.
+    expect((yield* service.get(threadId))?.recommendations.map(({ status }) => status)).toEqual([
+      "pending",
+      "applied",
+      "applied",
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 

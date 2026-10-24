@@ -152,6 +152,40 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("never offers a retro helper thread's approval to the thread it reviews", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const helper = {
+      ...root,
+      id: ThreadId.make("thread:retro:abc-0"),
+      creationSource: "server" as const,
+      status: "waiting" as const,
+      activityRunStatus: "waiting" as const,
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("approve-tool"),
+        kind: "command" as const,
+        createdAt: v2Now,
+      },
+    };
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const dispose = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, helper] });
+    expect(registry.get(inputs)).toEqual([]);
+    // The same request on an ordinary subagent is still offered.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...helper, id: ThreadId.make("child"), creationSource: "mcp" as const }],
+    });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([ThreadId.make("child")]);
+    dispose();
+    registry.dispose();
+  });
+
   it("brings a parent back from Working while a nested subagent waits for approval", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const child = {

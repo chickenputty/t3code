@@ -12,6 +12,12 @@ import { LedgerVerdictJudge } from "./ledger.ts";
 import { LoadoutId, LoadoutRoleName } from "./loadout.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+/**
+ * The helper thread a retro runs in. Clients leave its approval requests out of the subject
+ * thread's "subagent needs approval" prompt: nobody should grant tool access to a retro.
+ */
+export const RETRO_THREAD_ID_PREFIX = "thread:retro:";
+
 /** Whether the task wanted less agent structure than it had, the same, or more. */
 export const RetroStructureVerdict = Schema.Literals(["less", "same", "more"]);
 export type RetroStructureVerdict = typeof RetroStructureVerdict.Type;
