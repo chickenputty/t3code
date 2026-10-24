@@ -5,6 +5,8 @@ import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl, ComposerControlSeparator } from "./ComposerControl";
+import { ComposerLoadoutPicker } from "./ComposerLoadoutPicker";
+import { useComposerLoadout } from "./useComposerLoadout";
 import {
   ComposerFooterModeControls,
   ComposerModelPicker,
@@ -128,6 +130,8 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
+  // A draft has no thread to hold a choice yet; every thread starts solo and gets the picker.
+  const loadout = useComposerLoadout(environmentId, routeKind === "server" ? routeThreadRef : null);
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -178,16 +182,28 @@ export function ComposerControlsBar(props: {
     {
       id: "mode",
       content: (
-        <ComposerFooterModeControls
-          showInteractionModeToggle={planModeUiEnabled}
-          interactionMode={interactionMode}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
-          onToggleInteractionMode={toggleInteractionMode}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
+        <>
+          <ComposerFooterModeControls
+            showInteractionModeToggle={planModeUiEnabled}
+            interactionMode={interactionMode}
+            runtimeMode={compatibleRuntimeMode}
+            runtimeModeOptions={compatibleRuntimeModeOptions}
+            size={composerControlsCollapsed ? "xs" : "sm"}
+            hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+            onToggleInteractionMode={toggleInteractionMode}
+            onRuntimeModeChange={handleRuntimeModeChange}
+          />
+          {loadout === null ? null : (
+            <>
+              <ComposerControlSeparator size={composerControlsCollapsed ? "xs" : "sm"} />
+              <ComposerLoadoutPicker
+                loadout={loadout}
+                size={composerControlsCollapsed ? "xs" : "sm"}
+                hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+              />
+            </>
+          )}
+        </>
       ),
     },
   ];
@@ -322,6 +338,7 @@ export function ComposerControlsBar(props: {
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
+            loadout={hiddenRestingBlockIds.includes("mode") ? loadout : null}
           />
         </div>
       </>

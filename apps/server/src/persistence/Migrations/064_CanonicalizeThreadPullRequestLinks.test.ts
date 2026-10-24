@@ -156,6 +156,8 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
       `;
       assert.equal(v1?.payload_json, v1Payload);
 
+      // Rebuild runs current code, which clears every current projection table.
+      yield* runMigrations();
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       assert.isTrue((yield* maintenance.rebuild).valid);
       for (const [host, repository, id] of [

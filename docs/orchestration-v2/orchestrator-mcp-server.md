@@ -438,6 +438,14 @@ Waits for a selected run to become `completed`, `failed`, `cancelled`,
 time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work.
 
+### `t3_task_timing`
+
+Read-only. Returns where a thread's time went (default: the calling thread; any thread in the
+environment can be read): totals, delegated time by role and model, the slowest runs and delegated
+tasks, the longest stalls, and each ledger item's open, in-progress and closed durations with judge
+attempts. It is computed on read from the projection and the thread's ledger events; nothing is
+stored.
+
 ### `t3_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.

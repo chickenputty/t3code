@@ -18,6 +18,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as TaskTimingService from "../../../orchestration-v2/TaskTimingService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -114,6 +115,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             ? result.matches
             : result.matches.filter((match) => match.projectId === projectId),
       };
+    }),
+  ),
+  t3_task_timing: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      // readThread resolves the default (this thread) and refuses a missing or deleted one.
+      const { projection } = yield* readThread(input.threadId);
+      const timing = yield* TaskTimingService.TaskTimingService;
+      return yield* timing.summary(projection.thread.id).pipe(Effect.mapError(unavailable));
     }),
   ),
   t3_thread_fork: writesThread((input) =>

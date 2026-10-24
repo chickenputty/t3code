@@ -1,4 +1,6 @@
 /** Fork (chickenputty/t3code): a thread's turns, newest first, with what each one did. */
+import type { OrchestrationV2RunStatus, ScopedThreadRef } from "@t3tools/contracts";
+
 import {
   formatDuration,
   formatTokens,
@@ -6,9 +8,43 @@ import {
 } from "~/components/views/inspectorModel";
 import { formatRelativeMs } from "~/components/views/viewEngine";
 
-export function ThreadActivityTab({ model, nowMs }: { model: InspectorModel; nowMs: number }) {
+import { ThreadTimingSection } from "./ThreadTimingSection";
+
+// `satisfies` makes a renamed or removed run status a type error here; mirrors the server's runIsLive.
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+] satisfies ReadonlyArray<OrchestrationV2RunStatus>);
+
+export function ThreadActivityTab({
+  model,
+  nowMs,
+  threadRef,
+}: {
+  model: InspectorModel;
+  nowMs: number;
+  threadRef: ScopedThreadRef;
+}) {
   if (model.runs.length === 0)
     return <p className="text-muted-foreground text-sm">No turns yet.</p>;
+  // The timing only changes in step with a finished turn, so that turn's id is the refetch key.
+  const lastFinished = model.runs.findLast((run) => !LIVE_RUN_STATUSES.has(run.status));
+  return (
+    <>
+      <ThreadTimingSection
+        threadRef={threadRef}
+        activityKey={lastFinished?.id ?? ""}
+        nowMs={nowMs}
+      />
+      <ActivityTurns model={model} nowMs={nowMs} />
+    </>
+  );
+}
+
+function ActivityTurns({ model, nowMs }: { model: InspectorModel; nowMs: number }) {
   return (
     <ol className="flex flex-col gap-3">
       {model.runs.toReversed().map((run) => {

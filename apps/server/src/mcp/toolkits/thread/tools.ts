@@ -18,11 +18,13 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  TaskTimingSummary,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as TaskTimingService from "../../../orchestration-v2/TaskTimingService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -254,6 +256,18 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const TaskTimingTool = Tool.make("t3_task_timing", {
+  ...commandTool,
+  description:
+    "Read where a thread's time went: totals (wall, agent, queue, delegated, stalled), delegated time by role and model, the slowest runs and delegated tasks, the longest stalls (waiting on the user, a pending request or approval, idle between runs, runs with no ledger progress) and each ledger item's open-to-in-progress-to-closed durations with judge attempts. Omit threadId for this thread; any thread in this environment can be read. Counts are exact and the lists show only the slowest few. Read-only.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: TaskTimingSummary,
+  dependencies: [...commandTool.dependencies, TaskTimingService.TaskTimingService],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -274,6 +288,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
+  TaskTimingTool,
   ThreadForkTool,
   ThreadMergeBackTool,
   ThreadTransfersTool,

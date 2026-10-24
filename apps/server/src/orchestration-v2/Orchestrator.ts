@@ -61,9 +61,18 @@ import {
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  type ThreadLoadout,
+  resolveProjectProviderInstanceEnabled,
   type TurnItemId,
 } from "@t3tools/contracts";
+import {
+  decideThreadLoadout,
+  loadoutHasJudge,
+  resolveLoadout,
+  withSolo,
+} from "@t3tools/shared/loadouts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
@@ -77,10 +86,17 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import {
+  type LedgerCommand,
+  type LedgerEventBody,
+  ledgerEventFromPlan,
+  planLedgerCommand,
+} from "./TaskLedger.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -489,6 +505,13 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "thread.stop":
     case "provider.switch":
+    case "ledger.create":
+    case "ledger.item.add":
+    case "ledger.item.update":
+    case "ledger.checkpoint.set":
+    case "ledger.close":
+    case "ledger.reopen":
+    case "ledger.item.verdict.record":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":
@@ -3037,6 +3060,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
+    let loadoutPatch: { readonly loadout: ThreadLoadout | null } | undefined;
+    if (command.type === "thread.metadata.update" && command.loadout !== undefined) {
+      const requested = command.loadout;
+      if (
+        requested !== null &&
+        !withSolo(
+          resolveProjectSettings(
+            yield* serverSettings.getSettings.pipe(Effect.orDie),
+            thread.projectId,
+          ).settings.loadouts,
+        ).some(({ id }) => id === requested.id)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Unknown loadout ${requested.id} for this thread's project.`,
+        });
+      }
+      const decision = decideThreadLoadout(thread.loadout, requested);
+      if (decision._tag === "user_choice_stands") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a loadout the user chose; an agent cannot replace it.`,
+        });
+      }
+      if (decision._tag === "set") loadoutPatch = { loadout: decision.loadout };
+    }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
       const projection = yield* loadProjectionForCommand(command, ["runs"]);
@@ -3239,6 +3290,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
+            ...loadoutPatch,
             updatedAt: now,
           };
         }
@@ -7014,6 +7066,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.role === undefined ? {} : { role: command.role }),
         status: "running",
         result: null,
         startedAt: now,
@@ -11221,6 +11274,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const dispatchLedgerCommand = Effect.fn("orchestrationV2.dispatch.ledger")(function* (
+    command: LedgerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { thread, ledger } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["ledger"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    // Decided here, from settings the thread's agent cannot edit, so a new ledger's judge gate
+    // cannot be opted out of by the command that creates it.
+    // Stamped only when the judge can actually run (its instance has a V2 adapter and is enabled
+    // for the project): a gate nothing can satisfy would leave items closable only by dropping
+    // them, and the agent could not tell why. Without a judge the ledger is simply ungated.
+    const requiresJudge =
+      command.type === "ledger.create"
+        ? yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+            const loadout = resolveLoadout(
+              resolveProjectSettings(settings, thread.projectId).settings.loadouts,
+              thread.loadout?.id,
+            );
+            const judge = loadout.roles.judge;
+            if (!loadoutHasJudge(loadout) || judge === undefined) return false;
+            const adapterIds = yield* providerAdapters.list();
+            return (
+              adapterIds.includes(judge.instanceId) &&
+              resolveProjectProviderInstanceEnabled(settings, thread.projectId, judge.instanceId)
+            );
+          })
+        : undefined;
+    const planned = planLedgerCommand({
+      command,
+      ledger,
+      now,
+      ...(requiresJudge === undefined ? {} : { requiresJudge }),
+    });
+    if (Result.isFailure(planned)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: planned.failure,
+      });
+    }
+    for (const event of planned.success) {
+      yield* emit(
+        events,
+        command,
+      )<LedgerEventBody>(
+        ledgerEventFromPlan(event, {
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+        }),
+      );
+    }
+    // The planner returns no events for a redundant command; that is accepted, not an error.
+    return { redundant: planned.success.length === 0 };
+  });
+
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -11235,6 +11358,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+      /** The command was valid but already in effect, so it commits a receipt and no events. */
+      readonly acceptsNoEvents?: true;
       readonly cancelUnsettledEffects?: {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
@@ -11250,6 +11375,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+    let acceptsNoEvents = false;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -11562,12 +11688,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;
+      case "ledger.create":
+      case "ledger.item.add":
+      case "ledger.item.update":
+      case "ledger.checkpoint.set":
+      case "ledger.close":
+      case "ledger.reopen":
+      case "ledger.item.verdict.record":
+        acceptsNoEvents = (yield* dispatchLedgerCommand(command, events)).redundant;
+        break;
       default:
         return yield* dispatchUnsupported(command);
     }
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
+      ...(acceptsNoEvents ? { acceptsNoEvents } : {}),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
     };
   });
@@ -11652,6 +11788,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
+        planned.acceptsNoEvents === true ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"

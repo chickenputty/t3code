@@ -225,6 +225,9 @@ export function summarizeT3ToolCalls(
     case "thread-search":
       label = phrase("Searched", "search", `threads ${times}`);
       break;
+    case "task-timing":
+      label = phrase("Read", "read", `task timing ${times}`);
+      break;
     case "thread-transfers":
       label = phrase("Checked", "check", `thread transfers ${times}`);
       break;
@@ -271,6 +274,12 @@ export function summarizeT3ToolCalls(
         "steer with",
         quantity(countEntities(entityIds("queuedRunId")), "queued message"),
       );
+      break;
+    case "ledger-read":
+      label = phrase("Read", "read", "the task ledger");
+      break;
+    case "ledger-update":
+      label = phrase("Updated", "update", "the task ledger");
       break;
     case "question-list":
       label = phrase("Listed", "list", `pending questions ${times}`);

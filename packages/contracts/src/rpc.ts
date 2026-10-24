@@ -156,6 +156,11 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  OrchestrationGetTaskTimingError,
+  OrchestrationGetTaskTimingInput,
+  TaskTimingSummary,
+} from "./taskTiming.ts";
+import {
   OrchestrationGetThreadPreviewsError,
   OrchestrationGetThreadPreviewsInput,
   OrchestrationGetThreadPreviewsResult,
@@ -1717,6 +1722,12 @@ const WsOrchestrationV2GetThreadPreviewsRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetTaskTimingRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTaskTiming, {
+  payload: OrchestrationGetTaskTimingInput,
+  success: TaskTimingSummary,
+  error: Schema.Union([OrchestrationGetTaskTimingError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -2144,6 +2155,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsVcsUnstageRpc,
   WsVcsCommitStagedRpc,
   WsOrchestrationV2GetThreadPreviewsRpc,
+  WsOrchestrationV2GetTaskTimingRpc,
 ).middleware(RpcScopeAuthorization);
 
 export const WsRpcGroup = UpstreamWsRpcGroup.merge(ForkWsRpcGroup);
