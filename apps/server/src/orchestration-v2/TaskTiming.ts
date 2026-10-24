@@ -307,13 +307,17 @@ function deriveStalls(
     const messageId = messageByRun.get(next.runId);
     const gapStartMs = Date.parse(previous.endedAt);
     const gapEndMs = Date.parse(next.requestedAt);
-    // A wake from the server, MCP or a provider after a delegated task ran through the gap means
-    // the thread was waiting on that task rather than sitting idle.
-    const overlapsDelegate = delegated.some(
-      (task) =>
-        Date.parse(task.requestedAt) < gapEndMs &&
-        (task.endedAt === null ? now : Date.parse(task.endedAt)) > gapStartMs,
+    // A wake from the server, MCP or a provider after delegated work covered most of the gap means
+    // the thread was waiting on that work; a task that only grazes the gap leaves it idle.
+    const delegateCoveredMs = unionMs(
+      delegated
+        .map((task): [number, number] => [
+          Math.max(Date.parse(task.requestedAt), gapStartMs),
+          Math.min(task.endedAt === null ? now : Date.parse(task.endedAt), gapEndMs),
+        ])
+        .filter(([from, to]) => to > from),
     );
+    const overlapsDelegate = delegateCoveredMs * 2 >= gapMs;
     const fromAPerson = messageId !== undefined && fromPerson.has(messageId);
     stalls.push({
       kind: fromAPerson
@@ -408,8 +412,13 @@ export function deriveTaskTiming(input: TaskTimingInput): TaskTiming {
             stall.endedAt === null ? now : Date.parse(stall.endedAt),
           ]),
       ),
-      waitingOnUserMs: sum(
-        stalls.filter((stall) => stall.kind === "waiting_on_user").map((stall) => stall.durationMs),
+      waitingOnUserMs: unionMs(
+        stalls
+          .filter((stall) => stall.kind === "waiting_on_user")
+          .map((stall): [number, number] => [
+            Date.parse(stall.startedAt),
+            stall.endedAt === null ? now : Date.parse(stall.endedAt),
+          ]),
       ),
     },
     delegatedBy: groupDelegated(delegated),
