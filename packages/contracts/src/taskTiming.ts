@@ -86,6 +86,7 @@ export type TaskTimingLedgerItem = typeof TaskTimingLedgerItem.Type;
 export const TaskTimingStallKind = Schema.Literals([
   "waiting_on_user",
   "pending_request",
+  "waiting_on_delegate",
   "idle_between_runs",
   "no_ledger_progress",
 ]);
@@ -122,7 +123,13 @@ export const TaskTimingTotals = Schema.Struct({
   queueMs: Ms,
   /** Sum of delegated task durations; tasks overlap, so this can exceed wallMs. */
   delegatedMs: Ms,
+  /**
+   * Pending requests, idle gaps and waits on delegated tasks, overlaps counted once. It leaves out
+   * time spent waiting on the user, so an overnight absence does not swamp it.
+   */
   stalledMs: Ms,
+  /** Gaps between runs that ended with a message from a person. */
+  waitingOnUserMs: Ms,
 });
 export type TaskTimingTotals = typeof TaskTimingTotals.Type;
 

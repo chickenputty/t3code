@@ -110,6 +110,8 @@ const finalItems: ReadonlyArray<LedgerItem> = [
   ),
   item("L2", { status: "open" }, 20),
   item("L3", { status: "dropped", dropReason: "not needed" }, 250),
+  // Picked up between runs 2 and 3 and still in progress, so runs 3 and 4 had work to move.
+  item("L4", { status: "in_progress" }, 450),
 ];
 
 const ledger: Ledger = {
@@ -128,6 +130,7 @@ const ledger: Ledger = {
 const itemUpdates: TaskTimingInput["itemUpdates"] = [
   update(40, item("L1", { status: "in_progress" }, 40)),
   update(50, item("L3", { status: "in_progress" }, 50)),
+  update(450, item("L4", { status: "in_progress" }, 450)),
   update(60, item("L3", { status: "open" }, 60)),
   update(100, item("L1", { status: "in_progress", evidence: "e1" }, 100)),
   update(
@@ -353,8 +356,84 @@ describe("deriveTaskTiming", () => {
       queueMs: seconds(5),
       delegatedMs: seconds(165),
       // The run without ledger progress overlaps run time, so it is not stalled time of its own.
-      stalledMs: seconds(465),
+      // The 180 s wait on the user is reported apart so a long absence does not swamp this.
+      stalledMs: seconds(285),
+      waitingOnUserMs: seconds(180),
     });
+  });
+
+  it("counts time that two stalls share once", () => {
+    const { totals } = deriveTaskTiming({
+      ...fixture,
+      runtimeRequests: [
+        ...fixture.runtimeRequests,
+        // Inside the 365 to 500 idle gap, which it extends past by 20 s.
+        {
+          id: RuntimeRequestId.make("request:overlap"),
+          kind: "command",
+          status: "resolved",
+          createdAt: at(400),
+          resolvedAt: at(520),
+        },
+      ],
+    });
+    // 90 + (365..520 = 155) + 60 for the open permission request.
+    assert.equal(totals.stalledMs, seconds(305));
+  });
+
+  it("calls a gap waiting on a delegate when a task ran through it and a wake ended it", () => {
+    const running = task("task:long", {
+      role: "worker",
+      model: "sonnet",
+      status: "completed",
+      created: 380,
+      childStarted: 385,
+      completed: 495,
+    });
+    const timing = deriveTaskTiming({ ...fixture, delegated: [...fixture.delegated, running] });
+    const gaps = timing.stalls.filter((stall) => stall.runId === RunId.make("run:3"));
+    assert.deepEqual(
+      gaps.map((stall) => stall.kind),
+      ["waiting_on_delegate", "no_ledger_progress"],
+    );
+    // Delegated waits count as stalled time, not as time spent waiting on the user.
+    assert.equal(timing.totals.stalledMs, seconds(285));
+    assert.equal(timing.totals.waitingOnUserMs, seconds(180));
+  });
+
+  it("keeps a gap that a person ended as waiting on the user even with a task running", () => {
+    const covering = task("task:cover", {
+      model: "sonnet",
+      status: "running",
+      created: 130,
+      childStarted: 135,
+      completed: null,
+    });
+    const timing = deriveTaskTiming({ ...fixture, delegated: [...fixture.delegated, covering] });
+    assert.equal(
+      timing.stalls.find((stall) => stall.runId === RunId.make("run:2"))?.kind,
+      "waiting_on_user",
+    );
+  });
+
+  it("flags a run with no ledger progress only when some item was in progress during it", () => {
+    const withoutOpenWork = deriveTaskTiming({
+      ...fixture,
+      ledger: { ...ledger, items: finalItems.filter((entry) => entry.id !== "L4") },
+      itemUpdates: itemUpdates.filter((entry) => entry.item.id !== "L4"),
+    });
+    // Run 3 and run 4 run after L1 closed and L3 was dropped, with nothing in progress.
+    assert.deepEqual(
+      withoutOpenWork.stalls.filter((stall) => stall.kind === "no_ledger_progress"),
+      [],
+    );
+    const withOpenWork = deriveTaskTiming(fixture);
+    assert.deepEqual(
+      withOpenWork.stalls
+        .filter((stall) => stall.kind === "no_ledger_progress")
+        .map((s) => s.runId),
+      [RunId.make("run:3"), RunId.make("run:4")],
+    );
   });
 
   it("stops the wall at the last run's end once nothing is running", () => {
@@ -384,6 +463,7 @@ describe("deriveTaskTiming", () => {
       queueMs: 0,
       delegatedMs: 0,
       stalledMs: 0,
+      waitingOnUserMs: 0,
     });
     assert.deepEqual(
       [timing.runs, timing.delegated, timing.ledgerItems, timing.stalls],
@@ -423,7 +503,31 @@ describe("summarizeTaskTiming", () => {
       summary.longestStalls.map((stall) => stall.durationMs),
       [seconds(180)],
     );
-    assert.equal(summary.ledgerItems.length, 3);
+    assert.equal(summary.ledgerItems.length, 4);
     assert.equal(summary.totals.wallMs, seconds(700));
+  });
+
+  it("keeps only the last five verdicts of an item", () => {
+    const attempts = Array.from({ length: 8 }, (_, index) => 100 + index * 10);
+    const judged = deriveTaskTiming({
+      ...fixture,
+      itemUpdates: attempts.map((when) =>
+        update(
+          when,
+          item(
+            "L2",
+            { status: "in_progress", evidence: `e${when}`, verdict: verdict("fail", when) },
+            when,
+          ),
+        ),
+      ),
+    });
+    assert.equal(judged.ledgerItems[1]?.verdicts.length, 8);
+    const kept = summarizeTaskTiming(judged, 5).ledgerItems.find((entry) => entry.itemId === "L2");
+    assert.deepEqual(
+      kept?.verdicts.map((entry) => entry.at),
+      attempts.slice(-5).map(iso),
+    );
+    assert.equal(kept?.judgeAttempts, 8);
   });
 });

@@ -135,8 +135,9 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     taskTiming: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:task-timing",
       tag: ORCHESTRATION_V2_WS_METHODS.getTaskTiming,
-      staleTimeMs: 0,
-      idleTtlMs: 0,
+      // Flipping between tabs reuses the answer; a finished turn refreshes it explicitly.
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
     }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",

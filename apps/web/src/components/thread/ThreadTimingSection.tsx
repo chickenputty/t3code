@@ -21,6 +21,7 @@ import { Stat } from "./ThreadUsageTab";
 const STALL_LABEL: Record<TaskTimingStallKind, string> = {
   waiting_on_user: "Waiting on you",
   pending_request: "Pending request",
+  waiting_on_delegate: "Waiting on a delegated task",
   idle_between_runs: "Idle between turns",
   no_ledger_progress: "Turn with no ledger progress",
 };
@@ -31,12 +32,13 @@ function TimingBody({ timing, nowMs }: { timing: TaskTimingSummary; nowMs: numbe
   const { totals } = timing;
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <Stat label="Wall time" value={duration(totals.wallMs)} />
         <Stat label="Agent time" value={duration(totals.agentMs)} />
         <Stat label="Queued" value={duration(totals.queueMs)} />
         <Stat label="Delegated" value={duration(totals.delegatedMs)} />
         <Stat label="Stalled" value={duration(totals.stalledMs)} />
+        <Stat label="Waiting on you" value={duration(totals.waitingOnUserMs)} />
       </div>
       {timing.delegatedBy.length > 0 ? (
         <Table>
@@ -127,7 +129,7 @@ export function ThreadTimingSection({
   nowMs,
 }: {
   threadRef: ScopedThreadRef;
-  /** Changes when a turn starts or finishes. */
+  /** Changes when a turn finishes. */
   activityKey: string;
   nowMs: number;
 }) {

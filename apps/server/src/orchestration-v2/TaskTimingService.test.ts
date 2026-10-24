@@ -278,11 +278,8 @@ it.layer(layerTest)("TaskTimingService", (it) => {
       );
       assert.deepEqual(
         record.stalls.map((stall) => [stall.kind, stall.durationMs]),
-        // Run 2 starts after the last ledger change, so it made no progress.
-        [
-          ["idle_between_runs", seconds(180)],
-          ["no_ledger_progress", seconds(60)],
-        ],
+        // Run 2 moved nothing, but the only item had closed, so there was nothing to move.
+        [["idle_between_runs", seconds(180)]],
       );
       assert.equal(record.totals.wallMs, seconds(365));
     }),

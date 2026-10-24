@@ -10,6 +10,14 @@ import { formatRelativeMs } from "~/components/views/viewEngine";
 
 import { ThreadTimingSection } from "./ThreadTimingSection";
 
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 export function ThreadActivityTab({
   model,
   nowMs,
@@ -21,12 +29,13 @@ export function ThreadActivityTab({
 }) {
   if (model.runs.length === 0)
     return <p className="text-muted-foreground text-sm">No turns yet.</p>;
-  const latest = model.runs.at(-1);
+  // The timing only changes in step with a finished turn, so that turn's id is the refetch key.
+  const lastFinished = model.runs.findLast((run) => !LIVE_RUN_STATUSES.has(run.status));
   return (
     <>
       <ThreadTimingSection
         threadRef={threadRef}
-        activityKey={`${model.runs.length}:${latest?.status}`}
+        activityKey={lastFinished?.id ?? ""}
         nowMs={nowMs}
       />
       <ActivityTurns model={model} nowMs={nowMs} />

@@ -310,6 +310,32 @@ describe("orchestration V2 contracts", () => {
     expect(explicit.runtimePolicy).toEqual({ enforcement: "native" });
   });
 
+  it("decodes a delegated task stored before it recorded its role", () => {
+    const stored = {
+      id: "task-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      parentNodeId: "node-root-1",
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+      providerThreadId: null,
+      childThreadId: "child-1",
+      nativeTaskRef: null,
+      prompt: "Do the work",
+      title: null,
+      model: "sonnet",
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    expect(decodeOrchestrationV2Subagent(stored).role).toBeUndefined();
+    expect(decodeOrchestrationV2Subagent({ ...stored, role: "judge" }).role).toBe("judge");
+  });
+
   it.each(["  indented prompt\n", "\n \t\n"])(
     "preserves workflow prompt and result %j in stored and wire JSON",
     (preview) => {

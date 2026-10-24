@@ -48,15 +48,15 @@ export const make = Effect.gen(function* () {
     "TaskTimingService.forThread",
   )(function* (threadId) {
     const now = yield* DateTime.now;
+    const readError = Effect.mapError(
+      (cause: ProjectionStore.ProjectionStoreV2Error) =>
+        new TaskTimingReadError({ threadId, source: "projection", cause }),
+    );
     const records = yield* projections
-      .getThreadRecords(threadId, ["runs", "subagents", "runtimeRequests", "ledger", "messages"], {
-        messageRoles: ["user"],
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new TaskTimingReadError({ threadId, source: "projection", cause }),
-        ),
-      );
+      .getThreadRecords(threadId, ["runs", "subagents", "runtimeRequests", "ledger"])
+      .pipe(readError);
+    // Only the source of each user message is needed, so the messages themselves stay unread.
+    const userMessages = yield* projections.getUserMessageCreationSources(threadId).pipe(readError);
 
     const delegated = yield* Effect.forEach(
       records.subagents.filter((task) => task.origin === "app_owned"),
@@ -103,7 +103,7 @@ export const make = Effect.gen(function* () {
       threadId,
       now,
       runs: records.runs,
-      userMessages: records.messages,
+      userMessages,
       delegated,
       runtimeRequests: records.runtimeRequests,
       ledger: records.ledger,

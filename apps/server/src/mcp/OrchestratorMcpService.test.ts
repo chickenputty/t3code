@@ -1489,6 +1489,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(request.modelSelection.instanceId, altInstanceId);
         // Timing groups delegated work by this role, which the prompt only carries as prose.
         assert.equal(request.role, "review");
+
+        // The ledger judge passes no role of its own; its delegation operation names it.
+        yield* service.delegateTask(
+          scope,
+          {
+            task: "Judge the item.",
+            target: { driverKind: ProviderDriverKind.make("codex") },
+            mode: "async",
+            clientRequestId: "delegate-judge-role-1",
+          },
+          OrchestratorMcpService.JUDGE_DELEGATION_OPERATION,
+        );
+        const judged = (yield* Ref.get(dispatched))[1] as { role?: string; task: string };
+        assert.equal(judged.role, "judge");
+        // No role means no preamble, so the judge's prompt stays the server-built text.
+        assert.equal(judged.task, "Judge the item.");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

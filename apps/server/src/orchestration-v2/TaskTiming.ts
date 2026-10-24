@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 
 const DEFAULT_STALL_THRESHOLD_MS = 60_000;
 const SUMMARY_LEDGER_ITEMS = 20;
+const SUMMARY_VERDICTS = 5;
 
 export interface TaskTimingInput {
   readonly threadId: ThreadId;
@@ -76,6 +77,18 @@ const isoMs = (epochMs: number) => iso(DateTime.makeUnsafe(epochMs));
 const between = (from: number, to: number) => Math.max(0, to - from);
 const sum = (values: ReadonlyArray<number | null>) =>
   values.reduce<number>((total, value) => total + (value ?? 0), 0);
+
+/** Total length covered by the intervals, so time that two stalls share is counted once. */
+function unionMs(intervals: ReadonlyArray<readonly [number, number]>) {
+  let total = 0;
+  let reachedMs = Number.NEGATIVE_INFINITY;
+  for (const [from, to] of intervals.toSorted((left, right) => left[0] - right[0])) {
+    if (to <= reachedMs) continue;
+    total += to - Math.max(from, reachedMs);
+    reachedMs = to;
+  }
+  return total;
+}
 
 // A run that is queued, starting or running has no end yet.
 const runIsLive = (status: TaskTimingRun["status"]) =>
@@ -162,16 +175,27 @@ function groupDelegated(delegated: ReadonlyArray<TaskTimingDelegated>) {
   return [...groups.values()].toSorted((left, right) => right.totalMs - left.totalMs);
 }
 
-function deriveLedgerItems(
-  input: TaskTimingInput,
-  now: number,
-): ReadonlyArray<TaskTimingLedgerItem> {
+interface LedgerAnalysis {
+  readonly items: ReadonlyArray<TaskTimingLedgerItem>;
+  /** Every stretch, over all items, in which some item was in progress. */
+  readonly inProgress: ReadonlyArray<readonly [startMs: number, endMs: number]>;
+  /** When an item changed, which is the ledger's sign of progress. */
+  readonly changeTimes: ReadonlyArray<number>;
+}
+
+function analyzeLedger(input: TaskTimingInput, now: number): LedgerAnalysis {
   const { ledger } = input;
-  if (ledger === undefined) return [];
-  return ledger.items.map((item): TaskTimingLedgerItem => {
-    const updates = input.itemUpdates.filter(
-      (entry) => entry.ledgerId === ledger.id && entry.item.id === item.id,
-    );
+  if (ledger === undefined) return { items: [], inProgress: [], changeTimes: [] };
+  const updatesByItem = new Map<string, Array<TaskTimingInput["itemUpdates"][number]>>();
+  for (const entry of input.itemUpdates) {
+    if (entry.ledgerId !== ledger.id) continue;
+    const updates = updatesByItem.get(entry.item.id);
+    if (updates === undefined) updatesByItem.set(entry.item.id, [entry]);
+    else updates.push(entry);
+  }
+  const inProgress: Array<readonly [number, number]> = [];
+  const items = ledger.items.map((item): TaskTimingLedgerItem => {
+    const updates = updatesByItem.get(item.id) ?? [];
     const openedMs = ms(item.createdAt);
     // Each change of status ends the previous stretch, so reopening and un-starting both count.
     let status: LedgerItem["status"] = "open";
@@ -198,13 +222,19 @@ function deriveLedgerItems(
         });
       }
       if (next.status === status) continue;
-      if (status === "in_progress") inProgressMs += between(since, atMs);
+      if (status === "in_progress") {
+        inProgressMs += between(since, atMs);
+        inProgress.push([since, atMs]);
+      }
       if (next.status === "in_progress") startedMs ??= atMs;
       closedMs = next.status === "closed" || next.status === "dropped" ? atMs : null;
       status = next.status;
       since = atMs;
     }
-    if (status === "in_progress") inProgressMs += between(since, now);
+    if (status === "in_progress") {
+      inProgressMs += between(since, now);
+      inProgress.push([since, now]);
+    }
     // With no events to go on, fall back to what the projection says about the item.
     const finished = item.status === "closed" || item.status === "dropped";
     const closedAtMs = !finished ? null : (closedMs ?? ms(item.closedAt ?? item.updatedAt));
@@ -222,11 +252,20 @@ function deriveLedgerItems(
       verdicts,
     };
   });
+  return {
+    items,
+    inProgress,
+    changeTimes: [...updatesByItem.values()].flatMap((updates) =>
+      updates.map((entry) => ms(entry.at)),
+    ),
+  };
 }
 
 function deriveStalls(
   input: TaskTimingInput,
   runs: ReadonlyArray<TaskTimingRun>,
+  delegated: ReadonlyArray<TaskTimingDelegated>,
+  ledgerAnalysis: LedgerAnalysis,
   now: number,
   thresholdMs: number,
 ): ReadonlyArray<TaskTimingStall> {
@@ -266,10 +305,21 @@ function deriveStalls(
     const gapMs = between(Date.parse(previous.endedAt), Date.parse(next.requestedAt));
     if (gapMs < thresholdMs) continue;
     const messageId = messageByRun.get(next.runId);
+    const gapStartMs = Date.parse(previous.endedAt);
+    const gapEndMs = Date.parse(next.requestedAt);
+    // A wake from the server, MCP or a provider after a delegated task ran through the gap means
+    // the thread was waiting on that task rather than sitting idle.
+    const overlapsDelegate = delegated.some(
+      (task) =>
+        Date.parse(task.requestedAt) < gapEndMs &&
+        (task.endedAt === null ? now : Date.parse(task.endedAt)) > gapStartMs,
+    );
+    const fromAPerson = messageId !== undefined && fromPerson.has(messageId);
     stalls.push({
-      kind:
-        messageId !== undefined && fromPerson.has(messageId)
-          ? "waiting_on_user"
+      kind: fromAPerson
+        ? "waiting_on_user"
+        : overlapsDelegate
+          ? "waiting_on_delegate"
           : "idle_between_runs",
       startedAt: previous.endedAt,
       endedAt: next.requestedAt,
@@ -282,9 +332,7 @@ function deriveStalls(
   if (ledger !== undefined) {
     const createdMs = ms(ledger.createdAt);
     const closedMs = ledger.closedAt === null ? now : ms(ledger.closedAt);
-    const progress = input.itemUpdates
-      .filter((entry) => entry.ledgerId === ledger.id)
-      .map((entry) => ms(entry.at));
+    const progress = ledgerAnalysis.changeTimes;
     for (const run of runs) {
       if (run.startedAt === null || run.durationMs === null || run.durationMs < thresholdMs) {
         continue;
@@ -295,6 +343,8 @@ function deriveStalls(
       const createdHere = startMs <= createdMs && createdMs <= endMs;
       if (createdHere || endMs < createdMs || startMs > closedMs) continue;
       if (progress.some((at) => at >= startMs && at <= endMs)) continue;
+      // With no item in progress there was nothing for the run to move forward.
+      if (!ledgerAnalysis.inProgress.some(([from, to]) => from < endMs && to > startMs)) continue;
       stalls.push({
         kind: "no_ledger_progress",
         startedAt: run.startedAt,
@@ -313,7 +363,8 @@ export function deriveTaskTiming(input: TaskTimingInput): TaskTiming {
   const thresholdMs = input.stallThresholdMs ?? DEFAULT_STALL_THRESHOLD_MS;
   const runs = deriveRuns(input, now);
   const delegated = deriveDelegated(input, now);
-  const stalls = deriveStalls(input, runs, now, thresholdMs);
+  const ledgerAnalysis = analyzeLedger(input, now);
+  const stalls = deriveStalls(input, runs, delegated, ledgerAnalysis, now, thresholdMs);
 
   const firstRequestedMs = runs.reduce(
     (first, run) => Math.min(first, Date.parse(run.requestedAt)),
@@ -335,18 +386,30 @@ export function deriveTaskTiming(input: TaskTimingInput): TaskTiming {
     stallThresholdMs: thresholdMs,
     runs,
     delegated,
-    ledgerItems: deriveLedgerItems(input, now),
+    ledgerItems: ledgerAnalysis.items,
     stalls,
     totals: {
       wallMs: runs.length === 0 ? 0 : between(firstRequestedMs, lastEndMs),
       agentMs: sum(runs.map((run) => run.durationMs)),
       queueMs: sum(runs.map((run) => run.queueWaitMs)),
       delegatedMs: sum(delegated.map((entry) => entry.durationMs)),
-      // A run with no ledger progress is already counted in agentMs.
-      stalledMs: sum(
+      // A run with no ledger progress is already counted in agentMs, and waiting on the user is
+      // reported on its own.
+      stalledMs: unionMs(
         stalls
-          .filter((stall) => stall.kind !== "no_ledger_progress")
-          .map((stall) => stall.durationMs),
+          .filter(
+            (stall) =>
+              stall.kind === "pending_request" ||
+              stall.kind === "idle_between_runs" ||
+              stall.kind === "waiting_on_delegate",
+          )
+          .map((stall): [number, number] => [
+            Date.parse(stall.startedAt),
+            stall.endedAt === null ? now : Date.parse(stall.endedAt),
+          ]),
+      ),
+      waitingOnUserMs: sum(
+        stalls.filter((stall) => stall.kind === "waiting_on_user").map((stall) => stall.durationMs),
       ),
     },
     delegatedBy: groupDelegated(delegated),
@@ -380,6 +443,7 @@ export function summarizeTaskTiming(timing: TaskTiming, limit: number): TaskTimi
       .slice(0, limit),
     ledgerItems: timing.ledgerItems
       .toSorted((left, right) => right.inProgressMs - left.inProgressMs)
-      .slice(0, SUMMARY_LEDGER_ITEMS),
+      .slice(0, SUMMARY_LEDGER_ITEMS)
+      .map((item) => ({ ...item, verdicts: item.verdicts.slice(-SUMMARY_VERDICTS) })),
   };
 }

@@ -62,6 +62,7 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  OrchestrationV2CreationSource,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -360,6 +361,7 @@ const isSettledLeafNode = (node: ProjectionNode, runs: ReadonlyArray<ProjectionR
   settledNodeStatuses.has(node.status) &&
   node.runId !== null &&
   !runs.some((run) => run.id === node.runId && activeRunStatuses.has(run.status));
+const isCreationSource = Schema.is(OrchestrationV2CreationSource);
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
   "thread" | "updatedAt" | "visibleTurnItems"
@@ -408,6 +410,17 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /**
+   * Who created each user message, without decoding the messages: a long thread's user messages
+   * hold prompts and attachments, and timing needs only the source.
+   */
+  readonly getUserMessageCreationSources: (threadId: ThreadId) => Effect.Effect<
+    ReadonlyArray<{
+      readonly id: MessageId;
+      readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
+    }>,
+    ProjectionStoreV2Error
+  >;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -5308,6 +5321,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
+    const getUserMessageCreationSources: ProjectionStoreV2Shape["getUserMessageCreationSources"] = (
+      threadId,
+    ) =>
+      sql<{ id: MessageId; creationSource: string }>`
+        SELECT message_id AS id, json_extract(payload_json, '$.creationSource') AS creationSource
+        FROM orchestration_v2_projection_messages
+        WHERE thread_id = ${threadId} AND role = 'user'`.pipe(
+        Effect.map((rows) =>
+          rows.flatMap(({ id, creationSource }) =>
+            isCreationSource(creationSource) ? [{ id, creationSource }] : [],
+          ),
+        ),
+        Effect.mapError(controlReadError(threadId)),
+      );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
       sql<{ ordinal: number | null }>`SELECT MAX(ordinal) AS ordinal
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`.pipe(
@@ -6665,6 +6692,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest,
       isNodeStored,
       getMessageCount,
+      getUserMessageCreationSources,
       getNextTurnItemOrdinal,
       getTurnItem,
       getThreadRecords,
@@ -6962,6 +6990,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
       getMessageCount: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) => state.projections.get(threadId)?.messages.length ?? 0),
+        ),
+      getUserMessageCreationSources: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            (state.projections.get(threadId)?.messages ?? [])
+              .filter((message) => message.role === "user")
+              .map(({ id, creationSource }) => ({ id, creationSource })),
+          ),
         ),
       getNextTurnItemOrdinal: (threadId) =>
         Ref.get(replayState).pipe(
