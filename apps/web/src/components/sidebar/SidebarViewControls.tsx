@@ -28,6 +28,7 @@ import {
   ShieldQuestionIcon,
   SquarePenIcon,
   TextSearchIcon,
+  UserRoundIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -387,7 +388,7 @@ export function ThreadTopicEmoji(props: { emoji: string }) {
 
 /** The card's status icons, alone: a slim row's whole status slot. */
 export function SidebarStatusGlyph(props: {
-  icon: "working" | "waiting" | "approval" | "input" | "failed" | "woke" | "done";
+  icon: "working" | "waiting" | "approval" | "input" | "request" | "failed" | "woke" | "done";
 }) {
   const className = "size-4 shrink-0";
   switch (props.icon) {
@@ -399,6 +400,8 @@ export function SidebarStatusGlyph(props: {
       return <ShieldQuestionIcon aria-hidden className={className} />;
     case "input":
       return <MessageCircleQuestionIcon aria-hidden className={className} />;
+    case "request":
+      return <UserRoundIcon aria-hidden className={className} />;
     case "failed":
       return <CircleAlertIcon aria-hidden className={className} />;
     case "woke":

@@ -109,6 +109,7 @@ export function appliedSidebarProjectScopeKey(_persisted: string | null): string
 export type SidebarThreadDisplayStatus =
   | "approval"
   | "input"
+  | "request"
   | "failed"
   | "limited"
   | "woke"
@@ -120,6 +121,7 @@ export type SidebarThreadDisplayStatus =
 const DISPLAY_STATUS_RANK: Record<SidebarThreadDisplayStatus, number> = {
   approval: 0,
   input: 1,
+  request: 1,
   failed: 2,
   limited: 2,
   woke: 3,

@@ -63,6 +63,7 @@ export interface ViewLayoutProps extends ViewLayoutHandlers {
 const STATUS_DOT: Record<ViewRow["status"], string> = {
   approval: "bg-warning",
   input: "bg-warning",
+  request: "bg-warning",
   failed: "bg-destructive",
   limited: "bg-destructive",
   woke: "bg-success",

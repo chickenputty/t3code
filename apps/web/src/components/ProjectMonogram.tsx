@@ -34,10 +34,7 @@ export function ProjectMonogram({
       </span>
     );
   }
-  // Wrapped like the emoji and Lucide branches so the monogram sits where an
-  // <img> favicon would. Menu items, buttons and the like pull every bare svg
-  // in with [&_svg]:-mx-0.5 to trim the padding stroke icons carry, and this
-  // tile has no such padding.
+  // Wrap the tile to avoid menu/button SVG margin trimming.
   return (
     <span
       aria-hidden="true"

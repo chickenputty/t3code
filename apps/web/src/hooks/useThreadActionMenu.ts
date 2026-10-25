@@ -1,5 +1,8 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
+import { canShareWithGuestAtom } from "../components/chat/guestShareAvailability";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -64,8 +67,10 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   /** Fork: without it the menu has no "Rename thread" (saved-view cards cannot rename inline). */
   readonly onStartRename?: (threadRef: ScopedThreadRef) => void;
+  /** Fork: saved-view cards leave it out and the menu reads it for the card's environment. */
+  readonly canShareWithGuest?: boolean;
 }) {
-  const { threadRef: inputThreadRef, projectCwd, onStartRename } = input;
+  const { threadRef: inputThreadRef, projectCwd, onStartRename, canShareWithGuest } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -152,6 +157,8 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
+        canShareWithGuest:
+          canShareWithGuest ?? appAtomRegistry.get(canShareWithGuestAtom(threadRef.environmentId)),
       });
       const items = onStartRename ? builtItems : withoutThreadActionMenuItem(builtItems, "rename");
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
@@ -262,6 +269,9 @@ export function useThreadActionMenu(input: {
         case "mark-unread":
           markThreadUnread(threadRef);
           return;
+        case "share-guest":
+          openGuestShareDialog(threadRef);
+          return;
         case "copy-path": {
           const workspacePath = thread.worktreePath ?? projectCwd;
           if (!workspacePath) {
@@ -323,9 +333,7 @@ export function useThreadActionMenu(input: {
           if (
             deleted._tag === "Failure" &&
             !isAtomCommandInterrupted(deleted) &&
-            // A failure with the thread already gone is worktree cleanup
-            // failing after a successful delete — deleteThread has toasted
-            // that itself, and "Failed to delete thread" would be a lie.
+            // A missing thread means cleanup failed after deletion; deleteThread already toasted that failure.
             readThreadShell(threadRef) !== null
           ) {
             failureToast("Failed to delete thread", squashAtomCommandFailure(deleted));

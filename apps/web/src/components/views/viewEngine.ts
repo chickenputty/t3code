@@ -86,6 +86,7 @@ export const VIEW_SECTION_OPTIONS: readonly ViewPropertyOption[] = [
 export const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "approval", label: "Needs approval" },
   { value: "input", label: "Needs input" },
+  { value: "request", label: "Guest request" },
   { value: "failed", label: "Failed" },
   { value: "limited", label: "Usage limited" },
   { value: "working", label: "Working" },
@@ -110,6 +111,7 @@ export function stageOfStatus(status: SidebarThreadDisplayStatus): ViewStage {
   switch (status) {
     case "approval":
     case "input":
+    case "request":
     case "failed":
     case "limited":
       return "needs-you";

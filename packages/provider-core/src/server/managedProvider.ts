@@ -82,7 +82,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
-  readonly refreshOnInterval?: boolean;
+  readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
 }): Effect.fn.Return<
   ManagedServerProvider,
@@ -114,8 +114,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
-      // Enrichment derives from the snapshot it was handed; a runtime usage
-      // update that landed since must not be reverted by it.
+      // Enrichment must not revert usage updates newer than its input snapshot.
       const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
@@ -207,8 +206,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
-        // A failed read keeps the last good limits only for the same account,
-        // and they keep the workspace they were read for.
+        // Failed reads retain limits only for the same account and original workspace.
         const previous = state.snapshot.auth;
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
@@ -273,11 +271,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return yield* applySnapshot(nextSettings, { forceRefresh: true, userRequested });
   });
 
-  const hasProviderStatusDemand = Effect.gen(function* () {
+  const shouldRefreshOnInterval = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
     // A disabled instance has nothing to probe; a periodic check would only
     // republish a snapshot that differs in checkedAt.
-    if (!state.snapshot.enabled) {
+    if (
+      !state.snapshot.enabled ||
+      input.refreshOnInterval === false ||
+      (typeof input.refreshOnInterval === "function" && !input.refreshOnInterval(state.snapshot))
+    ) {
       return false;
     }
     const instanceId = state.snapshot.instanceId;
@@ -331,10 +333,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
         ).pipe(
           Effect.flatMap((intervalElapsed) =>
-            input.refreshOnInterval !== false &&
-            intervalElapsed &&
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? hasProviderStatusDemand.pipe(
+            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
+              ? shouldRefreshOnInterval.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh ? refreshSnapshot(false).pipe(Effect.asVoid) : Effect.void,
                   ),

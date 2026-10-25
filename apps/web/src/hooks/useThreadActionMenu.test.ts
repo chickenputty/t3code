@@ -34,6 +34,8 @@ function recordEffect(action: string) {
   state.completed.resolve();
 }
 
+vi.mock("../components/chat/guestShareAvailability", () => ({ canShareWithGuestAtom: vi.fn() }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => false } }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
@@ -156,6 +158,7 @@ const createMenu = () =>
     threadRef: target,
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
+    canShareWithGuest: false,
   });
 
 beforeEach(() => {

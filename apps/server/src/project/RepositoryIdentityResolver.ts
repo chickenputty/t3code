@@ -1,9 +1,5 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
-import {
-  detectSourceControlProviderFromGitRemoteUrl,
-  normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -15,13 +11,12 @@ import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitMetadataFastPath from "../vcs/GitMetadataFastPath.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-// Background sweeps resolve every project each minute. A long TTL keeps them
-// from spawning git each time. Clone, publish, and PR discovery (after a turn
-// and before it saves links) resolve with `refresh: true`.
+// Minute-by-minute sweeps need cached hits; clone, publish and PR discovery force refresh.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
@@ -44,8 +39,7 @@ export class RepositoryIdentityResolver extends Context.Service<
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
-// Local remotes (GitButler's `gb-local` is `.`) name a path on this machine,
-// not a repository, so unrelated repos would share one identity.
+// Local paths such as GitButler's gb-local=. would give unrelated repos the same identity.
 function isLocalRemoteUrl(url: string): boolean {
   if (/^file:/i.test(url)) return true;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return false;
@@ -104,7 +98,7 @@ function buildRepositoryOrigin(
   canonicalKey: string,
 ): RepositoryIdentity["origin"] {
   if (!originUrl) return undefined;
-  const originKey = normalizeGitRemoteUrl(originUrl);
+  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(originUrl);
   if (originKey === canonicalKey) return undefined;
   const displayName = repositoryPathOf(originKey, originUrl);
   return { canonicalKey: originKey, remoteUrl: originUrl, ...(displayName ? { displayName } : {}) };
@@ -116,8 +110,8 @@ function buildRepositoryIdentity(input: {
   readonly originUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
+  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.remoteUrl);
+  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
   const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
@@ -157,8 +151,7 @@ const runGitMetadataCommand = Effect.fn("RepositoryIdentityResolver.runGitMetada
     }
 
     const processRunner = yield* ProcessRunner.ProcessRunner;
-    // git is a real executable on every platform — no cmd.exe shell mode, which
-    // would split paths containing spaces during cmd's re-tokenization.
+    // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     return yield* processRunner
       .run({
         command: "git",
