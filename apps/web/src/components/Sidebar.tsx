@@ -243,7 +243,12 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import {
+  SidebarDraftRows,
+  sidebarDraftProjectKey,
+  useSidebarDraftRows,
+  type SidebarDraftRowData,
+} from "./sidebar/SidebarDraftBlock";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -1213,6 +1218,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }),
     pinsInGroups: sidebarPinsInGroups,
   });
+  const draftRows = useSidebarDraftRows({ scopedProjectKeys, routeDraftId: routeDraftIdForRows });
+  // Fork: grouped by project, a draft sits under its project's header. Drafts whose
+  // project has no header drawn, or a view grouped by another property, list on top.
+  const draftRowsByGroupKey = new Map<string, SidebarDraftRowData[]>();
+  const topDraftRows: SidebarDraftRowData[] = [];
+  const drawnGroupKeys =
+    viewGroupOf === null ? new Set(activeArrangement.groups?.map((group) => group.key)) : null;
+  for (const row of draftRows) {
+    const groupKey = logicalProjectByProjectKey.get(sidebarDraftProjectKey(row))?.projectKey;
+    if (groupKey === undefined || drawnGroupKeys?.has(groupKey) !== true) {
+      topDraftRows.push(row);
+      continue;
+    }
+    const rows = draftRowsByGroupKey.get(groupKey);
+    if (rows === undefined) draftRowsByGroupKey.set(groupKey, [row]);
+    else rows.push(row);
+  }
   const threadRowDensity = useClientSettings((settings) => settings.sidebarThreadRowDensity);
   const projectRowDensity = useClientSettings((settings) => settings.sidebarProjectRowDensity);
   const showThreadEmoji = useClientSettings((settings) => settings.sidebarThreadEmoji);
@@ -3252,11 +3274,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
-                        <SidebarDraftBlock
+                        <SidebarDraftRows
                           key="draft-sessions"
+                          drafts={topDraftRows}
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
@@ -3360,6 +3382,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 />,
                               );
                               if (group.collapsed) continue;
+                              items.push(
+                                <SidebarDraftRows
+                                  key={`project-group-drafts:${group.key}`}
+                                  drafts={draftRowsByGroupKey.get(group.key) ?? []}
+                                  projectByKey={projectByKey}
+                                  projectDisplayNameByKey={projectDisplayNameByKey}
+                                  routeDraftId={routeDraftIdForRows}
+                                  grouped
+                                  indent={threadIndent}
+                                  onNavigateToDraft={navigateToDraft}
+                                  onDraftContextMenu={handleDraftContextMenu}
+                                />,
+                              );
                               for (const thread of group.threads) {
                                 items.push(renderThreadRow(thread, "active", true));
                               }

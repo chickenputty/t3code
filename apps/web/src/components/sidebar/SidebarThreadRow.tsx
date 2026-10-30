@@ -179,7 +179,7 @@ function terminalProcessLabel(count: number): string {
 }
 
 /** Fork: the "Indent" setting as a start margin on a grouped thread row. */
-function threadIndentClassName(indent: SidebarThreadIndent | undefined): string | undefined {
+export function threadIndentClassName(indent: SidebarThreadIndent | undefined): string | undefined {
   switch (indent) {
     case "small":
       return "ms-3";

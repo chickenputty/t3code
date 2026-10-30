@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { SidebarThreadIndent } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -19,13 +20,19 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
-import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import {
+  draftPenClassName,
+  draftSurfaceClassName,
+  threadIndentClassName,
+} from "./SidebarThreadRow";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
+  grouped: boolean;
+  indent: SidebarThreadIndent | undefined;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
@@ -79,7 +86,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     onDiscard(draftId);
   };
   return (
-    <li className="list-none py-0.5">
+    <li className={cn("list-none py-0.5", props.grouped && threadIndentClassName(props.indent))}>
       <div
         role="button"
         tabIndex={0}
@@ -98,11 +105,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
-            {props.project ? (
+            {props.project && !props.grouped ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectDisplayName}
+              {props.grouped ? "Draft" : props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <Tooltip>
@@ -131,20 +138,20 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   );
 });
 
-interface SidebarDraftRowData {
+export interface SidebarDraftRowData {
   draftId: DraftId;
   session: DraftSessionState;
   composer: ComposerThreadDraftState;
 }
 
-export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
-  projectByKey: ReadonlyMap<string, EnvironmentProject>;
-  projectDisplayNameByKey: ReadonlyMap<string, string>;
+export const sidebarDraftProjectKey = (row: SidebarDraftRowData) =>
+  `${row.session.environmentId}:${row.session.projectId}` as const;
+
+/** The unsent drafts the sidebar lists, newest first. The open draft keeps its row until navigation. */
+export function useSidebarDraftRows(props: {
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
-  onNavigateToDraft: (draftId: DraftId) => void;
-  onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
-}) {
+}): SidebarDraftRowData[] {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
   const [frozenActive, setFrozenActive] = useState<{
@@ -164,59 +171,74 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     }
     setFrozenActive({ routeDraftId: props.routeDraftId, row });
   }
-  const drafts = (() => {
-    const rows: SidebarDraftRowData[] = [];
-    for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
-      if (session.promotedTo != null) {
-        continue;
-      }
-      if (
-        props.scopedProjectKeys !== null &&
-        !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
-      ) {
-        continue;
-      }
-      if (draftKey === props.routeDraftId) {
-        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
-          rows.push(frozenActive.row);
-        }
-        continue;
-      }
-      const composer = draftsByThreadKey[draftKey];
-      if (!composer || !composerDraftHasUserContent(composer)) {
-        continue;
-      }
-      rows.push({ draftId: DraftId.make(draftKey), session, composer });
+  const rows: SidebarDraftRowData[] = [];
+  for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
+    if (session.promotedTo != null) {
+      continue;
     }
-    rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
-    return rows;
-  })();
-  if (drafts.length === 0) {
+    if (
+      props.scopedProjectKeys !== null &&
+      !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+    ) {
+      continue;
+    }
+    if (draftKey === props.routeDraftId) {
+      if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
+        rows.push(frozenActive.row);
+      }
+      continue;
+    }
+    const composer = draftsByThreadKey[draftKey];
+    if (!composer || !composerDraftHasUserContent(composer)) {
+      continue;
+    }
+    rows.push({ draftId: DraftId.make(draftKey), session, composer });
+  }
+  rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+  return rows;
+}
+
+export function SidebarDraftRows(props: {
+  drafts: readonly SidebarDraftRowData[];
+  projectByKey: ReadonlyMap<string, EnvironmentProject>;
+  projectDisplayNameByKey: ReadonlyMap<string, string>;
+  routeDraftId: string | null;
+  // Fork: under a project header the rows drop the project the header shows and indent.
+  grouped?: boolean;
+  indent?: SidebarThreadIndent;
+  onNavigateToDraft: (draftId: DraftId) => void;
+  onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
+}) {
+  if (props.drafts.length === 0) {
     return null;
   }
   return (
     <>
-      {drafts.map(({ composer, draftId, session }) => {
-        const projectKey = `${session.environmentId}:${session.projectId}`;
+      {props.drafts.map((row) => {
+        const projectKey = sidebarDraftProjectKey(row);
         return (
           <SidebarDraftRow
-            key={draftId}
-            draftId={draftId}
-            composer={composer}
+            key={row.draftId}
+            draftId={row.draftId}
+            composer={row.composer}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
-            isActive={draftId === props.routeDraftId}
+            grouped={props.grouped ?? false}
+            indent={props.indent}
+            isActive={row.draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
             onDiscard={discardComposerDraft}
             onContextMenu={props.onDraftContextMenu}
           />
         );
       })}
-      <li
-        aria-hidden
-        data-testid="sidebar-draft-divider"
-        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-      />
+      {props.grouped ? null : (
+        <li
+          aria-hidden
+          data-testid="sidebar-draft-divider"
+          className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
+        />
+      )}
     </>
   );
-});
+}
