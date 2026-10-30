@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { SidebarThreadIndent } from "@t3tools/contracts";
+import type { SidebarThreadIndent, SidebarThreadRowDensity } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -33,6 +33,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   projectDisplayName: string | null;
   grouped: boolean;
   indent: SidebarThreadIndent | undefined;
+  density: SidebarThreadRowDensity;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
@@ -85,8 +86,35 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     event.stopPropagation();
     onDiscard(draftId);
   };
+  const projectIcon =
+    props.project && !props.grouped ? (
+      <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+    ) : null;
+  const discardButton = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Discard draft"
+            onClick={handleDiscard}
+            className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+          >
+            <XIcon className="size-3" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">Discard draft</TooltipPopup>
+    </Tooltip>
+  );
   return (
-    <li className={cn("list-none py-0.5", props.grouped && threadIndentClassName(props.indent))}>
+    <li
+      className={cn(
+        "list-none",
+        props.density === "comfortable" && "py-0.5",
+        props.grouped && threadIndentClassName(props.indent),
+      )}
+    >
       <div
         role="treeitem"
         tabIndex={-1}
@@ -103,37 +131,38 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onKeyDown={handleKeyDown}
       >
         <span className="sr-only">{preview}</span>
-        <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
-          <div className="flex h-5 min-w-0 items-center gap-1.5">
+        {props.density === "comfortable" ? (
+          <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+            <div className="flex h-5 min-w-0 items-center gap-1.5">
+              <SquarePenIcon aria-hidden className={draftPenClassName} />
+              {projectIcon}
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+                {props.grouped ? "Draft" : props.projectDisplayName}
+              </span>
+              <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
+                {discardButton}
+              </span>
+            </div>
+            <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
+              {preview}
+            </div>
+          </div>
+        ) : (
+          // Fork: compact and slim match the thread rows' one-line heights.
+          <div
+            className={cn(
+              "relative z-10 flex min-w-0 items-center gap-2.5 px-2.5",
+              props.density === "slim" ? "h-7" : "h-9",
+            )}
+          >
             <SquarePenIcon aria-hidden className={draftPenClassName} />
-            {props.project && !props.grouped ? (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-            ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.grouped ? "Draft" : props.projectDisplayName}
+            {projectIcon}
+            <span aria-hidden className="min-w-0 flex-1 truncate text-sm text-foreground/90">
+              {preview}
             </span>
-            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label="Discard draft"
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
-              </Tooltip>
-            </span>
+            {discardButton}
           </div>
-          <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
-            {preview}
-          </div>
-        </div>
+        )}
       </div>
     </li>
   );
@@ -207,6 +236,7 @@ export function SidebarDraftRows(props: {
   // Fork: under a project header the rows drop the project the header shows and indent.
   grouped?: boolean;
   indent?: SidebarThreadIndent;
+  density: SidebarThreadRowDensity;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
@@ -226,6 +256,7 @@ export function SidebarDraftRows(props: {
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             grouped={props.grouped ?? false}
             indent={props.indent}
+            density={props.density}
             isActive={row.draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
             onDiscard={discardComposerDraft}

@@ -3550,6 +3550,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           routeDraftId={routeDraftIdForRows}
+                          density={threadRowDensity}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
@@ -3688,6 +3689,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   projectByKey={projectByKey}
                                   projectDisplayNameByKey={projectDisplayNameByKey}
                                   routeDraftId={routeDraftIdForRows}
+                                  density={threadRowDensity}
                                   grouped
                                   indent={threadIndent}
                                   onNavigateToDraft={navigateToDraft}
