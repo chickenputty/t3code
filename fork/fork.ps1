@@ -342,6 +342,7 @@ function Invoke-Sync {
     # CI=true: when an upstream bump changes the store layout, pnpm wants to purge node_modules and
     # asks first; with no terminal (the scheduled task) it aborts instead (seen 2026-10-03).
     Invoke-Step 'vp install' $BuildDir { $env:CI = 'true'; try { vp i } finally { Remove-Item Env:CI -ErrorAction SilentlyContinue } }
+    Remove-StaleBinShims $BuildDir
     # Upstream CI already typechecks upstream main; this gate is for fork patches to the app itself.
     $patched = (Invoke-Git $BuildDir diff --name-only $up $candidate).Out -split "`n" |
       Where-Object { $_ -and -not $_.StartsWith('fork/') }
@@ -460,6 +461,21 @@ function Show-Patches {
   $log
   ''
   (Invoke-Git $repo diff --stat "$up...refs/heads/$Branch").Out
+}
+
+function Remove-StaleBinShims([string]$Dir) {
+  # pnpm leaves a package's .bin shims behind when the dependency they point at is pruned (upstream
+  # moved typescript to @tsc-rs/typescript on 2026-10-29), and the stale tsc broke every typecheck.
+  Get-ChildItem $Dir -Directory -Filter .bin -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '\\\.pnpm\\' } |
+    ForEach-Object { Get-ChildItem $_.FullName -File | Where-Object { -not $_.Extension } } |
+    ForEach-Object {
+      $target = Select-String -Path $_.FullName -Pattern '^# cmd-shim-target=(.+)$' | Select-Object -First 1
+      if ($target -and -not (Test-Path $target.Matches[0].Groups[1].Value)) {
+        Log "removing stale shim $($_.FullName)"
+        Remove-Item "$($_.FullName)", "$($_.FullName).cmd", "$($_.FullName).ps1" -Force -ErrorAction SilentlyContinue
+      }
+    }
 }
 
 function Invoke-ManualMerge {
