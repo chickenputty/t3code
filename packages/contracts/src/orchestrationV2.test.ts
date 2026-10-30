@@ -12,7 +12,10 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellJson,
   OrchestrationV2SubagentJson,
+  OrchestrationV2Command,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadProjectionJson,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
@@ -628,5 +631,137 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("task ledger contracts", () => {
+  const iso = DateTime.formatIso(now);
+  const judge = { instanceId: "codex", model: "gpt-5-codex" };
+  const ledger = {
+    id: "ledger-1",
+    threadId: "thread-1",
+    title: "Ship the importer",
+    startState: "No importer exists",
+    checkpoints: [
+      { id: "cp-1", title: "Parser lands", reached: true, reachedAt: iso },
+      { id: "cp-2", title: "UI wired", reached: false, reachedAt: null },
+    ],
+    winConditions: ["All fixtures import"],
+    items: [
+      {
+        id: "item-1",
+        title: "Write parser",
+        acceptance: "Fixtures parse",
+        status: "closed",
+        evidence: "vp test run passed",
+        dropReason: null,
+        verdict: { outcome: "pass", judge, notes: "Verified", at: iso },
+        createdAt: iso,
+        updatedAt: iso,
+        closedAt: iso,
+      },
+      {
+        id: "item-2",
+        title: "Wire UI",
+        acceptance: "Button imports a file",
+        status: "dropped",
+        evidence: null,
+        dropReason: "Out of scope",
+        verdict: null,
+        createdAt: iso,
+        updatedAt: iso,
+        closedAt: null,
+      },
+    ],
+    createdAt: iso,
+    updatedAt: iso,
+    closedAt: null,
+  };
+  const projection = {
+    thread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      providerInstanceId: "codex",
+      modelSelection: judge,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+      forkedFrom: null,
+      createdAt: iso,
+      updatedAt: iso,
+      archivedAt: null,
+      deletedAt: null,
+    },
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: iso,
+  };
+  const decodeProjection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjectionJson);
+  const encodeProjection = Schema.encodeSync(OrchestrationV2ThreadProjectionJson);
+
+  it("decodes a thread snapshot persisted before ledgers existed", () => {
+    expect(decodeProjection(projection).ledger).toBeUndefined();
+  });
+
+  it("round-trips a full ledger through the thread snapshot", () => {
+    const decoded = decodeProjection({ ...projection, ledger });
+    expect(decoded.ledger?.items.map((item) => item.status)).toEqual(["closed", "dropped"]);
+    expect(encodeProjection(decoded).ledger).toEqual(ledger);
+  });
+
+  it("rejects an unknown item status", () => {
+    const bad = { ...ledger, items: [{ ...ledger.items[0], status: "blocked" }] };
+    expect(() => decodeProjection({ ...projection, ledger: bad })).toThrow();
+  });
+
+  it("decodes ledger events", () => {
+    const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+    const base = { id: "event-1", threadId: "thread-1", occurredAt: iso };
+    expect(decodeEvent({ ...base, type: "ledger.created", payload: ledger }).type).toBe(
+      "ledger.created",
+    );
+    expect(
+      decodeEvent({
+        ...base,
+        type: "ledger.item.updated",
+        payload: { ledgerId: "ledger-1", item: ledger.items[0], updatedAt: iso },
+      }).type,
+    ).toBe("ledger.item.updated");
+  });
+
+  it("rejects an empty item update and a client-supplied verdict", () => {
+    const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+    const update = {
+      type: "ledger.item.update",
+      commandId: "command-1",
+      threadId: "thread-1",
+      ledgerId: "ledger-1",
+      itemId: "item-1",
+    };
+    expect(() => decodeCommand(update)).toThrow();
+    expect(decodeCommand({ ...update, status: "in_progress" }).type).toBe("ledger.item.update");
+    expect(
+      decodeCommand({ ...update, status: "closed", verdict: ledger.items[0]?.verdict }),
+    ).not.toHaveProperty("verdict");
   });
 });

@@ -512,6 +512,13 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "thread.stop":
     case "provider.switch":
+    case "ledger.create":
+    case "ledger.item.add":
+    case "ledger.item.update":
+    case "ledger.checkpoint.set":
+    case "ledger.close":
+    case "ledger.reopen":
+    case "ledger.item.verdict.record":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":

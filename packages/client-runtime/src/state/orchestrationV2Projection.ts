@@ -374,6 +374,14 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, messages: upsertEntity(base.messages, event.payload) };
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
+    // Ledger events are not reduced yet; a later ledger item folds them into `projection.ledger`.
+    case "ledger.created":
+    case "ledger.item.added":
+    case "ledger.item.updated":
+    case "ledger.checkpoint.updated":
+    case "ledger.closed":
+    case "ledger.reopened":
+      return base;
     case "turn-item.updated": {
       const payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
       // Streamed updates land on the newest items, so search from the end.
