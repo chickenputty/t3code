@@ -1,11 +1,7 @@
 /**
- * Where a chat file chip's file really is on the environment host. A bare
- * filename (`thumb.png`) resolves against the workspace root, which is rarely
- * where it lives, so the workspace index is asked first, as the files panel
- * does; a path with folders the index does not have is then looked for in the
- * repository's other git worktrees (fork). Preview, open in editor, open file,
- * open parent folder and the copy actions all go through here so they agree on
- * one path.
+ * Where a chat file chip's file really is on the host. A bare filename asks the
+ * workspace index first, then other git worktrees (fork), since the workspace root
+ * is rarely right. Every chip action resolves through here so they agree on one path.
  */
 import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";

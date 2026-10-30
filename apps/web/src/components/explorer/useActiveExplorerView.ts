@@ -1,10 +1,5 @@
-/**
- * Fork (chickenputty/t3code): the saved view the sidebar explorer shows,
- * falling back to the built-in Threads view when none is chosen or the chosen
- * one is gone.
- */
+// Fork: the saved view the sidebar explorer shows, falling back to the built-in Threads view.
 import type { SavedView, SavedViewLayout } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import {
   DEFAULT_SIDEBAR_PROJECT_SORT,
@@ -18,7 +13,7 @@ import { resolveActiveExplorerView, useExplorerStore } from "./explorerStore";
 export function useActiveExplorerView(): SavedView {
   const { views } = useSavedViews();
   const activeViewId = useExplorerStore((state) => state.activeViewId);
-  return useMemo(() => resolveActiveExplorerView(views, activeViewId), [activeViewId, views]);
+  return resolveActiveExplorerView(views, activeViewId);
 }
 
 export interface ExplorerViewIdentity {
@@ -41,19 +36,13 @@ const ANY_ARRANGEMENT: LocalThreadsArrangement = {
  */
 export function useActiveExplorerViewIdentity(): ExplorerViewIdentity {
   const activeViewId = useExplorerStore((state) => state.activeViewId);
-  const select = useCallback(
-    (stored: readonly SavedView[]) => {
-      const view = resolveActiveExplorerView(
-        withBuiltInThreadsView(stored, ANY_ARRANGEMENT),
-        activeViewId,
-      );
-      return JSON.stringify([view.id, view.layout, view.name]);
-    },
-    [activeViewId],
-  );
-  const key = useSavedViewsValue(select);
-  return useMemo(() => {
-    const [id, layout, name] = JSON.parse(key) as [string, SavedViewLayout, string];
-    return { id, layout, name };
-  }, [key]);
+  const key = useSavedViewsValue((stored: readonly SavedView[]) => {
+    const view = resolveActiveExplorerView(
+      withBuiltInThreadsView(stored, ANY_ARRANGEMENT),
+      activeViewId,
+    );
+    return JSON.stringify([view.id, view.layout, view.name]);
+  });
+  const [id, layout, name] = JSON.parse(key) as [string, SavedViewLayout, string];
+  return { id, layout, name };
 }

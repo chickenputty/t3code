@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -43,12 +44,14 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
-    for (const method of [
-      WS_METHODS.terminalObserve,
-      WS_METHODS.subscribeTerminalEvents,
-      WS_METHODS.subscribeTerminalMetadata,
-    ]) {
+    for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
     }
     for (const method of [
@@ -57,8 +60,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalWrite,
       WS_METHODS.terminalResize,
       WS_METHODS.terminalClear,
-      WS_METHODS.terminalRestart,
       WS_METHODS.terminalClose,
+      WS_METHODS.previewStopLocalServer,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
@@ -171,7 +174,7 @@ describe("settings mutation authorization", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not let a settings grant create or remove providers", () =>
+  it.effect("does not let a settings grant create or remove providers or secret providers", () =>
     Effect.gen(function* () {
       let handled = false;
       const client = yield* RpcTest.makeClient(group).pipe(
@@ -191,6 +194,11 @@ describe("settings mutation authorization", () => {
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: {},
           providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);

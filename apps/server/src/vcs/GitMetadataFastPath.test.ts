@@ -599,12 +599,12 @@ describe("GitMetadataFastPath on repositories git treats differently", () => {
     // A key without a value is legal to git; this reader leaves such a config to git.
     const home = useGlobalConfig("home-valueless", "[core]\n\tvalueless\n");
     const args = ["remote", "get-url", "origin"];
-    await declines(repos.plain!, ...args);
-
-    NodeFS.writeFileSync(NodePath.join(home, ".gitconfig"), "");
-    const now = Date.now();
+    // Later than any real time, so nothing cached by earlier tests counts as fresh.
+    const now = 4_000_000_000_000;
     vi.useFakeTimers({ toFake: ["Date"], now });
     try {
+      await declines(repos.plain!, ...args);
+      NodeFS.writeFileSync(NodePath.join(home, ".gitconfig"), "");
       // Still inside the retry pause: the listing is not repeated for this command.
       await declines(repos.plain!, ...args);
       vi.setSystemTime(now + 31_000);
@@ -916,13 +916,15 @@ describe("GitMetadataFastPath on repositories git treats differently", () => {
 describe("makeTaskLimiter", () => {
   it("runs a bounded number of tasks at once and frees the slot of a failed one", async () => {
     const limit = makeTaskLimiter(3);
-    const release: Array<(fail: boolean) => void> = [];
+    const started = Array.from({ length: 10 }, () =>
+      Promise.withResolvers<(fail: boolean) => void>(),
+    );
     let running = 0;
     let mostRunning = 0;
     const results = Array.from({ length: 10 }, (_, index) =>
       limit(async () => {
         mostRunning = Math.max(mostRunning, ++running);
-        const failed = await new Promise<boolean>((resolve) => release.push(resolve));
+        const failed = await new Promise<boolean>((resolve) => started[index]!.resolve(resolve));
         running--;
         if (failed) throw new Error(`task ${index}`);
         return index;
@@ -930,9 +932,9 @@ describe("makeTaskLimiter", () => {
     );
     // Release in start order; every third task fails.
     for (let done = 0; done < 10; done++) {
-      while (release.length <= done) await new Promise((resolve) => setImmediate(resolve));
+      const release = await started[done]!.promise;
       expect(running).toBeLessThanOrEqual(3);
-      release[done]!(done % 3 === 0);
+      release(done % 3 === 0);
     }
     expect(await Promise.all(results)).toEqual([
       "task 0",

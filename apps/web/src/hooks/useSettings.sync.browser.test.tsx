@@ -9,9 +9,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render, type Screen } from "../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
@@ -67,36 +67,12 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
     sessionCookieName: "t3_session",
   },
 });
-let root: Root;
-let container: HTMLDivElement;
-
-// Fork: the last save's outcome, for the saved-or-not tests below.
-let lastSave: Promise<boolean> | undefined;
-
-function SettingsEditor() {
+function SettingsEditor({ onSave }: { onSave: (saved: Promise<boolean>) => void }) {
   const updateSettings = useUpdatePrimarySettings();
-  const save = () => {
-    lastSave = updateSettings(patch);
-  };
-  return <button onClick={save}>Save shared setting</button>;
+  return <button onClick={() => onSave(updateSettings(patch))}>Save shared setting</button>;
 }
 
-function saveSharedSettings() {
-  container.querySelector("button")!.click();
-}
-
-async function mountEditor() {
-  await act(() =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <SettingsEditor />
-      </RegistryContext.Provider>,
-    ),
-  );
-}
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   state.sessions.clear();
   state.sessions.set(
     primaryId,
@@ -115,42 +91,49 @@ beforeEach(() => {
   state.persist.mockReset();
   state.persist.mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
   state.toast.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
+}
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+function renderEditor(saves: Array<Promise<boolean>>) {
+  return render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <SettingsEditor onSave={(saved) => saves.push(saved)} />
+    </RegistryContext.Provider>,
+  );
+}
+
+async function saveSharedSettings(screen: Screen, saves: Array<Promise<boolean>>) {
+  await act(() => screen.container.querySelector("button")!.click());
+  return saves.at(-1);
+}
 
 // Fork: callers holding an optimistic copy (saved views) learn whether the write landed.
 describe("shared settings save outcome", () => {
   it("resolves false when the primary rejects the save", async () => {
+    setup();
     state.persist.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
     );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    await expect(lastSave).resolves.toBe(false);
+    const saves: Array<Promise<boolean>> = [];
+    await using screen = await renderEditor(saves);
+    await expect(saveSharedSettings(screen, saves)).resolves.toBe(false);
   });
 
   it("resolves true when the primary saves, even if a remote fails", async () => {
+    setup();
     state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
     state.persist.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
     );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    await expect(lastSave).resolves.toBe(true);
+    const saves: Array<Promise<boolean>> = [];
+    await using screen = await renderEditor(saves);
+    await expect(saveSharedSettings(screen, saves)).resolves.toBe(true);
   });
 
   it("resolves false when this connection lacks the grant", async () => {
+    setup();
     appAtomRegistry.set(state.sessions.get(primaryId)!, AsyncResult.success(session([])));
-    await mountEditor();
-    await act(async () => saveSharedSettings());
-    await expect(lastSave).resolves.toBe(false);
+    const saves: Array<Promise<boolean>> = [];
+    await using screen = await renderEditor(saves);
+    await expect(saveSharedSettings(screen, saves)).resolves.toBe(false);
   });
 });

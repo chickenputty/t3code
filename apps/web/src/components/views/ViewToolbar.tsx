@@ -335,6 +335,7 @@ export function FilterControl({
             if (!property) return null;
             return (
               <div
+                // oxlint-disable-next-line react/no-array-index-key -- conditions have no id; position is their identity
                 key={`${index}-${condition.property}`}
                 className="flex flex-wrap items-center gap-1.5"
               >
@@ -454,6 +455,7 @@ function SortControl({
             <p className="text-muted-foreground text-sm">Latest activity first.</p>
           ) : null}
           {view.sorts.map((sort, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- sorts have no id; position is their identity
             <div key={`${index}-${sort.property}`} className="flex items-center gap-1.5">
               <MiniSelect
                 label="Sort by"

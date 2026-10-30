@@ -38,6 +38,7 @@ export function createPendingSetting<T>() {
     /** The pending value while one is in flight; cleared when `stored` matches it. */
     usePending(stored: T | null): T | null {
       const value = useSyncExternalStore(subscribe, read);
+      // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the module-level pending store once the server echoes the write
       useEffect(() => {
         if (pending !== null && canonical(pending) === canonical(stored)) set(null);
       }, [stored]);

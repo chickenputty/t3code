@@ -24,7 +24,7 @@ import {
   VIEW_PROPERTIES,
 } from "~/components/views/viewEngine";
 
-export function ThreadTabSection({ title, children }: { title: string; children: ReactNode }) {
+function ThreadTabSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h3 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">{title}</h3>

@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
@@ -6,7 +7,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
-import { Minus, Plus } from "lucide";
+import { ChevronDown, ChevronUp } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -98,7 +99,7 @@ export function ThreadDetailsPrRows({
   const rest =
     currentLink === null
       ? []
-      : pullRequestListLines(resolveThreadPullRequestChains(visibleThreadPullRequests(links)))
+      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
           .map((line) => line.link)
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
   if (rest.length === 0) return currentRow;
@@ -133,7 +134,8 @@ export function ThreadDetailsPrRows({
         <MorphIcon
           aria-hidden
           className="size-4 shrink-0"
-          icon={shown >= rest.length ? Minus : Plus}
+          // Chevrons, not plus and minus: the plus already means "add" in this card.
+          icon={shown >= rest.length ? ChevronUp : ChevronDown}
         />
         {shown >= rest.length
           ? "Show less"

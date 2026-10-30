@@ -1,5 +1,4 @@
 import type {
-  EnvironmentId,
   ExecutionEnvironmentCapabilities,
   ServerSettings,
   ServerSettingsPatch,
@@ -15,6 +14,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleOnMerge",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
+  "snoozePresets",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",
@@ -23,12 +23,11 @@ const SHARED_SERVER_SETTING_KEYS = [
   "threadCategories",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
 
+// Fork: saved views and categories reach only servers that store them.
 export type SharedSettingsCapabilities = Pick<
   ExecutionEnvironmentCapabilities,
-  "threadRestartContinuation" | "savedViews" | "threadCategories"
+  "savedViews" | "threadCategories"
 >;
-
-export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
 
@@ -53,10 +52,10 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
 
 export function filterSharedServerPatch(
   patch: ServerSettingsPatch,
-  capabilities: SharedSettingsCapabilities | undefined,
   settings?: ServerSettings,
   sourceSettings = settings,
   targetIsSource = false,
+  capabilities?: SharedSettingsCapabilities,
 ): ServerSettingsPatch {
   const instanceId =
     patch.textGenerationModelSelection?.instanceId ??
@@ -81,32 +80,12 @@ export function filterSharedServerPatch(
   if (capabilities?.threadCategories !== true) {
     patch = Struct.omit(patch, ["threadCategories"]);
   }
-  return capabilities?.threadRestartContinuation === true
-    ? patch
-    : Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
-}
-
-export function pickSharedServerSettings(
-  settings: ServerSettings,
-  capabilities?: SharedSettingsCapabilities,
-): ServerSettingsPatch {
-  return filterSharedServerPatch(
-    Struct.pick(settings, SHARED_SERVER_SETTING_KEYS),
-    capabilities,
-    settings,
-  );
+  return settings ? patch : Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
 }
 
 export function supportsSharedSettingsSync(environment: {
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
-  readonly serverConfig: {
-    readonly environment: {
-      readonly capabilities: Pick<ExecutionEnvironmentCapabilities, "threadAutoSettlement">;
-    };
-  } | null;
+  readonly serverConfig: object | null;
 }): boolean {
-  return (
-    environment.connection.phase === "connected" &&
-    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
-  );
+  return environment.connection.phase === "connected" && environment.serverConfig !== null;
 }

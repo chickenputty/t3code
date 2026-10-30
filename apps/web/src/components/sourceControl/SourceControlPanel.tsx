@@ -1,9 +1,7 @@
 /**
- * Fork (chickenputty/t3code): the Source Control tab in the right panel. An editor-style view
- * of the active thread's repository: branch, Staged Changes, Changes and Untracked lists
- * with one status letter per file, stage and unstage per file or per section, and a commit
- * box that commits exactly what is staged. The lists follow the vcs status stream, so an
- * agent's edits and the other git surfaces keep it current.
+ * Fork (chickenputty/t3code): the right panel's Source Control tab. Staged, Changes and
+ * Untracked lists with per-file and per-section stage/unstage, and a commit box that commits
+ * exactly what is staged. The lists follow the vcs status stream.
  */
 import type { EnvironmentId, VcsChangedFile } from "@t3tools/contracts";
 import {
@@ -12,7 +10,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { CheckIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useEnvironmentQuery } from "~/state/query";
@@ -71,7 +69,7 @@ export default function SourceControlPanel(props: {
   workspaceMutationId: string | null;
 }) {
   const { environmentId, cwd, workspaceMutationId } = props;
-  const target = useMemo(() => ({ environmentId, input: { cwd } }), [environmentId, cwd]);
+  const target = { environmentId, input: { cwd } };
   const query = useEnvironmentQuery(vcsEnvironment.workingChanges(target));
   const { data, error, isPending, refresh } = query;
 
@@ -83,6 +81,7 @@ export default function SourceControlPanel(props: {
     refresh,
     resourceKey: `source-control:${environmentId}:${cwd}`,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refetches edits made outside T3
   useEffect(() => {
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
@@ -101,32 +100,26 @@ export default function SourceControlPanel(props: {
     untracked: false,
   });
 
-  const runStage = useCallback(
-    async (paths: readonly string[]) => {
-      setBusy(true);
-      // A promise .finally, not try/finally: the React Compiler skips components with try/finally.
-      await stage({ environmentId, input: { cwd, paths } })
-        .then((result) => reportFailure("Could not stage", result))
-        .finally(() => {
-          setBusy(false);
-          refresh();
-        });
-    },
-    [cwd, environmentId, refresh, stage],
-  );
-  const runUnstage = useCallback(
-    async (paths: readonly string[]) => {
-      setBusy(true);
-      await unstage({ environmentId, input: { cwd, paths } })
-        .then((result) => reportFailure("Could not unstage", result))
-        .finally(() => {
-          setBusy(false);
-          refresh();
-        });
-    },
-    [cwd, environmentId, refresh, unstage],
-  );
-  const runCommit = useCallback(async () => {
+  const runStage = async (paths: readonly string[]) => {
+    setBusy(true);
+    // A promise .finally, not try/finally: the React Compiler skips components with try/finally.
+    await stage({ environmentId, input: { cwd, paths } })
+      .then((result) => reportFailure("Could not stage", result))
+      .finally(() => {
+        setBusy(false);
+        refresh();
+      });
+  };
+  const runUnstage = async (paths: readonly string[]) => {
+    setBusy(true);
+    await unstage({ environmentId, input: { cwd, paths } })
+      .then((result) => reportFailure("Could not unstage", result))
+      .finally(() => {
+        setBusy(false);
+        refresh();
+      });
+  };
+  const runCommit = async () => {
     const trimmed = message.trim();
     if (trimmed.length === 0) return;
     setBusy(true);
@@ -147,7 +140,7 @@ export default function SourceControlPanel(props: {
         setBusy(false);
         refresh();
       });
-  }, [commitStaged, cwd, environmentId, message, refresh]);
+  };
 
   const staged = data?.staged ?? [];
   const unstaged = data?.unstaged ?? [];

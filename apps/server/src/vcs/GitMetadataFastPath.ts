@@ -1,23 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - plain Node on purpose: this runs before and instead of a process spawn.
 /**
- * Answers a small set of read-only git metadata commands by reading the
- * repository files directly, without spawning `git`.
- *
- * Background loops ask git the same cheap questions (toplevel, remotes, HEAD,
- * a config value) many times a minute per project. On Windows every spawn costs
- * a launcher, a `conhost.exe` and a slot on the session-wide win32k lock, so the
- * volume stalls the whole desktop. Reading a few small files costs microseconds.
- *
- * Contract: `tryAnswerGitCommand` returns exactly what `git` would have printed,
- * or `null`. `null` means "not sure" and the caller must spawn git. Anything
- * unusual (unknown arguments, `GIT_*` overrides, includes, extensions, bare
- * repositories, reftable, ambiguous names, unreadable files) returns `null`.
- * Never guess here: a wrong answer is worse than a spawn.
- *
- * Whether a directory is a repository git is willing to open at all (ownership
- * and `safe.directory`, format version, filesystem boundaries) is git's call:
- * git is asked once per repository and the verdict is reused for a few minutes.
- * This module only ever reads text and never runs anything a repository configures.
+ * Answers read-only git metadata commands from repository files, since on Windows each `git`
+ * spawn takes a slot on the session-wide win32k lock. Returns exactly what git would print, or
+ * `null` (the caller spawns git) for anything unusual: never guess. Whether git will open the
+ * repository at all is git's call, asked once per repository and reused for a few minutes.
  */
 import * as NodeAsyncHooks from "node:async_hooks";
 import * as NodeChildProcess from "node:child_process";
@@ -145,11 +131,9 @@ const withOwnGitProcess = makeTaskLimiter(4);
 
 const toGitPath = (value: string) => (NodePath.sep === "\\" ? value.replaceAll("\\", "/") : value);
 
-// Symlinks are git's to follow: one inside repository metadata can point at a
-// `\\server\share` path, and touching that makes Windows authenticate to the server.
-// Directories found free of symlinks, with their ancestors, are remembered only
-// for the rest of one query: a later one checks them again, since any may have
-// been swapped for a symlink in between.
+// Symlinks are git's to follow: one in repository metadata can point at a `\\server\share`
+// path, and touching that makes Windows authenticate to the server. Directories found free of
+// symlinks are remembered for one query only, since any may be swapped for a symlink later.
 const symlinkFreeDirs = new NodeAsyncHooks.AsyncLocalStorage<Set<string>>();
 
 /** Runs one query with its own memory of checked directories. */
@@ -244,9 +228,6 @@ async function readBoundedFile(file: string, maxBytes: number): Promise<string |
 function assertLocalPath(target: string): void {
   if (/^[\\/]{2}/.test(target)) unsure("UNC path");
 }
-
-// ---------------------------------------------------------------------------
-// Config parsing
 
 export interface GitConfigEntry {
   /** Canonical key: lowercase section and variable, subsection as written. */
@@ -365,10 +346,7 @@ const isGitTrue = (value: string | undefined) => {
   return /^[-+]?\d+[kmg]?$/i.test(text) && Number.parseInt(text, 10) !== 0;
 };
 
-// ---------------------------------------------------------------------------
-// System and global config
-//
-// Their locations depend on the git installation, so git lists them once and
+// System and global config locations depend on the git installation, so git lists them once and
 // the result is reused until one of the files it came from changes.
 
 interface OuterConfig {
@@ -529,9 +507,6 @@ export const resetGitFastPathCaches = () => {
   revListMemo.clear();
 };
 
-// ---------------------------------------------------------------------------
-// Repository discovery
-
 interface Repository {
   /** Real path of the directory that holds `.git`. */
   readonly workTree: string;
@@ -653,10 +628,7 @@ async function discoverRepository(cwd: string): Promise<{ repo: Repository; real
   }
 }
 
-// ---------------------------------------------------------------------------
-// git's verdict on the repository
-//
-// Discovery above finds the files. Whether git accepts them (owner and
+// Whether git accepts a discovered repository (owner and
 // `safe.directory`, format version and extensions, filesystem boundaries) has
 // too many rules, and too much security history, to mirror here. One spawn per
 // repository per few minutes settles it, against hundreds of answered questions.
@@ -757,9 +729,6 @@ async function notARepository(cwd: string): Promise<never> {
   throw new NotARepository(verdict.stderr);
 }
 
-// ---------------------------------------------------------------------------
-// Refs
-
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$)(?:\..*)?$/i;
@@ -767,7 +736,6 @@ const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conou
 /** Accepts only names that are safe to join onto the git directory. */
 function isSafeRefName(ref: string): boolean {
   if (!ref.startsWith("refs/") || ref.endsWith("/") || ref.endsWith(".")) return false;
-  // eslint-disable-next-line no-control-regex -- git's check_refname_format rejects control characters
   if (/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{|\/\//.test(ref)) return false;
   return ref.split("/").every(
     (part) =>
@@ -872,9 +840,6 @@ async function shortBranchName(repo: Repository, ref: string): Promise<string> {
   return short;
 }
 
-// ---------------------------------------------------------------------------
-// Remotes
-
 async function mergedConfig(repo: Repository): Promise<ReadonlyArray<GitConfigEntry>> {
   const outer = await getOuterConfig();
   // Conditional includes depend on the repository; the outer listing cannot show them.
@@ -923,9 +888,6 @@ async function readRemotes(repo: Repository): Promise<ReadonlyArray<Remote>> {
     Buffer.compare(Buffer.from(left.name), Buffer.from(right.name));
   return listed.toSorted(byteOrder);
 }
-
-// ---------------------------------------------------------------------------
-// Commands
 
 const ok = (stdout: string): GitFastPathAnswer => ({ exitCode: 0, stdout, stderr: "" });
 const silentFailure: GitFastPathAnswer = { exitCode: 1, stdout: "", stderr: "" };
@@ -1047,9 +1009,6 @@ async function answerRemote(repo: Repository, args: ReadonlyArray<string>) {
   }
   return unsure("remote arguments");
 }
-
-// ---------------------------------------------------------------------------
-// for-each-ref
 
 const REFNAME_FORMAT = "--format=%(refname)";
 const UPSTREAM_FORMAT =
@@ -1250,9 +1209,6 @@ async function answerForEachRef(repo: Repository, args: ReadonlyArray<string>) {
   return ok(stdout);
 }
 
-// ---------------------------------------------------------------------------
-// rev-list counts
-//
 // Ahead/behind counts are a pure function of the two commits. Equal commits
 // need no git at all; any other pair is answered from what git said last time
 // for that same pair.

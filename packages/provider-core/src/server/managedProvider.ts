@@ -27,15 +27,11 @@ interface ProviderSnapshotState {
 }
 
 /**
- * Fork (chickenputty/t3code): one failed status probe of a ready provider is
- * usually a slow CLI start on a busy machine, not a broken install. When a
- * background probe could not learn anything (auth unknown, version unknown or
- * unchanged), the last good snapshot answers once more; a second failure in a
- * row is published. A definite answer (a logout, a missing CLI, a new version
- * that is too old), a probe after a settings change and a Refresh the user
- * asked for always are.
+ * One inconclusive background probe of a ready provider is usually a slow CLI start, so the last
+ * good snapshot answers once more; a second failure in a row is published. Definite answers,
+ * probes after a settings change and user Refreshes always publish.
  */
-export function shouldHoldLastGoodSnapshot(input: {
+function shouldHoldLastGoodSnapshot(input: {
   readonly published: ServerProvider;
   readonly probed: ServerProvider;
   readonly settingsChanged: boolean;
@@ -75,6 +71,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
+  readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
@@ -91,6 +88,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 > {
   const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
+  const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -271,6 +269,38 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return yield* applySnapshot(nextSettings, { forceRefresh: true, userRequested });
   });
 
+  const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
+    const { snapshot } = yield* Ref.get(snapshotStateRef);
+    if (
+      !snapshot.enabled ||
+      !snapshot.usageLimits ||
+      snapshot.usageLimits.unavailable?.reason === "unsupported"
+    )
+      return;
+    // An in-flight refresh may have read cached usage, so one refresh waits behind it.
+    const claim = Symbol();
+    const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
+    yield* Effect.uninterruptibleMask((restore) =>
+      Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]).pipe(
+        Effect.flatMap((held) =>
+          held
+            ? Effect.void
+            : restore(
+                refreshSemaphore.withPermits(1)(
+                  release.pipe(
+                    Effect.andThen(input.invalidateUsageCache ?? Effect.void),
+                    Effect.andThen(input.getSettings),
+                    Effect.flatMap((settings) =>
+                      applySnapshotBase(settings, { forceRefresh: true }),
+                    ),
+                  ),
+                ),
+              ).pipe(Effect.onInterrupt(() => release)),
+        ),
+      ),
+    );
+  });
+
   const shouldRefreshOnInterval = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
     // A disabled instance has nothing to probe; a periodic check would only
@@ -359,6 +389,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot(true)), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
+    refreshUsage: refreshUsage(),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

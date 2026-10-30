@@ -306,13 +306,11 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
 }
 
 /**
- * Extensions a plain file-manager open refuses: the "default app" for these
- * is a shell, interpreter, installer or launcher, so opening one runs it.
- * Chat file links are model-authored, so this reduces the risk that "Open
- * File" on a link executes code. The server adds the host's PATHEXT and, on
- * POSIX, refuses any file with an execute bit.
+ * Extensions a plain file-manager open refuses, since their default app runs them and chat
+ * file links are model-authored. The server adds the host's PATHEXT and, on POSIX, refuses any
+ * file with an execute bit.
  */
-export const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
+const DEFAULT_OPEN_BLOCKED_EXTENSIONS: ReadonlyArray<string> = [
   // Windows (and WSL, which opens through Explorer)
   ".exe",
   ".bat",
@@ -389,12 +387,12 @@ export function effectivePathBasename(path: string): string {
 export type OpenPathFlavor = "win32" | "posix";
 
 /** Guesses the flavor of a path whose host is unknown (a drive letter or backslash means Windows). */
-export function inferOpenPathFlavor(path: string): OpenPathFlavor {
+function inferOpenPathFlavor(path: string): OpenPathFlavor {
   return /^[a-zA-Z]:/.test(path) || path.includes("\\") ? "win32" : "posix";
 }
 
 /** The lowercased extension of a path's effective name, ignoring trailing dots and spaces. */
-export function effectivePathExtension(
+function effectivePathExtension(
   path: string,
   flavor: OpenPathFlavor = inferOpenPathFlavor(path),
 ): string | undefined {

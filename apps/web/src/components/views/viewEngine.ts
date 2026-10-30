@@ -74,7 +74,7 @@ export interface ViewProperty {
   readonly display?: (row: ViewRow) => string;
 }
 
-export const VIEW_SECTION_OPTIONS: readonly ViewPropertyOption[] = [
+const VIEW_SECTION_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "pinned", label: "Pinned" },
   { value: "active", label: "Active" },
   { value: "snoozed", label: "Snoozed" },
@@ -83,7 +83,7 @@ export const VIEW_SECTION_OPTIONS: readonly ViewPropertyOption[] = [
 ];
 
 /** Lifecycle order, so a status board reads left to right like the stage board. */
-export const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
+const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "approval", label: "Needs approval" },
   { value: "input", label: "Needs input" },
   { value: "request", label: "Guest request" },
@@ -96,7 +96,7 @@ export const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "idle", label: "Idle" },
 ];
 
-export const VIEW_STAGE_OPTIONS: readonly ViewPropertyOption[] = [
+const VIEW_STAGE_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "needs-you", label: "Needs you" },
   { value: "working", label: "Working" },
   { value: "review", label: "Review" },
@@ -489,7 +489,7 @@ export interface ViewGroup {
 
 const CATEGORY_GROUP_PREFIX = "category:";
 
-export function categoryGroupKey(categoryId: string): string {
+function categoryGroupKey(categoryId: string): string {
   return `${CATEGORY_GROUP_PREFIX}${categoryId}`;
 }
 
@@ -652,7 +652,7 @@ export function planGroupDrop(
 
 // ── View records ───────────────────────────────────────────────────────────
 
-export const DEFAULT_VIEW_PROPERTIES = ["project", "status", "model", "activity"] as const;
+const DEFAULT_VIEW_PROPERTIES = ["project", "status", "model", "activity"] as const;
 
 export const VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   list: "List",

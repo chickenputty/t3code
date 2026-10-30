@@ -1,15 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * WorkspaceFileReferences - finds the file a chat message refers to.
- *
- * Fork (chickenputty/t3code). Agents often work in a git worktree of the
- * project that T3 does not know about (`.claude/worktrees/<branch>`, or a
- * sibling folder), so a relative path in their message only exists there. The
- * workspace search index skips gitignored folders, so the client asks here by
- * name: the path in the workspace first, then the same path in each of the
- * repository's other worktrees.
- *
- * @module WorkspaceFileReferences
+ * Agents often work in a git worktree T3 does not know about, which the workspace index skips
+ * as gitignored, so a relative path from a chat is tried in the workspace first and then in
+ * each of the repository's other worktrees.
  */
 import * as NodeFSP from "node:fs/promises";
 
@@ -67,7 +60,7 @@ function errorCode(cause: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;

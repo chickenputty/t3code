@@ -3,13 +3,9 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 /**
- * Saved thread views: Notion-style list, board, gallery and table layouts
- * over the thread shells a client already holds. Stored as one array in the
- * server settings so every device on that server sees the same views.
- *
- * Property, operator and grouping ids are plain strings rather than literal
- * unions: a client meets ids from a newer client and ignores what it does
- * not know instead of failing to decode the whole settings file.
+ * Saved thread views, stored as one array in server settings so every device sees them.
+ * Property, operator and grouping ids are plain strings, not literal unions, so a client
+ * ignores ids from a newer client instead of failing to decode the whole settings file.
  */
 const KNOWN_SAVED_VIEW_LAYOUTS = ["list", "board", "gallery", "table", "threads"] as const;
 export const SavedViewLayout = Schema.Literals(KNOWN_SAVED_VIEW_LAYOUTS);

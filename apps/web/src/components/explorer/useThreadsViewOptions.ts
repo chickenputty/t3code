@@ -1,13 +1,7 @@
-/**
- * Fork (chickenputty/t3code): the native sidebar's arrangement, read from the
- * active Threads view: its filter, grouping, sorts and shown properties, and
- * the writer for its options menu. Rows are only built while the view filters,
- * groups by something other than project, or shows properties; the plain
- * Threads view does no row work at all.
- */
+// Fork: the native sidebar's arrangement, read from the active Threads view.
+// Rows are only built while the view filters, groups by non-project, or shows properties.
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { SavedView, SavedViewThreadsSort } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -73,7 +67,7 @@ export function useThreadsViewOptions() {
       setProjectSortReversed: state.setProjectSortReversed,
     })),
   );
-  const resolvedView = useMemo((): SavedView => {
+  const resolvedView = ((): SavedView => {
     const active = resolveActiveExplorerView(views, activeViewId);
     // Only a Threads layout arranges this list; anything else reads the built-in one.
     const shown =
@@ -81,11 +75,11 @@ export function useThreadsViewOptions() {
         ? active
         : resolveActiveExplorerView(views, BUILT_IN_THREADS_VIEW_ID);
     return canSave ? shown : withLocalArrangement(shown, local);
-  }, [activeViewId, canSave, local, views]);
+  })();
   // Every saved view edit re-decodes the whole list; an unchanged view keeps its
   // identity, so an edit to another view rebuilds none of the rows below.
   const viewKey = JSON.stringify(resolvedView);
-  const view = useMemo(() => JSON.parse(viewKey) as SavedView, [viewKey]);
+  const view = JSON.parse(viewKey) as SavedView;
 
   const groupProperty = view.groupBy === null ? undefined : viewProperty(view.groupBy);
   const groupBy = groupProperty?.groupable ? groupProperty.id : null;
@@ -95,14 +89,11 @@ export function useThreadsViewOptions() {
 
   const categories = useThreadCategories();
   const { rows, nowMs } = useViewRows(false, categories, needsRows);
-  const rowByKey = useMemo(() => new Map(rows.map((row) => [row.key, row] as const)), [rows]);
+  const rowByKey = new Map(rows.map((row) => [row.key, row] as const));
 
-  const visibleThreadKeys = useMemo(
-    () => (needsRows ? threadsFilterKeys(rows, view, nowMs) : null),
-    [needsRows, nowMs, rows, view],
-  );
+  const visibleThreadKeys = needsRows ? threadsFilterKeys(rows, view, nowMs) : null;
 
-  const groupRefByKey = useMemo(() => {
+  const groupRefByKey = (() => {
     if (otherGrouping === null) return null;
     const refs = new Map<string, SidebarProjectGroupRef>();
     // One ref object per group, keyed apart from project keys so collapsing
@@ -119,18 +110,15 @@ export function useThreadsViewOptions() {
       refs.set(row.key, entry);
     }
     return refs;
-  }, [nowMs, otherGrouping, rows]);
+  })();
 
-  const groupOf = useMemo(
-    () =>
-      groupRefByKey === null
-        ? null
-        : (thread: ThreadIdentity): SidebarProjectGroupRef | null =>
-            groupRefByKey.get(keyOf(thread)) ?? null,
-    [groupRefByKey],
-  );
+  const groupOf =
+    groupRefByKey === null
+      ? null
+      : (thread: ThreadIdentity): SidebarProjectGroupRef | null =>
+          groupRefByKey.get(keyOf(thread)) ?? null;
 
-  const propertiesTextByKey = useMemo(() => {
+  const propertiesTextByKey = (() => {
     if (view.properties.length === 0) return null;
     const texts = new Map<string, string>();
     for (const row of rows) {
@@ -138,84 +126,67 @@ export function useThreadsViewOptions() {
       if (text !== "") texts.set(row.key, text);
     }
     return texts;
-  }, [nowMs, rows, view.properties]);
+  })();
 
-  const propertiesTextOf = useCallback(
-    (threadKey: string): string | null => propertiesTextByKey?.get(threadKey) ?? null,
-    [propertiesTextByKey],
-  );
-  const rowOf = useCallback(
-    (threadKey: string): ViewRow | undefined => rowByKey.get(threadKey),
-    [rowByKey],
-  );
+  const propertiesTextOf = (threadKey: string): string | null =>
+    propertiesTextByKey?.get(threadKey) ?? null;
+  const rowOf = (threadKey: string): ViewRow | undefined => rowByKey.get(threadKey);
 
   /** Filter values for properties without fixed options, from the rows in hand. */
-  const optionsFor = useCallback(
-    (property: ViewProperty): readonly ViewPropertyOption[] => {
-      if (property.options) return property.options;
-      const seen = new Map<string, string>();
-      for (const row of rows) {
-        const value = property.value(row);
-        if (value === null || value === "") continue;
-        const key = String(value);
-        if (!seen.has(key)) seen.set(key, property.display?.(row) ?? key);
-      }
-      return [...seen]
-        .map(([value, label]) => ({ value, label }))
-        .sort((left, right) => left.label.localeCompare(right.label));
-    },
-    [rows],
-  );
+  const optionsFor = (property: ViewProperty): readonly ViewPropertyOption[] => {
+    if (property.options) return property.options;
+    const seen = new Map<string, string>();
+    for (const row of rows) {
+      const value = property.value(row);
+      if (value === null || value === "") continue;
+      const key = String(value);
+      if (!seen.has(key)) seen.set(key, property.display?.(row) ?? key);
+    }
+    return [...seen]
+      .map(([value, label]) => ({ value, label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  };
 
-  const update = useCallback(
-    (patch: Partial<Omit<SavedView, "id">>) => {
-      if (patch.groupBy !== undefined && patch.groupBy !== view.groupBy) {
-        // Collapsed groups of the grouping being left would only pile up; project keys stay.
-        const kept = `${VIEW_GROUP_KEY_PREFIX}${patch.groupBy}:`;
-        pruneCollapsedKeys((key) => !key.startsWith(VIEW_GROUP_KEY_PREFIX) || key.startsWith(kept));
-      }
-      if (canSave) {
-        updateView(view.id, patch);
-        return;
-      }
-      // Only the options menu shows here: project grouping, sorts and pins.
-      if (patch.groupBy !== undefined && (patch.groupBy === "project") !== local.groupByProject) {
-        local.toggleGroupByProject();
-      }
-      const threads = patch.threads;
-      if (threads === undefined) return;
-      if (threads.pinsStayGrouped !== local.pinsStayGrouped) local.togglePinsStayGrouped();
-      const sort = readSort(threads.sort, local.sort);
-      local.setSortField(sort.field);
-      local.setSortReversed(sort.reversed);
-      const projectSort = readSort(threads.projectSort, local.projectSort);
-      local.setProjectSortField(projectSort.field);
-      local.setProjectSortReversed(projectSort.reversed);
-    },
-    [canSave, local, pruneCollapsedKeys, updateView, view.groupBy, view.id],
-  );
+  const update = (patch: Partial<Omit<SavedView, "id">>) => {
+    if (patch.groupBy !== undefined && patch.groupBy !== view.groupBy) {
+      // Collapsed groups of the grouping being left would only pile up; project keys stay.
+      const kept = `${VIEW_GROUP_KEY_PREFIX}${patch.groupBy}:`;
+      pruneCollapsedKeys((key) => !key.startsWith(VIEW_GROUP_KEY_PREFIX) || key.startsWith(kept));
+    }
+    if (canSave) {
+      updateView(view.id, patch);
+      return;
+    }
+    // Only the options menu shows here: project grouping, sorts and pins.
+    if (patch.groupBy !== undefined && (patch.groupBy === "project") !== local.groupByProject) {
+      local.toggleGroupByProject();
+    }
+    const threads = patch.threads;
+    if (threads === undefined) return;
+    if (threads.pinsStayGrouped !== local.pinsStayGrouped) local.togglePinsStayGrouped();
+    const sort = readSort(threads.sort, local.sort);
+    local.setSortField(sort.field);
+    local.setSortReversed(sort.reversed);
+    const projectSort = readSort(threads.projectSort, local.projectSort);
+    local.setProjectSortField(projectSort.field);
+    local.setProjectSortReversed(projectSort.reversed);
+  };
 
   /** Copies the view and shows the copy. */
-  const duplicateView = useCallback(() => {
+  const duplicateView = () => {
     const copy = duplicate(view.id);
     if (copy) setActiveViewId(copy.id);
-  }, [duplicate, setActiveViewId, view.id]);
+  };
 
   /** Deletes a copy and falls back to the built-in Threads view; the built-in one stays. */
-  const deleteView = useCallback(() => {
+  const deleteView = () => {
     if (view.id === BUILT_IN_THREADS_VIEW_ID) return;
     remove(view.id);
     setActiveViewId(null);
-  }, [remove, setActiveViewId, view.id]);
+  };
 
-  const sort = useMemo(
-    () => readSort(view.threads.sort, MANUAL_SIDEBAR_THREAD_SORT),
-    [view.threads.sort],
-  );
-  const projectSort = useMemo(
-    () => readSort(view.threads.projectSort, DEFAULT_SIDEBAR_PROJECT_SORT),
-    [view.threads.projectSort],
-  );
+  const sort = readSort(view.threads.sort, MANUAL_SIDEBAR_THREAD_SORT);
+  const projectSort = readSort(view.threads.projectSort, DEFAULT_SIDEBAR_PROJECT_SORT);
 
   return {
     view,

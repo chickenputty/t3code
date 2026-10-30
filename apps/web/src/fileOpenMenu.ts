@@ -1,9 +1,7 @@
 /**
- * Shared "open with the OS" and copy-path entries for every file menu (chat
- * file chips, changed-files cards, the diff panel, the files tree and the
- * open-in picker), so their wording and order stay identical. Opening rides
- * `shell.openInEditor` with the "file-manager" editor and no reveal flag: a
- * file opens in its default app and a folder opens in the file manager.
+ * Shared "open with the OS" and copy-path entries for every file menu, so their
+ * wording and order stay identical. Opening rides `shell.openInEditor` with the
+ * "file-manager" editor and no reveal flag: files open in their default app.
  */
 import {
   defaultOpenBlockedExtension,
@@ -20,8 +18,8 @@ export type FileOpenMenuAction =
   | "copy-full-path";
 
 export const OPEN_PARENT_FOLDER_LABEL = "Open Parent Folder";
-export const COPY_RELATIVE_PATH_LABEL = "Copy relative path";
-export const COPY_FULL_PATH_LABEL = "Copy full path";
+const COPY_RELATIVE_PATH_LABEL = "Copy relative path";
+const COPY_FULL_PATH_LABEL = "Copy full path";
 
 export function openEntryLabel(kind: FileEntryKind): string {
   return kind === "directory" ? "Open Folder" : "Open File";

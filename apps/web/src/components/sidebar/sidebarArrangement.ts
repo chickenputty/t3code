@@ -1,15 +1,5 @@
-/**
- * Fork (chickenputty/t3code): sort and group the sidebar's active list.
- *
- * Only the active list is arranged. Pins keep their drag order, the snoozed
- * shelf its wake order and the settled shelf its settle order. Manual order
- * without grouping hands the list back untouched, so upstream's drag order
- * stays the source of truth whenever the view is off.
- *
- * With grouping on, "Pins stay grouped" folds the pinned block into the project
- * groups: a pin stays in its project and sorts to the top of it, instead of
- * rendering above every folder.
- */
+// Fork: sort and group the sidebar's active list only; pins, snoozed and settled keep their own order.
+// Manual order without grouping returns the list untouched so upstream's drag order stays the source of truth.
 import type {
   SidebarProjectIconStyle,
   SidebarProjectRowDensity,

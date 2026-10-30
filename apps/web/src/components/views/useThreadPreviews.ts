@@ -3,7 +3,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useServerConfigs } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -57,7 +57,7 @@ export function useThreadPreviews(
   enabled: boolean,
 ): ReadonlyMap<string, ThreadPreview> {
   const serverConfigs = useServerConfigs();
-  const key = useMemo(() => {
+  const key = (() => {
     if (!enabled) return null;
     const idsByEnvironment = new Map<EnvironmentId, ThreadId[]>();
     for (const row of rows) {
@@ -74,14 +74,12 @@ export function useThreadPreviews(
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([environmentId, ids]) => [environmentId, ...ids.toSorted()].join(FIELD_SEPARATOR))
       .join(ENVIRONMENT_SEPARATOR);
-  }, [enabled, rows, serverConfigs]);
+  })();
   // The newest activity among the requested threads: when it moves, a preview
   // may have changed, so the cached answers are refetched.
-  const activity = useMemo(
-    () => (key === null ? 0 : Math.max(0, ...rows.map((row) => row.activityMs))),
-    [key, rows],
-  );
+  const activity = key === null ? 0 : Math.max(0, ...rows.map((row) => row.activityMs));
   const seen = useRef<{ key: string | null; activity: number } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the atom registry's cached previews when activity moves
   useEffect(() => {
     const previous = seen.current;
     seen.current = { key, activity };

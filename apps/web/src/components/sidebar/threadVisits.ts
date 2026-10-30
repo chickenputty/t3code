@@ -1,12 +1,5 @@
-/**
- * Fork (chickenputty/t3code): which threads were opened, when, and in what
- * order. The sidebar's "Recently opened" sort reads `openedAt`; the chat
- * header's back and forward buttons walk `trail`, a browser-style history of
- * opened threads only (settings, drafts and other screens are not in it).
- *
- * Upstream's `threadLastVisitedAtById` cannot stand in for `openedAt`: it is
- * stamped with the completion the user has read, not the time they opened it.
- */
+// Fork: which threads were opened and when; `trail` backs the chat header's back/forward.
+// Upstream's `threadLastVisitedAtById` can't stand in for `openedAt`: it stamps the completion read, not the open time.
 import { create } from "zustand";
 
 const STORAGE_KEY = "t3code:fork:thread-visits:v1";

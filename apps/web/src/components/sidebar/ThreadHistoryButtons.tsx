@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
-import { type ReactNode, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -31,6 +31,7 @@ function useRouteThreadKey(): string | null {
 export function ThreadVisitRecorder() {
   const threadKey = useRouteThreadKey();
   const recordOpen = useThreadVisitsStore((state) => state.recordOpen);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records router navigations, from any entry point, into the visit history store
   useEffect(() => {
     if (threadKey !== null) recordOpen(threadKey);
   }, [recordOpen, threadKey]);
@@ -75,15 +76,11 @@ export function ThreadHistoryButtons() {
   const index = useThreadVisitsStore((state) => state.index);
   const moveTo = useThreadVisitsStore((state) => state.moveTo);
   const shells = useThreadShells();
-  const titleByKey = useMemo(
-    () =>
-      new Map(
-        shells.map(
-          (shell) =>
-            [scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)), shell.title] as const,
-        ),
-      ),
-    [shells],
+  const titleByKey = new Map(
+    shells.map(
+      (shell) =>
+        [scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)), shell.title] as const,
+    ),
   );
   // Deleted threads stay in the history but are skipped.
   const visits = { openedAt: {}, trail, index, pending: null };

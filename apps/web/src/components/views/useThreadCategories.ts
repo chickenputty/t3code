@@ -1,5 +1,4 @@
 import type { ThreadCategories, ThreadCategory } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import {
   usePrimarySettings,
@@ -26,56 +25,51 @@ export function useThreadCategories() {
   const updateSettings = useUpdatePrimarySettings();
   const value = pending.usePending(stored) ?? stored ?? EMPTY;
 
-  const write = useCallback(
-    (next: ThreadCategories) => {
-      pending.set(next);
-      updateSettings({ threadCategories: next });
-    },
-    [updateSettings],
-  );
+  const write = (next: ThreadCategories) => {
+    pending.set(next);
+    updateSettings({ threadCategories: next });
+  };
 
-  const actions = useMemo(() => {
-    // Always build on the newest value, including writes not yet echoed.
-    const current = () => pending.read() ?? value;
-    return {
-      create(name: string, threadKeys: readonly string[] = []): ThreadCategory {
-        const { categories, assignments } = current();
-        const category = { id: newCategoryId(), name };
-        const nextAssignments = { ...assignments };
-        for (const key of threadKeys) nextAssignments[key] = category.id;
-        write({ categories: [...categories, category], assignments: nextAssignments });
-        return category;
-      },
-      rename(id: string, name: string) {
-        const { categories, assignments } = current();
-        write({
-          categories: categories.map((category) =>
-            category.id === id ? { ...category, name } : category,
-          ),
-          assignments,
-        });
-      },
-      remove(id: string) {
-        const { categories, assignments } = current();
-        write({
-          categories: categories.filter((category) => category.id !== id),
-          assignments: Object.fromEntries(
-            Object.entries(assignments).filter(([, categoryId]) => categoryId !== id),
-          ),
-        });
-      },
-      /** Files threads under a category, or takes them out of theirs with null. */
-      assign(threadKeys: readonly string[], categoryId: string | null) {
-        const { categories, assignments } = current();
-        const nextAssignments = { ...assignments };
-        for (const key of threadKeys) {
-          if (categoryId === null) delete nextAssignments[key];
-          else nextAssignments[key] = categoryId;
-        }
-        write({ categories, assignments: nextAssignments });
-      },
-    };
-  }, [value, write]);
+  // Always build on the newest value, including writes not yet echoed.
+  const current = () => pending.read() ?? value;
+  const actions = {
+    create(name: string, threadKeys: readonly string[] = []): ThreadCategory {
+      const { categories, assignments } = current();
+      const category = { id: newCategoryId(), name };
+      const nextAssignments = { ...assignments };
+      for (const key of threadKeys) nextAssignments[key] = category.id;
+      write({ categories: [...categories, category], assignments: nextAssignments });
+      return category;
+    },
+    rename(id: string, name: string) {
+      const { categories, assignments } = current();
+      write({
+        categories: categories.map((category) =>
+          category.id === id ? { ...category, name } : category,
+        ),
+        assignments,
+      });
+    },
+    remove(id: string) {
+      const { categories, assignments } = current();
+      write({
+        categories: categories.filter((category) => category.id !== id),
+        assignments: Object.fromEntries(
+          Object.entries(assignments).filter(([, categoryId]) => categoryId !== id),
+        ),
+      });
+    },
+    /** Files threads under a category, or takes them out of theirs with null. */
+    assign(threadKeys: readonly string[], categoryId: string | null) {
+      const { categories, assignments } = current();
+      const nextAssignments = { ...assignments };
+      for (const key of threadKeys) {
+        if (categoryId === null) delete nextAssignments[key];
+        else nextAssignments[key] = categoryId;
+      }
+      write({ categories, assignments: nextAssignments });
+    },
+  };
 
   return { categories: value.categories, assignments: value.assignments, canEdit, ...actions };
 }

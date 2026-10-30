@@ -15,13 +15,14 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
-// The final segment is optional so an explicit folder link may end in `/`
-// (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
+// Names may use any script (`線性代數/考試.pdf`). The final segment is optional so an
+// explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
+// slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2})?$/;
+  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
@@ -245,6 +246,22 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
   };
 }
 
+/**
+ * The decoded path a markdown destination names on the host, before any workspace resolution, or
+ * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
+ */
+export function markdownDestinationHostPath(source: string): string | null {
+  if (/^file:/i.test(source)) {
+    const target = parseFileUrlHref(source);
+    return target === null
+      ? null
+      : stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path));
+  }
+  return stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+  );
+}
+
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const destination = parseMarkdownFileLink(href);
   if (!destination) return false;
@@ -433,13 +450,10 @@ export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
 
-// Fork (chickenputty/t3code): agents on Windows write paths that CommonMark
-// cannot read as written. A space ends an unwrapped link destination, so
-// `![shot](C:\Users\me\Pet Vault\x.png)` renders as raw text, and a backslash
-// before punctuation is an escape in prose, so `Pet Vault\_coordination` loses
-// it. `protectFilePathsInMarkdown` rewrites a message before it is parsed:
-// spaced Windows destinations get angle brackets, and Windows paths in prose
-// become links whose label keeps every backslash. Code is never touched.
+// CommonMark ends an unwrapped link destination at a space and reads `\_` in prose as an
+// escape, which breaks Windows paths. Before parsing, spaced Windows destinations get angle
+// brackets and Windows paths in prose become links whose label keeps every backslash.
+// Code is never touched.
 
 const FENCE_LINE_PATTERN = /^[ \t]*(?:>[ \t]?)*[ \t]*(`{3,}|~{3,})/;
 const LINK_DEFINITION_LINE_PATTERN = /^( {0,3}\[[^\]\n]+\]:[ \t]*)\S/;
@@ -540,11 +554,9 @@ function readPathRun(text: string, from: number): string {
 }
 
 /**
- * The Windows path in prose that starts at `from`. A folder name may hold
- * spaces (`BIG Games Dropbox`), so the path runs on across up to four plain
- * words when a later word continues it with a separator, or, at the end of a
- * sentence, when every word is capitalized (`...\Pet Vault.`). A segment with a
- * file extension ends the path.
+ * Folder names may hold spaces, so a prose path runs on across up to four words when a later
+ * word continues it with a separator, or at a sentence end when every word is capitalized
+ * (`...\Pet Vault.`). A segment with a file extension ends the path.
  */
 function readProsePath(text: string, from: number): string {
   let path = trimUnbalancedClosers(readPathRun(text, from));

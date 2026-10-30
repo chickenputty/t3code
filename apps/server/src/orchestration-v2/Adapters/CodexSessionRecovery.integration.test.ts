@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CodexSettings, CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -154,7 +155,7 @@ describe("Codex shared session recovery", () => {
           if (termination !== "SIGKILL") {
             assert.isTrue(Exit.isSuccess(exit));
             if (Exit.isSuccess(exit)) assert.equal(Number(exit.value), 7);
-          } else if (process.platform !== "win32") {
+          } else if ((yield* HostProcess.Platform) !== "win32") {
             assert.isTrue(Exit.isFailure(exit));
           }
 

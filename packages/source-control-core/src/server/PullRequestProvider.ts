@@ -182,6 +182,7 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  readonly maintainerCanModify?: boolean;
   readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
@@ -221,6 +222,11 @@ export interface ProviderDiffSlice {
 export interface ProviderDiffFileContents {
   readonly oldContents: string;
   readonly newContents: string;
+}
+
+export interface ProviderDiffFilePaths {
+  readonly files: ReadonlyArray<{ readonly oldPath: string; readonly newPath: string }>;
+  readonly nextCursor: string | null;
 }
 
 export interface ProviderFilesViewed {
@@ -263,7 +269,8 @@ export interface ProviderRepositoryRef {
 
 export interface PullRequestProviderApi {
   readonly withVerifiedCredential?: <A, E, R>(
-    input: { readonly cwd: string; readonly host: string },
+    /** `repository` lets a host pick the credential that can reach it. */
+    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;
@@ -394,6 +401,15 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
 
+  /** Exact changed path pairs, including renames, without fetching patch contents. */
+  readonly getDiffFilePaths?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly cursor?: string | undefined;
+      readonly commit?: string | undefined;
+    },
+  ) => Effect.Effect<ProviderDiffFilePaths, PullRequestProviderError>;
+
   readonly getDiffFileContents?: (
     input: ProviderRepositoryRef & {
       readonly number: number;
@@ -447,6 +463,7 @@ export interface PullRequestProviderApi {
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
     input: ProviderRepositoryRef & {
+      readonly maintainerCanModify?: boolean | undefined;
       readonly number: number;
       readonly title?: string | undefined;
       readonly body?: string | undefined;

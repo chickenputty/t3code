@@ -1,17 +1,11 @@
-/**
- * Fork (chickenputty/t3code): a saved card view (list, board, gallery or
- * table) inside the sidebar explorer. The brand row keeps the view switcher,
- * a compact toolbar and search sit under it, and the layout scrolls below.
- * Opening a card shows its thread in the chat on the right; the card of the
- * thread in the route is highlighted. Rows are computed here, so a busy board
- * never re-renders the chat.
- */
+// Fork: a saved card view inside the sidebar explorer.
+// Rows are computed here, not in the chat, so a busy board never re-renders the chat.
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { SavedView, ThreadCategory } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
-import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useState } from "react";
 
 import { useExplorerStore } from "~/components/explorer/explorerStore";
 import { SidebarChromeFooter, SidebarChromeHeader } from "~/components/sidebar/SidebarChrome";
@@ -75,27 +69,21 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
     },
   });
 
-  const updateView = useCallback(
-    (patch: Partial<Omit<SavedView, "id">>) => update(view.id, patch),
-    [update, view.id],
-  );
+  const updateView = (patch: Partial<Omit<SavedView, "id">>) => update(view.id, patch);
 
   // Content search runs on the server; titles match here, instantly.
-  const environmentIds = useMemo(
-    () => environments.map((environment) => environment.environmentId),
-    [environments],
-  );
+  const environmentIds = environments.map((environment) => environment.environmentId);
   const contentSearch = useThreadSearch(environmentIds, query);
-  const snippets = useMemo(() => {
+  const snippets = (() => {
     const map = new Map<string, string>();
     for (const match of contentSearch.matches) {
       map.set(scopedThreadKey(scopeThreadRef(match.environmentId, match.threadId)), match.snippet);
     }
     return map;
-  }, [contentSearch.matches]);
+  })();
 
-  const filteredRows = useMemo(() => filterViewRows(rows, view, nowMs), [nowMs, rows, view]);
-  const visibleRows = useMemo(() => {
+  const filteredRows = filterViewRows(rows, view, nowMs);
+  const visibleRows = (() => {
     const needle = query.trim().toLowerCase();
     const searched =
       needle === ""
@@ -104,34 +92,20 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
             (row) => row.title.toLowerCase().includes(needle) || snippets.has(row.key),
           );
     return sortViewRows(searched, view.sorts);
-  }, [filteredRows, query, snippets, view.sorts]);
+  })();
 
   const groupBy = view.layout === "board" && view.groupBy === null ? "project" : view.groupBy;
-  const groups = useMemo(
-    () =>
-      groupViewRows(visibleRows, groupBy, {
-        // Board sections accept drops, so they stay visible even when empty.
-        hideEmpty: view.hideEmptyGroups && !(view.layout === "board" && groupBy === "section"),
-        nowMs,
-        showArchived: view.showArchived,
-        categories: categories.categories,
-      }),
-    [
-      categories.categories,
-      groupBy,
-      nowMs,
-      view.hideEmptyGroups,
-      view.layout,
-      view.showArchived,
-      visibleRows,
-    ],
-  );
-  const orderedRows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
-  const selectedRows = useMemo(
-    () => orderedRows.filter((row) => selected.has(row.key)),
-    [orderedRows, selected],
-  );
+  const groups = groupViewRows(visibleRows, groupBy, {
+    // Board sections accept drops, so they stay visible even when empty.
+    hideEmpty: view.hideEmptyGroups && !(view.layout === "board" && groupBy === "section"),
+    nowMs,
+    showArchived: view.showArchived,
+    categories: categories.categories,
+  });
+  const orderedRows = groups.flatMap((group) => group.rows);
+  const selectedRows = orderedRows.filter((row) => selected.has(row.key));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener clears the selection on Escape
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -147,43 +121,34 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selected.size]);
 
-  const openThread = useCallback(
-    (ref: ViewRow["ref"]) => {
-      if (isMobile) setOpenMobile(false);
-      void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  const openThread = (ref: ViewRow["ref"]) => {
+    if (isMobile) setOpenMobile(false);
+    void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+  };
 
   // No onStartRename: a card cannot rename inline, so the menu leaves Rename out
   // (the open thread's header and the table's title cell rename instead).
   const { openMenu } = useThreadActionMenu({ threadRef: null, projectCwd: null });
 
-  const optionsFor = useCallback(
-    (property: ViewProperty): readonly ViewPropertyOption[] => {
-      if (property.options) return property.options;
-      const seen = new Map<string, string>();
-      for (const row of rows) {
-        const value = property.value(row);
-        if (value === null || value === "") continue;
-        const key = String(value);
-        if (!seen.has(key)) seen.set(key, property.display?.(row) ?? key);
-      }
-      return [...seen]
-        .map(([value, label]) => ({ value, label }))
-        .sort((left, right) => left.label.localeCompare(right.label));
-    },
-    [rows],
-  );
+  const optionsFor = (property: ViewProperty): readonly ViewPropertyOption[] => {
+    if (property.options) return property.options;
+    const seen = new Map<string, string>();
+    for (const row of rows) {
+      const value = property.value(row);
+      if (value === null || value === "") continue;
+      const key = String(value);
+      if (!seen.has(key)) seen.set(key, property.display?.(row) ?? key);
+    }
+    return [...seen]
+      .map(([value, label]) => ({ value, label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  };
 
-  const runAction = useCallback(
-    (targets: readonly ViewRow[], action: ViewBulkAction) => {
-      void ops.runBulk(targets, action).then(() => {
-        if (action === "delete" || action === "archive") setSelected(new Set());
-      });
-    },
-    [ops],
-  );
+  const runAction = (targets: readonly ViewRow[], action: ViewBulkAction) => {
+    void ops.runBulk(targets, action).then(() => {
+      if (action === "delete" || action === "archive") setSelected(new Set());
+    });
+  };
 
   const handlers: Omit<
     ViewLayoutProps,
@@ -240,7 +205,7 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
 
   const previews = useThreadPreviews(filteredRows, view.preview !== "none");
   // What each card says under its title: a search match first, else the chosen preview.
-  const cardText = useMemo(() => {
+  const cardText = (() => {
     const map = new Map(snippets);
     if (view.preview === "none") return map;
     for (const [key, preview] of previews) {
@@ -249,7 +214,7 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
       if (text) map.set(key, text);
     }
     return map;
-  }, [previews, snippets, view.preview]);
+  })();
 
   const deleteCategory = async (category: ThreadCategory) => {
     const confirmed = await settlePromise(

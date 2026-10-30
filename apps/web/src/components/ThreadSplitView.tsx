@@ -1,6 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import ChatView from "./ChatView";
 import { Button } from "./ui/button";
@@ -21,13 +21,9 @@ import {
 const KEYBOARD_RATIO_STEP = 0.05;
 
 /**
- * The routed thread, plus the split thread beside it when there is one. The
- * primary pane renders at the same tree position either way, so opening or
- * closing a split never remounts the routed ChatView.
- *
- * While split, each pane is a layout containment boundary, so the
- * fixed-position titlebar controls inside ChatView anchor to their own pane
- * instead of both landing on the window's top-right corner.
+ * The primary pane keeps its tree position split or not, so the routed ChatView
+ * never remounts. Split panes are layout containment boundaries so ChatView's
+ * fixed-position titlebar controls anchor to their own pane.
  */
 export function ThreadSplitView({
   primary,
@@ -43,43 +39,38 @@ export function ThreadSplitView({
 
   // Dragging writes the CSS variable directly and commits once on release, so
   // the two ChatViews do not re-render on every pointer move.
-  const onDividerPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const container = containerRef.current;
-      if (!container || event.button !== 0) return;
-      event.preventDefault();
-      const divider = event.currentTarget;
-      divider.setPointerCapture(event.pointerId);
-      const bounds = container.getBoundingClientRect();
-      let nextRatio = ratio;
-      const onMove = (moveEvent: PointerEvent) => {
-        nextRatio = clampThreadSplitRatio((moveEvent.clientX - bounds.left) / bounds.width);
-        container.style.setProperty("--thread-split-ratio", String(nextRatio));
-      };
-      const onUp = () => {
-        divider.removeEventListener("pointermove", onMove);
-        divider.removeEventListener("pointerup", onUp);
-        divider.removeEventListener("pointercancel", onUp);
-        setRatio(nextRatio);
-      };
-      divider.addEventListener("pointermove", onMove);
-      divider.addEventListener("pointerup", onUp);
-      divider.addEventListener("pointercancel", onUp);
-    },
-    [ratio, setRatio],
-  );
+  const onDividerPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+    if (!container || event.button !== 0) return;
+    event.preventDefault();
+    const divider = event.currentTarget;
+    divider.setPointerCapture(event.pointerId);
+    const bounds = container.getBoundingClientRect();
+    let nextRatio = ratio;
+    const onMove = (moveEvent: PointerEvent) => {
+      nextRatio = clampThreadSplitRatio((moveEvent.clientX - bounds.left) / bounds.width);
+      container.style.setProperty("--thread-split-ratio", String(nextRatio));
+    };
+    const onUp = () => {
+      divider.removeEventListener("pointermove", onMove);
+      divider.removeEventListener("pointerup", onUp);
+      divider.removeEventListener("pointercancel", onUp);
+      setRatio(nextRatio);
+    };
+    divider.addEventListener("pointermove", onMove);
+    divider.addEventListener("pointerup", onUp);
+    divider.addEventListener("pointercancel", onUp);
+  };
 
-  const onDividerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "ArrowLeft") setRatio(ratio - KEYBOARD_RATIO_STEP);
-      else if (event.key === "ArrowRight") setRatio(ratio + KEYBOARD_RATIO_STEP);
-      else return;
-      event.preventDefault();
-    },
-    [ratio, setRatio],
-  );
+  const onDividerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") setRatio(ratio - KEYBOARD_RATIO_STEP);
+    else if (event.key === "ArrowRight") setRatio(ratio + KEYBOARD_RATIO_STEP);
+    else return;
+    event.preventDefault();
+  };
 
   // The store value wins again whenever it changes (release, keyboard, reset).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the container's CSS variable, which drags write directly, in step with the stored ratio
   useEffect(() => {
     containerRef.current?.style.setProperty("--thread-split-ratio", String(ratio));
   }, [ratio]);
@@ -147,14 +138,11 @@ function ChatPane({
   const isFocusedPane = useThreadSplitStore((state) => !split || state.focusedPane === pane);
   const focusPane = useThreadSplitStore((state) => state.focusPane);
   const closeSplit = useThreadSplitStore((state) => state.closeSplit);
-  const value = useMemo<ChatPaneValue>(
-    () => ({
-      isFocusedPane,
-      paneId: pane,
-      ...(pane === "secondary" ? { onClosePane: closeSplit } : {}),
-    }),
-    [closeSplit, isFocusedPane, pane],
-  );
+  const value: ChatPaneValue = {
+    isFocusedPane,
+    paneId: pane,
+    ...(pane === "secondary" ? { onClosePane: closeSplit } : {}),
+  };
   return (
     <ChatPaneContext value={value}>
       <div
@@ -195,6 +183,7 @@ function SecondaryThreadPane({ threadRef }: { threadRef: ScopedThreadRef }) {
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const missing = bootstrapComplete && (thread === null || thread.deletedAt != null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the persisted split store once the environment reports its thread gone
   useEffect(() => {
     if (missing) closeSplit();
   }, [closeSplit, missing]);

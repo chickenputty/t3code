@@ -1,7 +1,6 @@
 import type { SavedView, SavedViewLayout } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerSettings } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -24,13 +23,8 @@ import {
 // A new view must exist before the page that opens it reads the list.
 const pending = createPendingSetting<readonly SavedView[]>();
 
-/**
- * The saved views on the primary server, or the defaults until the first
- * edit, always led by the built-in Threads view (stored, or built from this
- * device's sidebar arrangement until it is first edited). Every write
- * replaces the whole stored list; the server keeps it in `settings.json` and
- * other servers get a copy through shared settings.
- */
+// Saved views on the primary server, always led by the built-in Threads view.
+// Every write replaces the whole stored list in `settings.json`.
 export function useSavedViews() {
   const stored = usePrimarySettings((settings) => settings.savedViews);
   const canSave = usePrimarySettingsAvailable();
@@ -45,46 +39,41 @@ export function useSavedViews() {
       projectSort: state.projectSort,
     })),
   );
-  const views = useMemo(() => withBuiltInThreadsView(storedViews, local), [local, storedViews]);
+  const views = withBuiltInThreadsView(storedViews, local);
 
-  const write = useCallback(
-    (next: readonly SavedView[]) => {
-      pending.set(next);
-      void updateSettings({ savedViews: [...next] }).then((landed) => {
-        // A refused or failed write never echoes back; stop showing it as saved.
-        if (!landed && pending.read() === next) pending.set(null);
-      });
+  const write = (next: readonly SavedView[]) => {
+    pending.set(next);
+    void updateSettings({ savedViews: [...next] }).then((landed) => {
+      // A refused or failed write never echoes back; stop showing it as saved.
+      if (!landed && pending.read() === next) pending.set(null);
+    });
+  };
+
+  // Always build on the newest list, including writes not yet echoed.
+  const current = () => pending.read() ?? storedViews;
+  const actions = {
+    update(id: string, patch: Partial<Omit<SavedView, "id">>) {
+      write(updateSavedView(current(), id, patch, local));
     },
-    [updateSettings],
-  );
-
-  const actions = useMemo(() => {
-    // Always build on the newest list, including writes not yet echoed.
-    const current = () => pending.read() ?? storedViews;
-    return {
-      update(id: string, patch: Partial<Omit<SavedView, "id">>) {
-        write(updateSavedView(current(), id, patch, local));
-      },
-      create(layout: SavedViewLayout): SavedView {
-        const view = newSavedView(layout, newSavedViewId());
-        write([...current(), view]);
-        return view;
-      },
-      duplicate(id: string): SavedView | null {
-        const result = duplicateSavedView(current(), id, newSavedViewId(), local);
-        if (!result) return null;
-        write(result.list);
-        return result.copy;
-      },
-      /** The built-in Threads view always exists; removing it does nothing. */
-      remove(id: string) {
-        const list = current();
-        const next = removeSavedView(list, id);
-        // Nothing to remove (the built-in view, or an id already gone): no settings write.
-        if (next.length !== list.length) write(next);
-      },
-    };
-  }, [local, storedViews, write]);
+    create(layout: SavedViewLayout): SavedView {
+      const view = newSavedView(layout, newSavedViewId());
+      write([...current(), view]);
+      return view;
+    },
+    duplicate(id: string): SavedView | null {
+      const result = duplicateSavedView(current(), id, newSavedViewId(), local);
+      if (!result) return null;
+      write(result.list);
+      return result.copy;
+    },
+    /** The built-in Threads view always exists; removing it does nothing. */
+    remove(id: string) {
+      const list = current();
+      const next = removeSavedView(list, id);
+      // Nothing to remove (the built-in view, or an id already gone): no settings write.
+      if (next.length !== list.length) write(next);
+    },
+  };
 
   return { views, canSave, ...actions };
 }
@@ -98,12 +87,8 @@ export function useSavedViewsValue<R extends string | number | boolean | null>(
   select: (stored: readonly SavedView[]) => R,
 ): R {
   const fromPending = pending.useSelect((list) => (list === null ? undefined : select(list)));
-  const fromStored = useAtomValue(
-    primaryServerSettingsAtom,
-    useCallback(
-      (settings: ServerSettings) => select(settings.savedViews ?? DEFAULT_SAVED_VIEWS),
-      [select],
-    ),
+  const fromStored = useAtomValue(primaryServerSettingsAtom, (settings: ServerSettings) =>
+    select(settings.savedViews ?? DEFAULT_SAVED_VIEWS),
   );
   return fromPending === undefined ? fromStored : fromPending;
 }

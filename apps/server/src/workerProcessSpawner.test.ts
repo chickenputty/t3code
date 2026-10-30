@@ -45,8 +45,10 @@ describe("WorkerProcessSpawner", () => {
   it.live("runs a process from a plain promise, as the git fast path's runner does", () =>
     Effect.gen(function* () {
       const spawner = yield* WorkerProcessSpawner.make;
+      // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The git fast path runs spawns from a plain promise outside any fiber; this replicates that path.
+      const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
       const result = yield* Effect.promise(() =>
-        Effect.runPromise(
+        runPromise(
           ProcessRunner.runProcessWithSpawner(
             spawner,
             node("process.stdout.write('from worker'); process.exit(2)"),

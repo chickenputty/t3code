@@ -1,7 +1,7 @@
-import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 // Normalizing for the target host (win32 vs posix) needs both flavors synchronously.
 // @effect-diagnostics-next-line nodeBuiltinImport:off
-import * as NodeHostPath from "node:path";
+import * as NodePath from "node:path";
 import {
   defaultOpenBlockedExtension,
   DIRECTORY_LAUNCH_EXTENSIONS,
@@ -38,6 +38,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -76,7 +77,6 @@ interface TargetPathAndPosition {
 }
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
-// oxlint-disable-next-line no-control-regex
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
@@ -556,12 +556,9 @@ export function namesWindowsDataStream(path: string): boolean {
 }
 
 /**
- * Opening a file with the file manager launches its default app, so a
- * script, installer or launcher would run. This reduces that risk for
- * model-authored chat links: it refuses blocked extensions (plus PATHEXT on
- * Windows) on both the link name and its symlink target, data stream paths on
- * Windows, and files with an execute bit where the opener honors it. Folders
- * are only shown, except bundles that launch (`.app`, `.pkg`).
+ * A file-manager open runs the file's default app, so for model-authored links this refuses
+ * blocked extensions (plus PATHEXT) on the name and its symlink target, Windows data streams,
+ * and files with an execute bit. Folders are only shown, except bundles that launch.
  */
 const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuardedFileManagerOpen")(
   function* (input: {
@@ -577,7 +574,7 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
     const fileSystem = yield* FileSystem.FileSystem;
     const statPath = (path: string) =>
       fileSystem.stat(path).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.orElseSucceed(() => Option.none<FileSystem.File.Info>()),
       );
     // Windows names cannot hold a colon past the drive, so only POSIX hosts
@@ -597,7 +594,7 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
       return yield* refuse("a data stream path");
     }
     const realPath = yield* fileSystem.realPath(open.path).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.orElseSucceed(() => Option.none<string>()),
     );
     const info = yield* statPath(Option.getOrElse(realPath, () => open.path));
@@ -634,14 +631,9 @@ const resolveGuardedFileManagerOpen = Effect.fn("externalLauncher.resolveGuarded
 );
 
 /**
- * The argument a plain file-manager open hands to the OS. `path` is the
- * target normalized for the host (so `run.exe/.` and `run.exe/a/..` resolve
- * to `run.exe` before any check), with an editor `:line[:column]` suffix
- * dropped (on POSIX only when the full name is not itself a file).
- * `argument` is the form the launcher parses: Explorer needs backslashes (it
- * opens Documents for `C:/a/b.png`) and a WSL path needs its
- * `\\wsl.localhost` UNC form.
- *
+ * `path` is normalized for the host so `run.exe/.` resolves to `run.exe` before any check.
+ * `argument` is what the launcher parses: Explorer opens Documents for `C:/a/b.png`, so it
+ * needs backslashes, and a WSL path needs its `\\wsl.localhost` UNC form.
  * @internal Exported for tests.
  */
 export function resolveFileManagerOpenArgument(input: {
@@ -660,8 +652,8 @@ export function resolveFileManagerOpenArgument(input: {
         });
   const path =
     input.platform === "win32"
-      ? NodeHostPath.win32.normalize(stripped)
-      : NodeHostPath.posix.normalize(stripped);
+      ? NodePath.win32.normalize(stripped)
+      : NodePath.posix.normalize(stripped);
   if (input.command === "explorer.exe" && input.wslDistroName !== undefined) {
     return { path, argument: resolveWslFileManagerPath(path, input.wslDistroName) };
   }
@@ -713,7 +705,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   }
 
   if (platform === "win32") {
-    const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+    const path = yield* Path.Path.pipe(Effect.provide(NodePathLayer.layerWin32));
     const windowsTarget = normalizeWindowsFileManagerPath(target);
     return {
       ...powerShellFileManagerLaunch(
@@ -818,6 +810,56 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   yield* launchEditorProcess(launch);
 });
 
+const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]);
+
+// The user manager's environment over D-Bus. `systemctl show-environment` would
+// shell-quote values with spaces as $'...', while this JSON carries them raw.
+const decodeManagerEnvironment = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
+// Boot services miss the desktop environment imported later into the systemd user manager.
+const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
+  function* () {
+    const hostEnv = yield* HostProcess.Environment;
+    if ((yield* HostProcess.Platform) !== "linux" || hasGraphicalLinuxSession(hostEnv)) {
+      return {};
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make(
+        "busctl",
+        [
+          "--user",
+          "--json=short",
+          "get-property",
+          "org.freedesktop.systemd1",
+          "/org/freedesktop/systemd1",
+          "org.freedesktop.systemd1.Manager",
+          "Environment",
+        ],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const { data } = yield* decodeManagerEnvironment(output);
+    return Object.fromEntries(
+      data.flatMap((line) => {
+        const separator = line.indexOf("=");
+        const key = line.slice(0, separator);
+        return separator > 0 && GRAPHICAL_SESSION_ENV_KEYS.has(key)
+          ? [[key, line.slice(separator + 1)]]
+          : [];
+      }),
+    );
+  },
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
+);
+
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
   onError: (cause: unknown) => ExternalLauncherError,
@@ -827,7 +869,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = yield* HostProcess.Environment;
   const command = ChildProcess.make(launch.command, launch.args, {
     ...launch.options,
-    env,
+    env: { ...env, ...launch.options.env },
     extendEnv: false,
   });
 
@@ -881,6 +923,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
+        env: yield* readGraphicalSessionEnv(),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -963,20 +1006,29 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.uninterruptible);
   const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
 
+  // Forwarders retain the underlying launcher and discovery spans.
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => cachedAvailableEditors,
-    resolveFileManagerRevealKind: () =>
-      provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
-    launchBrowser: (target) =>
-      launchBrowser(target).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
-    launchEditor: (input) =>
-      provideCommandResolutionServices(launchEditor(input)).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
+    resolveAvailableEditors: Effect.fnUntraced(function* () {
+      return yield* cachedAvailableEditors;
+    }),
+    resolveFileManagerRevealKind: Effect.fnUntraced(
+      function* () {
+        return yield* provideCommandResolutionServices(resolveFileManagerRevealKind());
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    launchBrowser: Effect.fnUntraced(
+      function* (target) {
+        return yield* launchBrowser(target);
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    launchEditor: Effect.fnUntraced(
+      function* (input) {
+        return yield* provideCommandResolutionServices(launchEditor(input));
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
   });
 });
 

@@ -15,20 +15,9 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * A ChildProcessSpawner that starts processes from a worker thread.
- *
- * `child_process.spawn` is synchronous. On Windows, CreateProcess can stall for
- * seconds when the machine is busy, and every stall freezes the server's event
- * loop: health checks time out and clients show "reconnecting". Spawning from
- * a worker confines the stall to that worker.
- *
- * A worker also relays its children's output and exits, so a stalled spawn holds
- * those back too. Spawns spread over a few workers, each going to the one with the
- * fewest children, so one slow start does not queue every other git and gh call.
- *
- * Only what ProcessRunner reads is supported: piped stdin, stdout, stderr and
- * the exit code of a standard command. The server provides it on Windows;
- * everywhere else ProcessRunner keeps the in-process spawner.
+ * Spawns from worker threads because Windows CreateProcess can stall for seconds and would
+ * freeze the event loop. Each spawn goes to the worker with the fewest children, so one slow
+ * start does not hold back other output. Supports only piped stdio and the exit code.
  */
 export const WorkerProcessSpawner = HostProcess.WorkerProcessSpawner;
 
@@ -276,13 +265,16 @@ export const make = Effect.gen(function* () {
   // Kill the tree if still running, then wait up to a second for the exit, as
   // the in-process spawner does on Windows. The wait starts once taskkill has
   // finished, since taskkill is itself a process start that can stall.
-  const terminate = (id: number, entry: ChildEntry, signal: NodeJS.Signals) =>
-    Effect.gen(function* () {
-      if (yield* Deferred.isDone(entry.exited)) return;
-      post(entry.slot, { type: "kill", id, signal });
-      yield* Deferred.await(entry.killed).pipe(Effect.timeoutOption(Duration.seconds(10)));
-      yield* Deferred.await(entry.exited).pipe(Effect.timeoutOption(Duration.seconds(1)));
-    });
+  const terminate = Effect.fnUntraced(function* (
+    id: number,
+    entry: ChildEntry,
+    signal: NodeJS.Signals,
+  ) {
+    if (yield* Deferred.isDone(entry.exited)) return;
+    post(entry.slot, { type: "kill", id, signal });
+    yield* Deferred.await(entry.killed).pipe(Effect.timeoutOption(Duration.seconds(10)));
+    yield* Deferred.await(entry.exited).pipe(Effect.timeoutOption(Duration.seconds(1)));
+  });
 
   const spawn = Effect.fnUntraced(function* (command: ChildProcess.Command) {
     if (command._tag !== "StandardCommand") {

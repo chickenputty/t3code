@@ -73,13 +73,7 @@ const STATUS_DOT: Record<ViewRow["status"], string> = {
   idle: "bg-muted-foreground/30",
 };
 
-export function StatusDot({
-  status,
-  className,
-}: {
-  status: ViewRow["status"];
-  className?: string;
-}) {
+function StatusDot({ status, className }: { status: ViewRow["status"]; className?: string }) {
   return (
     <span
       aria-hidden
@@ -156,7 +150,7 @@ interface CardProps {
   readonly dragging?: boolean;
 }
 
-export const ViewCard = memo(function ViewCard({
+const ViewCard = memo(function ViewCard({
   row,
   view,
   selected,
@@ -185,7 +179,7 @@ export const ViewCard = memo(function ViewCard({
       onKeyDown={keyHandler(row, handlers)}
       onContextMenu={(event) => handlers.onContextMenu(row, event)}
       className={cn(
-        "group/card flex w-full min-w-0 cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card text-left text-card-foreground shadow-xs/5 outline-none hover:border-ring/50 focus-visible:ring-2 focus-visible:ring-ring",
+        "group/card flex w-full min-w-0 cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card text-left text-card-foreground shadow-xs/5 outline-none hover:border-ring/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         compact ? "p-2" : "p-3",
         selected && "border-ring bg-accent/40",
         open && "border-ring",

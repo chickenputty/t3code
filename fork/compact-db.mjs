@@ -1,18 +1,9 @@
-// Shrinks T3's statev2.sqlite while T3 is closed: deletes what upstream's
-// ProjectionMaintenance.compactEventStore calls obsolete (nothing in the app runs it yet), plus the
-// V1 activity projection of threads already imported into V2, then VACUUMs.
-//
-//   node fork/compact-db.mjs <statev2.sqlite> [--dry-run]
-//
-// Rules, as in apps/server/src/orchestration-v2/ProjectionMaintenance.ts:
-//   - V1 thread events and 'legacy' thread receipts of threads whose transcript V2 imported.
-//   - V2 thread-state events whose payload is the whole thread: only the newest per thread counts.
-//   - V2 message.updated / node.updated: only the newest per (type, thread, payload id) counts.
-// Added here: projection_thread_activities rows of imported threads. Only migrations 024 and 025
-// read that table, and they ran before V2 existed.
-// Prints one JSON line with what it did. Exits 2 if the database is in use.
-import { DatabaseSync } from "node:sqlite";
-import { statSync } from "node:fs";
+// Shrinks a closed T3's statev2.sqlite: deletes what ProjectionMaintenance.compactEventStore
+// calls obsolete plus projection_thread_activities of V2-imported threads, then VACUUMs.
+// Usage: node fork/compact-db.mjs <statev2.sqlite> [--dry-run]. Prints one JSON line; exits 2
+// if the database is in use.
+import * as NodeSqlite from "node:sqlite";
+import * as NodeFS from "node:fs";
 
 const [dbPath, ...flags] = process.argv.slice(2);
 if (!dbPath) {
@@ -50,13 +41,13 @@ const sizeOf = (p) => {
   let n = 0;
   for (const s of ["", "-wal"]) {
     try {
-      n += statSync(p + s).size;
+      n += NodeFS.statSync(p + s).size;
     } catch {}
   }
   return n;
 };
 
-const db = new DatabaseSync(dbPath);
+const db = new NodeSqlite.DatabaseSync(dbPath);
 db.exec("PRAGMA busy_timeout = 0");
 try {
   // Fails right away if T3 (or anything) holds the database.

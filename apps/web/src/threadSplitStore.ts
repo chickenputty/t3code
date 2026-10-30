@@ -1,10 +1,7 @@
 /**
- * Split view: a second server thread shown beside the routed one.
- *
- * The routed thread stays the primary (left) pane and keeps owning the URL,
- * so sidebar clicks, history and deep links behave exactly as without a split.
- * The store only remembers which thread sits in the secondary (right) pane,
- * which pane last had the user's attention, and the divider position.
+ * Split view: a second thread beside the routed one. The routed (left) pane keeps
+ * owning the URL, so sidebar clicks, history and deep links ignore the split; this
+ * store only holds the right pane's thread, the focused pane and the divider.
  */
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";

@@ -359,9 +359,8 @@ describe("appliedSidebarProjectScopeKey", () => {
     const scopedProjectKeys = scopeKey === null ? null : new Set([scopeKey]);
 
     expect(scopeKey).toBeNull();
-    expect(ids(filterSidebarV2VisibleThreads(threads, scopedProjectKeys) as never)).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(
+      ids(filterSidebarV2VisibleThreads(threads, scopedProjectKeys, new Set()) as never),
+    ).toEqual(["a", "b"]);
   });
 });

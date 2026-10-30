@@ -2,7 +2,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId, ScopedThreadRef, ThreadCategories } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { resolveThreadLastVisitedAt } from "~/components/Sidebar.logic";
 import { resolveSidebarThreadDisplayStatus } from "~/components/sidebar/sidebarArrangement";
@@ -26,9 +26,11 @@ const NO_ROWS: readonly ViewRow[] = [];
 /** A clock that ticks once a minute, for relative times and date filters. */
 export function useMinuteClock(enabled = true): number {
   const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the minute interval timer while enabled
   useEffect(() => {
     if (!enabled) return;
     // Catch up on time that passed while paused (a no-op on first mount).
+    // oxlint-disable-next-line react/set-state-in-effect -- resuming the timer catches up on paused time
     setNow((previous) => (Date.now() - previous >= 60_000 ? Date.now() : previous));
     const id = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(id);
@@ -193,13 +195,12 @@ export function useViewRows(
   const lastVisitedById = useUiStateStore((state) =>
     enabled ? state.threadLastVisitedAtById : null,
   );
-  const environmentIds = useMemo<readonly EnvironmentId[]>(
-    () => (includeArchived ? environments.map((environment) => environment.environmentId) : []),
-    [environments, includeArchived],
-  );
+  const environmentIds = includeArchived
+    ? environments.map((environment) => environment.environmentId)
+    : [];
   const archived = useArchivedThreadSnapshots(environmentIds);
 
-  const rows = useMemo((): readonly ViewRow[] => {
+  const rows = ((): readonly ViewRow[] => {
     if (!enabled || lastVisitedById === null) return NO_ROWS;
     const projectLabels = projectLabelsOf(projects);
     const toRow = makeRowBuilder({
@@ -235,18 +236,7 @@ export function useViewRows(
       }
     }
     return result;
-  }, [
-    archived.snapshots,
-    categories.assignments,
-    categories.categories,
-    enabled,
-    environments,
-    includeArchived,
-    lastVisitedById,
-    nowMs,
-    projects,
-    shells,
-  ]);
+  })();
 
   return { rows, nowMs, archivedLoading: includeArchived && archived.isLoading };
 }
@@ -273,13 +263,10 @@ export function useViewRow(
   const key = scopedThreadKey(ref);
   const lastVisited = useUiStateStore((state) => state.threadLastVisitedAtById[key]);
   const live = shell !== null;
-  const archivedEnvironmentIds = useMemo<readonly EnvironmentId[]>(
-    () => (live ? NO_ENVIRONMENTS : [ref.environmentId]),
-    [live, ref.environmentId],
-  );
+  const archivedEnvironmentIds = live ? NO_ENVIRONMENTS : [ref.environmentId];
   const archived = useArchivedThreadSnapshots(archivedEnvironmentIds);
 
-  const row = useMemo((): ViewRow | null => {
+  const row = ((): ViewRow | null => {
     const projectLabels = projectLabelsOf(projects);
     let thread: SidebarThreadSummary | null = shell?.deletedAt === null ? shell : null;
     let archivedRow = false;
@@ -306,18 +293,7 @@ export function useViewRow(
       categories: { categories: categories.categories, assignments: categories.assignments },
       lastVisitedAt: () => lastVisited,
     })(thread, archivedRow);
-  }, [
-    archived.snapshots,
-    categories.assignments,
-    categories.categories,
-    environments,
-    lastVisited,
-    nowMs,
-    projects,
-    ref.environmentId,
-    ref.threadId,
-    shell,
-  ]);
+  })();
 
   return { row, nowMs, archivedLoading: !live && archived.isLoading };
 }

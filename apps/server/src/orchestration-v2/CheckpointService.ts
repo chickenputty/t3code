@@ -41,18 +41,6 @@ export class CheckpointRootScopePrepareError extends Schema.TaggedError<Checkpoi
   }
 }
 
-export class CheckpointScopeEnsureError extends Schema.TaggedError<CheckpointScopeEnsureError>()(
-  "CheckpointScopeEnsureError",
-  {
-    scopeId: CheckpointScopeId,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to ensure checkpoint scope ${this.scopeId}.`;
-  }
-}
-
 export class CheckpointBaselineCaptureError extends Schema.TaggedError<CheckpointBaselineCaptureError>()(
   "CheckpointBaselineCaptureError",
   {
@@ -107,7 +95,6 @@ export class CheckpointDeleteStaleRefsError extends Schema.TaggedError<Checkpoin
 
 export const CheckpointServiceV2Error = Schema.Union([
   CheckpointRootScopePrepareError,
-  CheckpointScopeEnsureError,
   CheckpointBaselineCaptureError,
   CheckpointCaptureError,
   CheckpointRestoreError,
@@ -126,9 +113,6 @@ export interface CheckpointServiceV2Shape {
     readonly cwd: string;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2CheckpointScope, CheckpointServiceV2Error>;
-  readonly ensureScope: (
-    scope: OrchestrationV2CheckpointScope,
-  ) => Effect.Effect<OrchestrationV2CheckpointScope, CheckpointServiceV2Error>;
   readonly captureBaseline: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
@@ -276,9 +260,10 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
-    const checkpointSkipSetting: string = yield* Effect.gen(function* () {
-      return yield* Config.String("T3CODE_CHECKPOINT_SKIP").pipe(Config.withDefault(""));
-    }).pipe(Effect.orElseSucceed(() => ""));
+    const checkpointSkipSetting: string = yield* Config.String("T3CODE_CHECKPOINT_SKIP").pipe(
+      Config.withDefault(""),
+      Effect.orElseSucceed(() => ""),
+    );
     const platform = yield* HostProcess.Platform;
     const checkpointSkip = checkpointSkipSetting
       .split(";")
@@ -289,8 +274,6 @@ export const layer: Layer.Layer<
       isCheckpointSkipped(cwd, checkpointSkip, platform)
         ? Effect.succeed(false)
         : checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
-
-    const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
     const captureBaseline: CheckpointServiceV2Shape["captureBaseline"] = (input) =>
       withWorkspaceLock(
@@ -612,7 +595,6 @@ export const layer: Layer.Layer<
               }),
           ),
         ),
-      ensureScope,
       captureBaseline,
       materializeBaselineCheckpoint,
       capture,

@@ -21,7 +21,7 @@ export function explorerWidthStorageKey(viewId: string): string {
     : `t3code:fork:explorer:width:${viewId}`;
 }
 
-export function defaultExplorerWidth(layout: SavedViewLayout): number {
+function defaultExplorerWidth(layout: SavedViewLayout): number {
   switch (layout) {
     case "gallery":
       return 520;

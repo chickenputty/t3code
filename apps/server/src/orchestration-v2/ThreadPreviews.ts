@@ -32,7 +32,7 @@ const PreviewRow = Schema.Struct({
 });
 
 /** Whitespace-collapsed, at most 240 characters, ending in "…" when cut. */
-export function buildPreviewSnippet(text: string): string {
+function buildPreviewSnippet(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= ORCHESTRATION_THREAD_PREVIEW_MAX_LENGTH) {
     return normalized;
@@ -57,7 +57,7 @@ export class ThreadPreviews extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadPreviews") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
