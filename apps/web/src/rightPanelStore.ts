@@ -22,6 +22,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "source-control",
+  "side-chat",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -76,7 +77,8 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "source-control"; kind: "source-control" };
+  | { id: "source-control"; kind: "source-control" }
+  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -111,6 +113,7 @@ interface RightPanelStoreState {
   userActionRevisionByThreadKey: Record<string, number>;
   closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
+  markUserAction: (ref: ScopedThreadRef) => number;
   /** Refused if the user chose a panel after expectedUserActionRevision was read. */
   openProactive: (
     ref: ScopedThreadRef,
@@ -122,8 +125,9 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
+  openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -164,6 +168,8 @@ interface RightPanelStoreState {
   activateTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   activateSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
+  /** Agent-driven activation. Not a user action, so it does not move keyboard focus. */
+  revealSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
@@ -181,7 +187,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -204,7 +210,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -385,11 +391,39 @@ const automaticUpdate = (
   ...updateThread(state, threadKey, updater),
 });
 
+// A side chat pane has no panel of its own, so its panel actions open in its parent's panel.
+const panelHosts = new Map<string, ScopedThreadRef>();
+
+/** Routes `guest`'s panel actions to `host`'s panel until the returned cleanup runs. */
+export function hostRightPanel(guest: ScopedThreadRef, host: ScopedThreadRef): () => void {
+  const guestKey = scopedThreadKey(guest);
+  panelHosts.set(guestKey, host);
+  return () => {
+    if (panelHosts.get(guestKey) === host) panelHosts.delete(guestKey);
+  };
+}
+
+/** The thread whose panel shows `ref`'s panel actions, so it also owns their browser tabs. */
+export function rightPanelHostRef(ref: ScopedThreadRef): ScopedThreadRef {
+  return panelHosts.get(scopedThreadKey(ref)) ?? ref;
+}
+
 const userAction = (
+  state: RightPanelStoreState,
+  guestKey: string,
+  updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  closesView = false,
+): Partial<RightPanelStoreState> => {
+  const host = panelHosts.get(guestKey);
+  const threadKey = host === undefined ? guestKey : scopedThreadKey(host);
+  return userActionOnThread(state, threadKey, updater, closesView);
+};
+
+const userActionOnThread = (
   state: RightPanelStoreState,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
-  closesView = false,
+  closesView: boolean,
 ): Partial<RightPanelStoreState> => ({
   ...updateThread(state, threadKey, (current) => {
     const next = updater(current);
@@ -422,6 +456,11 @@ const userAction = (
       }
     : {}),
 });
+
+const activated = (current: ThreadRightPanelState, surfaceId: string): ThreadRightPanelState =>
+  current.surfaces.some((surface) => surface.id === surfaceId)
+    ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
+    : current;
 
 const closeAction = (
   state: RightPanelStoreState,
@@ -602,6 +641,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       closeRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
+      markUserAction: (ref) => {
+        const revision = get().getUserActionRevision(ref) + 1;
+        set((state) => ({
+          userActionRevisionByThreadKey: {
+            ...state.userActionRevisionByThreadKey,
+            [scopedThreadKey(ref)]: revision,
+          },
+        }));
+        return revision;
+      },
       openProactive: (ref, request, expectedUserActionRevision, activateExisting = false) => {
         let opened = false;
         set((state) => {
@@ -674,6 +723,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               existing ?? surface,
             );
           }),
+        ),
+      openSideChat: (ref, threadId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, { id: `side-chat:${threadId}`, kind: "side-chat", threadId }),
+          ),
         ),
       renameDevice: (ref, surfaceId, title) =>
         set((state) =>
@@ -884,11 +939,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       activateSurface: (ref, surfaceId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) =>
-            current.surfaces.some((surface) => surface.id === surfaceId)
-              ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
-              : current,
-          ),
+          userAction(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
+        ),
+      revealSurface: (ref, surfaceId) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>

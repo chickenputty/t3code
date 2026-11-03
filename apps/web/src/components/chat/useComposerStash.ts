@@ -61,6 +61,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useChatPane } from "./ChatPaneContext";
 
@@ -702,7 +703,11 @@ export function useComposerStash(input: {
     if (backgroundThread || !isFocusedPane) return;
     return registerCommands(
       { "composer.stash": handleStashShortcut },
-      { capture: true, context: readShortcutContext },
+      {
+        capture: true,
+        context: readShortcutContext,
+        when: (event) => !isInSideChatPane(event.target),
+      },
     );
   }, [backgroundThread, isFocusedPane, handleStashShortcut, readShortcutContext]);
 

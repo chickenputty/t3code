@@ -588,8 +588,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
-  const persistServerSettings = async (request: Parameters<typeof persist>[0]) => {
+  const persistServerSettings = async (
+    request: Parameters<typeof persist>[0],
+    onFailed?: () => void,
+  ) => {
     const result = await persist(request);
+    if (result._tag === "Failure") onFailed?.();
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const label =
         environments.find((environment) => environment.environmentId === request.environmentId)
@@ -606,7 +610,10 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   // Fork: resolves false when a server write was refused or failed, so a caller
   // holding an optimistic copy (saved views) can drop it instead of showing it.
-  const updateSettings = (patch: UnifiedSettingsPatch): Promise<boolean> => {
+  const updateSettings = (
+    patch: UnifiedSettingsPatch,
+    options?: { readonly onFailed?: () => void },
+  ): Promise<boolean> => {
     const { serverPatch, clientPatch } = splitPatch(patch);
     const serverWrites: Array<Promise<boolean>> = []; // Fork
 
@@ -616,6 +623,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         readEnvironmentScope(environmentId, scope),
       );
     if (Object.keys(serverPatch).length > 0 && !canWriteServerPatch) {
+      options?.onFailed?.();
       toastManager.add({
         type: "warning",
         title: "Setting not saved",
@@ -626,20 +634,22 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
       const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
       // Dropping the write silently leaves the control looking saved.
-      const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) =>
-        toastManager.add({
+      const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) => {
+        options?.onFailed?.();
+        return toastManager.add({
           type: "warning",
           title: "Setting not saved",
           description,
         });
+      };
       if (Object.keys(localPatch).length > 0) {
         if (environmentId) {
           // Fork: kept so the caller learns whether it landed.
           serverWrites.push(
-            persistServerSettings({
-              environmentId,
-              input: { patch: localPatch },
-            }).then((result) => result._tag !== "Failure" || isAtomCommandInterrupted(result)),
+            persistServerSettings(
+              { environmentId, input: { patch: localPatch } },
+              options?.onFailed,
+            ).then((result) => result._tag !== "Failure" || isAtomCommandInterrupted(result)),
           );
         } else {
           warnUnsaved();
@@ -700,6 +710,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
             })),
           );
           void outcomesPromise.then((outcomes) => {
+            if (
+              deniedLabels.length > 0 ||
+              outcomes.some(({ result }) => result._tag === "Failure")
+            ) {
+              options?.onFailed?.();
+            }
             const failures = outcomes.flatMap(({ label, result }) => {
               if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
               const error = squashAtomCommandFailure(result);

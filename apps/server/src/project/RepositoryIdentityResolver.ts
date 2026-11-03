@@ -6,8 +6,10 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitMetadataFastPath from "../vcs/GitMetadataFastPath.ts";
@@ -163,6 +165,16 @@ const runGitMetadataCommand = Effect.fn("RepositoryIdentityResolver.runGitMetada
 
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
+    const isFolder = yield* fileSystem.stat(cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      Effect.orElseSucceed(() => true),
+    );
+    if (!isFolder) return null;
+
     const topLevelResult = yield* runGitMetadataCommand(cwd, ["rev-parse", "--show-toplevel"]);
     if (topLevelResult._tag === "None" || topLevelResult.value.timedOut) {
       return null;
@@ -175,7 +187,25 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     }
 
     // Explicit Git directories preserve safe.bareRepository=explicit for both layouts.
-    for (const gitDir of [".", ".git"]) {
+    for (const [gitDir, entry] of [
+      [".", "HEAD"],
+      [".git", ".git"],
+    ] as const) {
+      // An explicit --git-dir fails unless the folder has this entry; a symlink counts even
+      // when its target is missing, as git reads a symlinked HEAD's target text.
+      const target = path.join(cwd, entry);
+      const hasEntry = yield* fileSystem.exists(target).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.succeed(true)
+            : fileSystem.readLink(target).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ),
+        ),
+        Effect.orElseSucceed(() => true),
+      );
+      if (!hasEntry) continue;
       const bareResult = yield* runGitMetadataCommand(cwd, [
         `--git-dir=${gitDir}`,
         "rev-parse",
@@ -226,6 +256,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
@@ -239,6 +271,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ),
     { capacity: cacheCapacity, timeToLive },
   );

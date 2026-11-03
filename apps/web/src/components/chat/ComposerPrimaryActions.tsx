@@ -371,7 +371,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {keepFullHistory ? "Compact" : "Compacting"}
+          <span className="@max-[480px]/composer-surface:hidden">
+            {keepFullHistory ? "Compact" : "Compacting"}
+          </span>
           <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
