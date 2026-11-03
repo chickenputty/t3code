@@ -154,12 +154,12 @@ the way to roll back (`-Version`); for a newer build, `restart` does the same an
 
 ## Keeping T3 light
 
-- **Database.** Upstream never prunes `statev2.sqlite`: its `compactEventStore` exists but nothing
-  calls it, so the V1 history copied in at the V2 cutover stays forever (5 GB here by
-  2026-10-06, which stalled every query). `restart -Compact` runs `fork/compact-db.mjs` while T3 is
-  closed: it deletes what `compactEventStore` calls obsolete plus the V1 activity rows of imported
-  threads, then VACUUMs (5.1 GB to 0.8 GB, 90 s). The restart snapshots the database first.
-  `node fork/compact-db.mjs <db> --dry-run` counts what it would delete.
+- **Database.** The server prunes superseded events from `statev2.sqlite` every 6 hours
+  (`DatabaseStorage`), but the file only shrinks after one VACUUM turns on incremental
+  auto-vacuum. `restart -Compact` runs the build's `doctor --fix` while T3 is closed to do that.
+  On 2026-10-29 a trial on a copy of the 30.8 GB database found little to gain (about 3 GB): the
+  space is live turn history. The VACUUM needs about 2.5x the database size free on C:, on top of
+  the snapshot every restart takes into `%LOCALAPPDATA%\t3code-fork\backups`.
 - **Checkpoints.** Set `T3CODE_CHECKPOINT_SKIP` (user environment, `;`-separated folders) to stop
   T3 checkpointing threads under those folders; each checkpoint runs `git add -A` over the whole
   checkout. T3 reads it at start, so restart T3 after changing it.

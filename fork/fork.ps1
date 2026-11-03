@@ -53,7 +53,7 @@ param(
   [switch]$Probe,
   # restart: cancel the armed restart.
   [switch]$Cancel,
-  # restart: also shrink the database (fork/compact-db.mjs) while T3 is closed. Restarts even when
+  # restart: also shrink the database (T3's `doctor --fix`) while T3 is closed. Restarts even when
   # T3 already runs the newest build.
   [switch]$Compact
 )
@@ -522,12 +522,18 @@ function Invoke-CompactDb {
     if (Test-AppRunning) { Close-App 90 }
   }
   Clear-ForInstall (Get-Date)
-  Log "compacting $LiveDb"
-  $out = & node --no-warnings (Join-Path $PSScriptRoot 'compact-db.mjs') $LiveDb
-  Log "compaction: $out"
-  $r = "$out" | ConvertFrom-Json -ErrorAction SilentlyContinue
-  if ($r.ok) { return "the database went from $($r.mbBefore) MB to $($r.mbAfter) MB" }
-  "the database was not compacted ($($r.reason ?? $out))"
+  # The build worktree holds the server T3 now runs; doctor prunes with that build's rules.
+  $server = Join-Path $BuildDir 'apps\server\src\bin.ts'
+  if (-not (Test-Path $server)) { $server = Join-Path (Resolve-Repo) 'apps\server\src\bin.ts' }
+  $t3Home = Split-Path (Split-Path $LiveDb -Parent) -Parent
+  Log "compacting $LiveDb with $server doctor --fix"
+  $out = (& node --no-warnings $server doctor --fix --base-dir $t3Home 2>&1) -join "`n"
+  $code = $LASTEXITCODE
+  Log "compaction (exit $code): $out"
+  $done = [regex]::Match($out, 'Done: (.+?), (\d+) superseded events removed')
+  if (-not $code -and $done.Success) { return "the database went $($done.Groups[1].Value) ($($done.Groups[2].Value) superseded events removed)" }
+  if (-not $code -and $out -match 'Nothing to repair') { return 'the database had nothing to reclaim' }
+  "the database was not compacted (exit $code; see $script:RunLog)"
 }
 
 function Get-Installer([string]$Ver) {
@@ -750,7 +756,6 @@ function Register-OneShot([string]$Verb, [string]$Name, [string]$Arguments, [tim
   # with it). wscript starts pwsh with no window at all; pwsh -WindowStyle Hidden would still
   # flash a console and take the keyboard focus.
   Copy-Item $PSCommandPath (Join-Path $StateDir 'fork.ps1') -Force -ErrorAction SilentlyContinue
-  Copy-Item (Join-Path $PSScriptRoot 'compact-db.mjs') $StateDir -Force -ErrorAction SilentlyContinue
   $vbs = Get-OneShotScript $Verb
   Set-Content $vbs -Encoding ASCII -Value @(
     'Set sh = CreateObject("WScript.Shell")',
