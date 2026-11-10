@@ -62,6 +62,8 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
   "CLAUDE_AGENT_SDK_VERSION",
 ];
 
+const CLAUDE_MODEL_CAPABILITIES_DEFAULT = "-mid_conv_system";
+
 /**
  * Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`.
  * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
@@ -72,6 +74,10 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
   const baseEnvironment: NodeJS.ProcessEnv = {
+    // Claude Code 2.1.321 sends per-turn reminders as a system message after the user turn, which
+    // moves the cache breakpoint and re-writes the prompt cache. This keeps them in the user
+    // message, as older engines did; older engines ignore the variable. Host and instance win.
+    CLAUDE_CODE_MODEL_CAPABILITIES: CLAUDE_MODEL_CAPABILITIES_DEFAULT,
     ...hostEnvironment,
     CLAUDE_CODE_ENTRYPOINT: "t3-code",
   };
