@@ -82,10 +82,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
 
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
           CLAUDE_CODE_ENTRYPOINT: "t3-code",
+          CLAUDE_CODE_MODEL_CAPABILITIES: "-mid_conv_system",
           KEEP: "1",
         });
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
           CLAUDE_CODE_ENTRYPOINT: "instance",
+          CLAUDE_CODE_MODEL_CAPABILITIES: "-mid_conv_system",
           CLAUDE_EFFORT: "low",
           KEEP: "1",
         });
@@ -98,6 +100,43 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host))
             .CLAUDE_CODE_ENTRYPOINT,
         ).toBe("custom");
+      }),
+  );
+
+  it.effect(
+    "turns off mid-conversation system messages unless the host or instance sets capabilities",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const capabilities = (environment: NodeJS.ProcessEnv) =>
+          environment.CLAUDE_CODE_MODEL_CAPABILITIES;
+
+        expect(
+          capabilities(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {})),
+        ).toBe("-mid_conv_system");
+        expect(
+          capabilities(
+            yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+              CLAUDE_CODE_MODEL_CAPABILITIES: "claude-opus-*=fast_mode",
+            }),
+          ),
+        ).toBe("claude-opus-*=fast_mode");
+        expect(
+          capabilities(
+            yield* mergeClaudeProcessEnvironment(
+              { homePath },
+              [
+                {
+                  name: "CLAUDE_CODE_MODEL_CAPABILITIES",
+                  value: "mid_conv_system",
+                  sensitive: false,
+                },
+              ],
+              {},
+            ),
+          ),
+        ).toBe("mid_conv_system");
       }),
   );
 });
