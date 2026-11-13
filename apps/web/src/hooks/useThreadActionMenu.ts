@@ -24,6 +24,7 @@ import {
   type ThreadActionMenuId,
   withoutThreadActionMenuItem,
 } from "../components/threadActionMenu.logic";
+import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -39,6 +40,7 @@ import {
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useThreadSplitStore } from "../threadSplitStore";
 import { readLocalApi } from "../localApi";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -93,7 +95,7 @@ export function useThreadActionMenu(input: {
     markThreadUnread,
     turnThreadIntoProject,
   } = useThreadActions();
-  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+  const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
@@ -133,7 +135,10 @@ export function useThreadActionMenu(input: {
       const api = readLocalApi();
       if (!api) return;
       const thread = readThreadShell(threadRef);
-      if (!thread) return;
+      if (!thread) {
+        failureToast("Thread actions unavailable", new Error("This thread has not loaded yet."));
+        return;
+      }
       const now = new Date();
       const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
       const supports = {
@@ -269,15 +274,17 @@ export function useThreadActionMenu(input: {
         case "close-split":
           useThreadSplitStore.getState().closeSplit();
           return;
-        case "regenerate-title":
+        case "regenerate-title": {
           if (isRegeneratingTitle) return;
-          await reportFailure("Failed to regenerate thread title", () =>
-            updateThreadMetadata({
+          const toast = titleRegenerationToast([
+            await regenerateThreadTitle({
               environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
+              input: { threadId: threadRef.threadId },
             }),
-          );
+          ]);
+          if (toast) toastManager.add(toast);
           return;
+        }
         case "mark-unread":
           markThreadUnread(threadRef);
           return;
@@ -318,7 +325,9 @@ export function useThreadActionMenu(input: {
           }
           return;
         case "copy-thread":
-          void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
+          void copyThreadReference(
+            threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+          );
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });

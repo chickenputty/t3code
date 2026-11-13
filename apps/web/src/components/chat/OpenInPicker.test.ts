@@ -15,6 +15,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        hostEnvironmentId: null,
         remoteOpenMode: "local-exec",
       }),
     ).toBe(true);
@@ -26,6 +27,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
+        hostEnvironmentId: null,
         remoteOpenMode: "remote-links",
       }),
     ).toBe(true);
@@ -37,6 +39,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId: null,
+        hostEnvironmentId: null,
         remoteOpenMode: "remote-unavailable",
       }),
     ).toBe(true);
@@ -48,6 +51,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
+        hostEnvironmentId: null,
         remoteOpenMode: "local-exec",
       }),
     ).toBe(false);
@@ -59,6 +63,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: undefined,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        hostEnvironmentId: null,
         remoteOpenMode: "remote-links",
       }),
     ).toBe(false);

@@ -71,11 +71,13 @@ export const make = Effect.gen(function* () {
   };
 
   const realPath = (target: string) =>
-    Effect.tryPromise(() => NodeFSP.realpath(target)).pipe(Effect.orElseSucceed(() => target));
+    Effect.tryPromise({ try: () => NodeFSP.realpath(target), catch: () => null }).pipe(
+      Effect.orElseSucceed(() => target),
+    );
 
   /** The worktree copy's modified time, or null when it is not there or unreadable. */
   const modifiedTime = (target: string) =>
-    Effect.tryPromise(() => NodeFSP.stat(target)).pipe(
+    Effect.tryPromise({ try: () => NodeFSP.stat(target), catch: () => null }).pipe(
       Effect.map((stat) => stat.mtimeMs),
       Effect.orElseSucceed(() => null),
     );

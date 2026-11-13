@@ -104,6 +104,7 @@ export type SidebarThreadDisplayStatus =
   | "limited"
   | "woke"
   | "done"
+  | "preparing"
   | "working"
   | "waiting"
   | "idle";
@@ -116,6 +117,7 @@ const DISPLAY_STATUS_RANK: Record<SidebarThreadDisplayStatus, number> = {
   limited: 2,
   woke: 3,
   done: 4,
+  preparing: 5,
   working: 5,
   waiting: 6,
   idle: 7,

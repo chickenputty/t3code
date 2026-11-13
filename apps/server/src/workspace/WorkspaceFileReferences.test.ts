@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ const layerTest = WorkspaceFileReferences.layer.pipe(
       Layer.provide(NodeServices.layer),
     ),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 // Seconds since the epoch, as fs.utimes takes them: 2020-01-01 and 2024-01-01.

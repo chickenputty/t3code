@@ -37,8 +37,10 @@ let abandonedReads = 0;
 // Same default as the process runners that would otherwise spawn git.
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 
+// @effect-diagnostics-next-line extendsNativeError:off -- thrown and caught inside the synchronous file reader.
 class Unsure extends Error {}
 /** Discovery reached the filesystem root, and git agreed: exit 128 with this stderr. */
+// @effect-diagnostics-next-line extendsNativeError:off -- thrown and caught inside the synchronous file reader.
 class NotARepository extends Error {
   readonly stderr: string;
   constructor(stderr: string) {

@@ -68,6 +68,7 @@ const STATUS_DOT: Record<ViewRow["status"], string> = {
   limited: "bg-destructive",
   woke: "bg-success",
   done: "bg-success",
+  preparing: "bg-info",
   working: "bg-info",
   waiting: "bg-muted-foreground/60",
   idle: "bg-muted-foreground/30",

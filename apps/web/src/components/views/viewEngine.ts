@@ -89,6 +89,7 @@ const VIEW_STATUS_OPTIONS: readonly ViewPropertyOption[] = [
   { value: "request", label: "Guest request" },
   { value: "failed", label: "Failed" },
   { value: "limited", label: "Usage limited" },
+  { value: "preparing", label: "Setting up" },
   { value: "working", label: "Working" },
   { value: "waiting", label: "Waiting" },
   { value: "woke", label: "Woke" },
@@ -115,6 +116,7 @@ export function stageOfStatus(status: SidebarThreadDisplayStatus): ViewStage {
     case "failed":
     case "limited":
       return "needs-you";
+    case "preparing":
     case "working":
     case "waiting":
       return "working";

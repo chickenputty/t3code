@@ -1,4 +1,8 @@
-import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  isWindowsAbsolutePath,
+  resolveWorkspaceFilePath,
+} from "@t3tools/shared/path";
 
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
@@ -78,7 +82,7 @@ export function pickWorkspaceBasenameMatch(
 }
 
 // Repository-relative paths can repeat the project's suffix in subfolder projects.
-export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
+function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
   if (isAbsolutePath(relativePath)) return null;
   const pathSegments = relativePath.split(/[\\/]+/);
   const cwdSegments = cwd.split(/[\\/]+/).filter(Boolean);
@@ -94,7 +98,41 @@ export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string):
   return null;
 }
 
-export function pickStrippedWorkspaceMatch(
+/**
+ * The project search query that may find a chat file link's real file, or null when the link
+ * names its file exactly. Agents often cite paths relative to a package (`cloud/http.ts`).
+ */
+export function workspaceLinkLookupQuery(relativePath: string, cwd: string): string | null {
+  const trimmed = relativePath.trim();
+  if (isAbsolutePath(trimmed) || /^(?:\.{1,2}|~)[\\/]/.test(trimmed) || /[\\/]$/.test(trimmed)) {
+    return null;
+  }
+  return stripRepeatedWorkspacePrefix(trimmed, cwd) ?? trimmed;
+}
+
+/** The one file a chat link names: its basename, its path past a repeated prefix, or its suffix. */
+export function pickWorkspaceLinkMatch(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const trimmed = relativePath.trim();
+  const stripped = stripRepeatedWorkspacePrefix(trimmed, cwd);
+  const strippedMatch =
+    stripped === null ? null : pickStrippedWorkspaceMatch(stripped, cwd, entries);
+  if (strippedMatch !== null) return strippedMatch;
+  if (needsWorkspaceBasenameLookup(trimmed)) return pickWorkspaceBasenameMatch(trimmed, entries);
+  const suffix = trimmed.replaceAll("\\", "/");
+  const matches = entries.filter(
+    (entry) =>
+      entry.kind === "file" &&
+      (entry.path.replaceAll("\\", "/") === suffix ||
+        entry.path.replaceAll("\\", "/").endsWith(`/${suffix}`)),
+  );
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+}
+
+function pickStrippedWorkspaceMatch(
   strippedPath: string,
   cwd: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
@@ -106,4 +144,22 @@ export function pickStrippedWorkspaceMatch(
   };
   const files = entries.filter((entry) => entry.kind === "file");
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
+}
+
+/**
+ * The absolute path of the one file a chat link names across other project roots, or null when
+ * no root or more than one has it. Agents cite paths relative to whichever repo they worked in.
+ */
+export function pickProjectLinkMatch(
+  relativePath: string,
+  searches: ReadonlyArray<{
+    readonly root: string;
+    readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+  }>,
+): string | null {
+  const matches = searches.flatMap(({ root, entries }) => {
+    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
+    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
+  });
+  return matches.length === 1 ? (matches[0] ?? null) : null;
 }
