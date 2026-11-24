@@ -1064,8 +1064,8 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-// Fork: upstream's 80 predates the server compile cache (23 files) and transcribe natives (13).
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 100;
+// Fork: upstream's 80 predates the server compile cache and transcribe natives (105 files on 2026-11-23).
+export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 120;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
