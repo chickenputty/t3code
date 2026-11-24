@@ -78,7 +78,6 @@ function renderRows(links: ReadonlyArray<ThreadPullRequestLink>, current: Thread
       status={null}
       project={null}
       label={`#${current.number}`}
-      openAriaLabel="Open pull request"
       onOpen={vi.fn()}
     />,
   );

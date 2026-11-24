@@ -1,6 +1,11 @@
-export function revealInFileExplorerLabel(platform: string): string {
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
+
+/** Components pass `useMessages()` so labels follow a language switch. */
+export function revealInFileExplorerLabel(platform: string, resolve: MessageResolver = m): string {
   const normalized = platform.toLowerCase();
-  if (normalized.includes("mac")) return "Reveal in Finder";
-  if (normalized.includes("win")) return "Reveal in File Explorer";
-  return "Reveal in Files";
+  if (normalized.includes("mac")) return resolve(msg("Reveal in Finder"));
+  if (normalized.includes("win")) return resolve(msg("Reveal in File Explorer"));
+  return resolve(msg("Reveal in Files"));
 }

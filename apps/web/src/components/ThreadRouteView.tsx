@@ -8,7 +8,7 @@ import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
-import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { ThreadSplitView } from "./ThreadSplitView";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { resolveThreadSplitSecondary, useThreadSplitStore } from "../threadSplitStore";
@@ -34,7 +34,7 @@ import {
  * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
  * rows until the route leaves it, so every reader of its shell row finds it.
  */
-function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
+export function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
   const key = threadRef === null ? null : scopedThreadKey(threadRef);
   // Sticks to the route thread, so the row the family brings in does not release it.
   const [mountedKey, setMountedKey] = useState<string | null>(null);
@@ -249,10 +249,12 @@ export function ThreadRouteView({
       inert={background}
     >
       <BackgroundThreadContext value={background}>
-        <ThreadSplitView
-          primary={view}
-          secondaryThreadRef={view !== null && !isMobileViewport ? splitSecondaryRef : null}
-        />
+        <HiddenThreadContext value={background}>
+          <ThreadSplitView
+            primary={view}
+            secondaryThreadRef={view !== null && !isMobileViewport ? splitSecondaryRef : null}
+          />
+        </HiddenThreadContext>
       </BackgroundThreadContext>
       {background ? null : redirect}
     </SidebarInset>

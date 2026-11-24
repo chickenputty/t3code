@@ -7,6 +7,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useState } from "react";
 
+import { contextMenuSourceOf } from "~/contextMenuSource";
 import { useExplorerStore } from "~/components/explorer/explorerStore";
 import { SidebarChromeFooter, SidebarChromeHeader } from "~/components/sidebar/SidebarChrome";
 import { Button } from "~/components/ui/button";
@@ -161,7 +162,7 @@ export function SidebarViewPanel({ view }: { readonly view: SavedView }) {
         openThread(row.ref);
         return;
       }
-      openMenu({ x: event.clientX, y: event.clientY }, row.ref, {
+      openMenu({ x: event.clientX, y: event.clientY }, contextMenuSourceOf(event), row.ref, {
         splitView: resolveSidebarSplitViewAction({
           threadKey: row.key,
           routeThreadKey: openKey,

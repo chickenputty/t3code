@@ -13,6 +13,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { T, useMessages, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -55,6 +56,7 @@ function ThreadDetailsPrLinkRow({
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
 }) {
+  const m = useMessages();
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
@@ -72,10 +74,9 @@ function ThreadDetailsPrLinkRow({
       pr={pr}
       number={link.number}
       reference={link}
-      status={prStatusIndicator(pr, linked?.sourceControlProvider)}
+      status={prStatusIndicator(pr, linked?.sourceControlProvider, m)}
       project={project}
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
-      openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
@@ -142,6 +143,7 @@ export function ThreadDetailsPrRows({
       <ThreadDetailsControl
         variant="ghost"
         size="sm"
+        aria-expanded={shown >= rest.length}
         onClick={() =>
           setShown(shown >= rest.length ? 0 : Math.min(rest.length, shown + PR_ROWS_PAGE))
         }
@@ -155,11 +157,17 @@ export function ThreadDetailsPrRows({
         ) : (
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         )}
-        {shown >= rest.length
-          ? "Show less"
-          : `Show ${Math.min(PR_ROWS_PAGE, rest.length - shown)} more${
-              rest.length - shown > PR_ROWS_PAGE ? ` of ${rest.length - shown}` : ""
-            }`}
+        {shown >= rest.length ? (
+          <T>Show less</T>
+        ) : rest.length - shown > PR_ROWS_PAGE ? (
+          <T>
+            Show <Var>{PR_ROWS_PAGE}</Var> more of <Var>{rest.length - shown}</Var>
+          </T>
+        ) : (
+          <T>
+            Show <Var>{rest.length - shown}</Var> more
+          </T>
+        )}
       </ThreadDetailsControl>
     </>
   );
@@ -217,7 +225,6 @@ export function ThreadDetailsThreadPrRows({
       status={displayed.status}
       project={rowProject}
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
-      openAriaLabel={url}
       onOpen={(event) => openPrLink(event, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
